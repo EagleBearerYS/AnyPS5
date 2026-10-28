@@ -3,14 +3,22 @@
 
 #include <vulkan/vulkan.h>
 #include <array>
+#include <compare>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver::MemoryCensus {
 
 enum class Owner : std::uint8_t { Untagged, PoolSlab, HeapMirror, ImageMirror, SampledTexture, StorageImage, RenderTarget, Staging, BdaTable, Lds, UnitShadow, Presentation, HostImport, Count };
+
+enum class PoolKind : std::uint8_t { Other, Chain, Dedicated, Count };
+inline constexpr std::size_t PoolKindCount = static_cast<std::size_t>(PoolKind::Count);
 
 bool Enabled();
 
@@ -26,9 +34,61 @@ private:
     bool active = false;
 };
 
+class PoolScope {
+public:
+    explicit PoolScope(PoolKind kind);
+    ~PoolScope();
+    PoolScope(const PoolScope&) = delete;
+    PoolScope& operator=(const PoolScope&) = delete;
+
+private:
+    PoolKind previous = PoolKind::Other;
+    bool active = false;
+};
+
 PFN_vkGetDeviceProcAddr Wrap(PFN_vkGetDeviceProcAddr resolver);
 void NoteDevice(VkDevice device, VkPhysicalDevice physical, PFN_vkGetPhysicalDeviceMemoryProperties2 properties2, const VkPhysicalDeviceMemoryProperties& memory);
 void Tick();
+std::string Block();
+
+struct PoolShape {
+    PoolKind kind = PoolKind::Other;
+    std::uint32_t flags = 0;
+    std::uint32_t maxSets = 0;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> sizes;
+    auto operator<=>(const PoolShape&) const = default;
+};
+
+std::uint64_t Descriptors(const PoolShape& shape);
+
+struct LivePool {
+    PoolShape shape;
+    std::uint64_t sets = 0;
+    bool probeable = true;
+};
+
+struct PoolGroup {
+    PoolShape shape;
+    std::uint64_t pools = 0;
+    std::uint64_t sets = 0;
+    std::size_t representative = 0;
+    bool probeable = true;
+};
+
+struct ProbePlan {
+    std::vector<PoolGroup> probed;
+    std::vector<PoolGroup> skipped;
+};
+
+ProbePlan PlanProbes(std::span<const LivePool> pools, std::size_t limit);
+
+struct ProbeMeasure {
+    std::int64_t pool = 0;
+    std::int64_t sets = 0;
+    std::uint64_t probedSets = 0;
+};
+
+std::uint64_t ProbeEstimate(const PoolGroup& group, const ProbeMeasure& measure);
 
 enum class RegionClass : std::uint8_t { Arena, Mapped, Image, Private, Count };
 inline constexpr std::size_t RegionClassCount = static_cast<std::size_t>(RegionClass::Count);

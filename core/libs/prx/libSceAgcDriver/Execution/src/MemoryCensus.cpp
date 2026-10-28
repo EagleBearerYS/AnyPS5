@@ -21,6 +21,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -33,6 +34,7 @@
 #include <mimalloc-stats.h>
 #else
 #include <sys/types.h>
+#include <unistd.h>
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
@@ -44,8 +46,17 @@ namespace {
 constexpr std::size_t OwnerCount = static_cast<std::size_t>(Owner::Count);
 constexpr std::array<const char*, OwnerCount> OwnerNames{"untagged", "pool slabs", "heap mirrors", "image mirrors", "sampled textures", "storage images", "render targets", "staging", "BDA tables", "LDS pools", "unit shadows", "presentation", "host imports"};
 constexpr std::array<const char*, RegionClassCount> RegionNames{"guest arena", "shared views", "images", "other private"};
+constexpr std::array<const char*, PoolKindCount> PoolKindNames{"other", "chain", "dedicated"};
+constexpr std::size_t ProbeLimit = 16;
+constexpr std::uint64_t ProbeBudget = 1ull << 30;
+#ifdef _WIN32
+constexpr const char* ProbeMeasureName = "private";
+#else
+constexpr const char* ProbeMeasureName = "rss";
+#endif
 
 thread_local Owner currentOwner = Owner::Untagged;
+thread_local PoolKind currentPoolKind = PoolKind::Other;
 
 struct Allocation {
     Owner owner = Owner::Untagged;
@@ -53,16 +64,26 @@ struct Allocation {
     std::uint64_t bytes = 0;
 };
 
-struct PoolSize {
-    std::uint64_t sets = 0;
-    std::uint64_t descriptors = 0;
+struct SetRecord {
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+    std::uint64_t layoutSerial = 0;
+    std::uint32_t variableCount = 0;
+    bool variable = false;
+};
+
+struct PoolRecord {
+    PoolShape shape;
+    bool chained = false;
+    std::unordered_map<VkDescriptorSet, SetRecord> sets;
 };
 
 struct Tally {
     std::mutex mutex;
     PFN_vkGetDeviceProcAddr resolver = nullptr;
     std::map<std::pair<VkDevice, VkDeviceMemory>, Allocation> live;
-    std::map<std::pair<VkDevice, VkDescriptorPool>, PoolSize> pools;
+    std::map<std::pair<VkDevice, VkDescriptorPool>, PoolRecord> pools;
+    std::map<std::pair<VkDevice, VkDescriptorSetLayout>, std::uint64_t> layouts;
+    std::uint64_t layoutSerial = 0;
     std::array<std::array<std::uint64_t, VK_MAX_MEMORY_TYPES>, OwnerCount> bytes{};
     std::array<std::uint64_t, OwnerCount> allocations{};
     std::uint64_t unmatchedFrees = 0;
@@ -128,11 +149,67 @@ VKAPI_ATTR VkResult VKAPI_CALL createDescriptorPool(VkDevice device, const VkDes
     auto& state = tally();
     const auto result = reinterpret_cast<PFN_vkCreateDescriptorPool>(state.resolver(device, "vkCreateDescriptorPool"))(device, info, callbacks, pool);
     if (result != VK_SUCCESS || info == nullptr || pool == nullptr || *pool == VK_NULL_HANDLE) return result;
-    PoolSize size{info->maxSets, 0};
-    for (std::uint32_t index = 0; index < info->poolSizeCount && info->pPoolSizes != nullptr; ++index) size.descriptors += info->pPoolSizes[index].descriptorCount;
+    PoolRecord record{{currentPoolKind, info->flags, info->maxSets, {}}, info->pNext != nullptr, {}};
+    for (std::uint32_t index = 0; index < info->poolSizeCount && info->pPoolSizes != nullptr; ++index) record.shape.sizes.emplace_back(static_cast<std::uint32_t>(info->pPoolSizes[index].type), info->pPoolSizes[index].descriptorCount);
     std::lock_guard lock(state.mutex);
-    state.pools[{device, *pool}] = size;
+    state.pools[{device, *pool}] = std::move(record);
     return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL resetDescriptorPool(VkDevice device, VkDescriptorPool pool, VkDescriptorPoolResetFlags flags) {
+    auto& state = tally();
+    const auto result = reinterpret_cast<PFN_vkResetDescriptorPool>(state.resolver(device, "vkResetDescriptorPool"))(device, pool, flags);
+    std::lock_guard lock(state.mutex);
+    if (const auto found = state.pools.find({device, pool}); found != state.pools.end()) found->second.sets.clear();
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL allocateDescriptorSets(VkDevice device, const VkDescriptorSetAllocateInfo* info, VkDescriptorSet* sets) {
+    auto& state = tally();
+    const auto result = reinterpret_cast<PFN_vkAllocateDescriptorSets>(state.resolver(device, "vkAllocateDescriptorSets"))(device, info, sets);
+    if (result != VK_SUCCESS || info == nullptr || sets == nullptr || info->pSetLayouts == nullptr) return result;
+    const VkDescriptorSetVariableDescriptorCountAllocateInfo* variable = nullptr;
+    for (auto* next = static_cast<const VkBaseInStructure*>(info->pNext); next != nullptr; next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO) variable = reinterpret_cast<const VkDescriptorSetVariableDescriptorCountAllocateInfo*>(next);
+    }
+    const bool counted = variable != nullptr && variable->descriptorSetCount == info->descriptorSetCount && variable->pDescriptorCounts != nullptr;
+    std::lock_guard lock(state.mutex);
+    const auto found = state.pools.find({device, info->descriptorPool});
+    if (found == state.pools.end()) return result;
+    for (std::uint32_t index = 0; index < info->descriptorSetCount; ++index) {
+        const auto layout = state.layouts.find({device, info->pSetLayouts[index]});
+        found->second.sets[sets[index]] = {info->pSetLayouts[index], layout != state.layouts.end() ? layout->second : 0u, counted ? variable->pDescriptorCounts[index] : 0u, variable != nullptr};
+    }
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL freeDescriptorSets(VkDevice device, VkDescriptorPool pool, std::uint32_t count, const VkDescriptorSet* sets) {
+    auto& state = tally();
+    const auto result = reinterpret_cast<PFN_vkFreeDescriptorSets>(state.resolver(device, "vkFreeDescriptorSets"))(device, pool, count, sets);
+    if (sets == nullptr) return result;
+    std::lock_guard lock(state.mutex);
+    const auto found = state.pools.find({device, pool});
+    if (found == state.pools.end()) return result;
+    for (std::uint32_t index = 0; index < count; ++index) found->second.sets.erase(sets[index]);
+    return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL createDescriptorSetLayout(VkDevice device, const VkDescriptorSetLayoutCreateInfo* info, const VkAllocationCallbacks* callbacks, VkDescriptorSetLayout* layout) {
+    auto& state = tally();
+    const auto result = reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(state.resolver(device, "vkCreateDescriptorSetLayout"))(device, info, callbacks, layout);
+    if (result != VK_SUCCESS || layout == nullptr || *layout == VK_NULL_HANDLE) return result;
+    std::lock_guard lock(state.mutex);
+    state.layouts[{device, *layout}] = ++state.layoutSerial;
+    return result;
+}
+
+VKAPI_ATTR void VKAPI_CALL destroyDescriptorSetLayout(VkDevice device, VkDescriptorSetLayout layout, const VkAllocationCallbacks* callbacks) {
+    auto& state = tally();
+    if (layout != VK_NULL_HANDLE) {
+        std::lock_guard lock(state.mutex);
+        state.layouts.erase({device, layout});
+    }
+    reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(state.resolver(device, "vkDestroyDescriptorSetLayout"))(device, layout, callbacks);
 }
 
 VKAPI_ATTR void VKAPI_CALL destroyDescriptorPool(VkDevice device, VkDescriptorPool pool, const VkAllocationCallbacks* callbacks) {
@@ -144,11 +221,39 @@ VKAPI_ATTR void VKAPI_CALL destroyDescriptorPool(VkDevice device, VkDescriptorPo
     reinterpret_cast<PFN_vkDestroyDescriptorPool>(state.resolver(device, "vkDestroyDescriptorPool"))(device, pool, callbacks);
 }
 
+VKAPI_ATTR void VKAPI_CALL destroyDevice(VkDevice device, const VkAllocationCallbacks* callbacks) {
+    auto& state = tally();
+    const auto real = reinterpret_cast<PFN_vkDestroyDevice>(state.resolver(device, "vkDestroyDevice"));
+    {
+        std::lock_guard lock(state.mutex);
+        for (auto found = state.live.begin(); found != state.live.end();) {
+            if (found->first.first != device) {
+                ++found;
+                continue;
+            }
+            const auto owner = static_cast<std::size_t>(found->second.owner);
+            state.bytes[owner][found->second.type] -= found->second.bytes;
+            --state.allocations[owner];
+            found = state.live.erase(found);
+        }
+        std::erase_if(state.pools, [&](const auto& entry) { return entry.first.first == device; });
+        std::erase_if(state.layouts, [&](const auto& entry) { return entry.first.first == device; });
+        if (state.device == device) state.device = VK_NULL_HANDLE;
+    }
+    real(device, callbacks);
+}
+
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL resolve(VkDevice device, const char* name) {
     if (name != nullptr && std::strcmp(name, "vkAllocateMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&allocateMemory);
     if (name != nullptr && std::strcmp(name, "vkFreeMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&freeMemory);
     if (name != nullptr && std::strcmp(name, "vkCreateDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&createDescriptorPool);
     if (name != nullptr && std::strcmp(name, "vkDestroyDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&destroyDescriptorPool);
+    if (name != nullptr && std::strcmp(name, "vkResetDescriptorPool") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&resetDescriptorPool);
+    if (name != nullptr && std::strcmp(name, "vkAllocateDescriptorSets") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&allocateDescriptorSets);
+    if (name != nullptr && std::strcmp(name, "vkFreeDescriptorSets") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&freeDescriptorSets);
+    if (name != nullptr && std::strcmp(name, "vkCreateDescriptorSetLayout") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&createDescriptorSetLayout);
+    if (name != nullptr && std::strcmp(name, "vkDestroyDescriptorSetLayout") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&destroyDescriptorSetLayout);
+    if (name != nullptr && std::strcmp(name, "vkDestroyDevice") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&destroyDevice);
     return tally().resolver(device, name);
 }
 
@@ -330,13 +435,14 @@ std::string deviceLines(DeviceTotals& totals) {
     PFN_vkGetPhysicalDeviceMemoryProperties2 properties2 = nullptr;
     std::uint64_t unmatched = 0;
     std::size_t live = 0;
-    PoolSize pools;
+    std::uint64_t poolSets = 0;
+    std::uint64_t poolDescriptors = 0;
     std::size_t poolCount = 0;
     {
         std::lock_guard lock(state.mutex);
-        for (const auto& [key, size] : state.pools) {
-            pools.sets += size.sets;
-            pools.descriptors += size.descriptors;
+        for (const auto& [key, record] : state.pools) {
+            poolSets += record.shape.maxSets;
+            poolDescriptors += Descriptors(record.shape);
         }
         poolCount = state.pools.size();
         bytes = state.bytes;
@@ -389,9 +495,180 @@ std::string deviceLines(DeviceTotals& totals) {
         owners += text;
     }
     const auto imports = Graphics::HostImportCounters();
-    std::snprintf(text, sizeof(text), "; host imports (pin guest pages, no new commit) %llu allocations %.0f MiB, driver records %llu live %.0f MiB; descriptor pools (the Vulkan driver's own memory, outside these figures) %zu live for %llu sets and %llu descriptors\n", static_cast<unsigned long long>(allocations[static_cast<std::size_t>(Owner::HostImport)]), mib(totals.imports), static_cast<unsigned long long>(imports.live), mib(imports.liveBytes), poolCount, static_cast<unsigned long long>(pools.sets), static_cast<unsigned long long>(pools.descriptors));
+    std::snprintf(text, sizeof(text), "; host imports (pin guest pages, no new commit) %llu allocations %.0f MiB, driver records %llu live %.0f MiB; descriptor pools (the Vulkan driver's own memory, outside these figures) %zu live for %llu sets and %llu descriptors\n", static_cast<unsigned long long>(allocations[static_cast<std::size_t>(Owner::HostImport)]), mib(totals.imports), static_cast<unsigned long long>(imports.live), mib(imports.liveBytes), poolCount, static_cast<unsigned long long>(poolSets), static_cast<unsigned long long>(poolDescriptors));
     owners += text;
     return types + owners;
+}
+
+#ifdef _WIN32
+std::uint64_t processBytes() {
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    return K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) != 0 ? counters.PrivateUsage : 0;
+}
+#else
+std::uint64_t processBytes() {
+    std::FILE* file = std::fopen("/proc/self/statm", "r");
+    if (file == nullptr) return 0;
+    unsigned long long size = 0, resident = 0;
+    const bool read = std::fscanf(file, "%llu %llu", &size, &resident) == 2;
+    std::fclose(file);
+    const auto page = sysconf(_SC_PAGESIZE);
+    return read && page > 0 ? static_cast<std::uint64_t>(resident) * static_cast<std::uint64_t>(page) : 0;
+}
+#endif
+
+const char* descriptorTypeName(std::uint32_t type) {
+    switch (static_cast<VkDescriptorType>(type)) {
+        case VK_DESCRIPTOR_TYPE_SAMPLER: return "sampler";
+        case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: return "combined image sampler";
+        case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE: return "sampled image";
+        case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE: return "storage image";
+        case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER: return "uniform texel buffer";
+        case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: return "storage texel buffer";
+        case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER: return "uniform buffer";
+        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: return "storage buffer";
+        case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC: return "dynamic uniform buffer";
+        case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: return "dynamic storage buffer";
+        case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT: return "input attachment";
+        default: return "other";
+    }
+}
+
+std::string shapeText(const PoolShape& shape) {
+    std::string text = PoolKindNames[static_cast<std::size_t>(shape.kind)];
+    text += " maxSets " + std::to_string(shape.maxSets);
+    if ((shape.flags & VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT) != 0) text += " update-after-bind";
+    if ((shape.flags & VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) != 0) text += " free";
+    text += " [";
+    for (std::size_t index = 0; index < shape.sizes.size(); ++index) text += (index == 0 ? "" : ", ") + std::string(descriptorTypeName(shape.sizes[index].first)) + " " + std::to_string(shape.sizes[index].second);
+    return text + "]";
+}
+
+std::string poolLines() {
+    struct Probe {
+        PoolGroup group;
+        ProbeMeasure measure;
+        std::uint64_t failed = 0;
+        bool created = false;
+    };
+    std::array<std::uint64_t, PoolKindCount> pools{}, maxSets{}, descriptors{}, sets{}, estimate{}, probed{}, skipped{}, skippedPools{}, skippedDescriptors{};
+    std::vector<Probe> probes;
+    std::uint64_t probeSets = 0, probeFailures = 0, overBudget = 0;
+    std::int64_t probeGrowth = 0;
+    const auto started = std::chrono::steady_clock::now();
+    {
+        auto& state = tally();
+        std::lock_guard lock(state.mutex);
+        std::vector<LivePool> live;
+        std::vector<std::pair<VkDevice, const PoolRecord*>> records;
+        live.reserve(state.pools.size());
+        records.reserve(state.pools.size());
+        for (const auto& [key, record] : state.pools) {
+            const auto kind = static_cast<std::size_t>(record.shape.kind);
+            ++pools[kind];
+            maxSets[kind] += record.shape.maxSets;
+            descriptors[kind] += Descriptors(record.shape);
+            sets[kind] += record.sets.size();
+            live.push_back({record.shape, record.sets.size(), !record.chained && state.resolver != nullptr && key.first == state.device});
+            records.emplace_back(key.first, &record);
+        }
+        auto plan = PlanProbes(live, ProbeLimit);
+        std::vector<std::pair<VkDevice, VkDescriptorPool>> created;
+        const auto probeStart = processBytes();
+        for (auto& group : plan.probed) {
+            if (Unattributed(processBytes(), {probeStart}) > static_cast<std::int64_t>(ProbeBudget)) {
+                ++overBudget;
+                plan.skipped.push_back(std::move(group));
+                continue;
+            }
+            const auto [device, record] = records[group.representative];
+            const auto create = reinterpret_cast<PFN_vkCreateDescriptorPool>(state.resolver(device, "vkCreateDescriptorPool"));
+            const auto allocate = reinterpret_cast<PFN_vkAllocateDescriptorSets>(state.resolver(device, "vkAllocateDescriptorSets"));
+            Probe probe{group, {}, 0, false};
+            std::vector<VkDescriptorPoolSize> sizes;
+            for (const auto& [type, count] : group.shape.sizes) sizes.push_back({static_cast<VkDescriptorType>(type), count});
+            VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            info.flags = group.shape.flags;
+            info.maxSets = group.shape.maxSets;
+            info.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
+            info.pPoolSizes = sizes.data();
+            const auto before = processBytes();
+            VkDescriptorPool pool = VK_NULL_HANDLE;
+            if (create == nullptr || allocate == nullptr || create(device, &info, nullptr, &pool) != VK_SUCCESS) {
+                ++probe.failed;
+                ++probeFailures;
+                probes.push_back(std::move(probe));
+                continue;
+            }
+            created.emplace_back(device, pool);
+            const auto middle = processBytes();
+            for (const auto& [set, held] : record->sets) {
+                const auto layout = state.layouts.find({device, held.layout});
+                VkDescriptorSetVariableDescriptorCountAllocateInfo variable{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO};
+                variable.descriptorSetCount = 1;
+                variable.pDescriptorCounts = &held.variableCount;
+                VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                allocation.pNext = held.variable ? &variable : nullptr;
+                allocation.descriptorPool = pool;
+                allocation.descriptorSetCount = 1;
+                allocation.pSetLayouts = &held.layout;
+                VkDescriptorSet probeSet = VK_NULL_HANDLE;
+                if (layout != state.layouts.end() && layout->second == held.layoutSerial && allocate(device, &allocation, &probeSet) == VK_SUCCESS) {
+                    ++probe.measure.probedSets;
+                } else {
+                    ++probe.failed;
+                }
+            }
+            const auto after = processBytes();
+            probe.measure.pool = Unattributed(middle, {before});
+            probe.measure.sets = Unattributed(after, {middle});
+            probe.created = true;
+            const auto kind = static_cast<std::size_t>(group.shape.kind);
+            estimate[kind] += ProbeEstimate(group, probe.measure);
+            ++probed[kind];
+            probeSets += probe.measure.probedSets;
+            probeFailures += probe.failed;
+            probes.push_back(std::move(probe));
+        }
+        probeGrowth = Unattributed(processBytes(), {probeStart});
+        for (const auto& [device, pool] : created) {
+            if (const auto destroy = reinterpret_cast<PFN_vkDestroyDescriptorPool>(state.resolver(device, "vkDestroyDescriptorPool"))) destroy(device, pool, nullptr);
+        }
+        for (const auto& group : plan.skipped) {
+            const auto kind = static_cast<std::size_t>(group.shape.kind);
+            ++skipped[kind];
+            skippedPools[kind] += group.pools;
+            skippedDescriptors[kind] += Descriptors(group.shape) * group.pools;
+        }
+    }
+    const auto milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    std::string line = "[mem-census] descriptor pools (the Vulkan driver's own memory: ";
+    line += ProbeMeasureName;
+    line += " bytes of one probe pool per create-info, created under the census lock with the sets of its fullest live pool, scaled by live pools and sets):";
+    char text[512];
+    constexpr std::array<PoolKind, PoolKindCount> PrintOrder{PoolKind::Chain, PoolKind::Dedicated, PoolKind::Other};
+    for (const auto printed : PrintOrder) {
+        const auto kind = static_cast<std::size_t>(printed);
+        std::snprintf(text, sizeof(text), "%s %s %llu live, %llu sets and %llu descriptors requested, %llu sets live, est %.1f MiB (%llu create-infos probed, %llu skipped: %llu pools, %llu descriptors)", printed == PrintOrder.front() ? "" : ";", PoolKindNames[kind], static_cast<unsigned long long>(pools[kind]), static_cast<unsigned long long>(maxSets[kind]), static_cast<unsigned long long>(descriptors[kind]), static_cast<unsigned long long>(sets[kind]), mib(estimate[kind]), static_cast<unsigned long long>(probed[kind]), static_cast<unsigned long long>(skipped[kind]), static_cast<unsigned long long>(skippedPools[kind]), static_cast<unsigned long long>(skippedDescriptors[kind]));
+        line += text;
+    }
+    std::snprintf(text, sizeof(text), "; probe: %zu create-infos (limit %zu, %llu over the %.0f MiB budget), %llu sets allocated, %llu failures, %s %+.1f MiB while the probe pools lived, %.1f ms\n", probes.size(), ProbeLimit, static_cast<unsigned long long>(overBudget), mib(ProbeBudget), static_cast<unsigned long long>(probeSets), static_cast<unsigned long long>(probeFailures), ProbeMeasureName, signedMib(probeGrowth), milliseconds);
+    line += text;
+    std::string detail = "[mem-census] descriptor pool probes (create-info: live pools and sets; measured pool + sets of the fullest live pool; estimate):";
+    for (std::size_t index = 0; index < probes.size(); ++index) {
+        const auto& probe = probes[index];
+        detail += index == 0 ? " " : "; ";
+        detail += shapeText(probe.group.shape);
+        if (!probe.created) {
+            std::snprintf(text, sizeof(text), ": %llu pools %llu sets, probe pool not created", static_cast<unsigned long long>(probe.group.pools), static_cast<unsigned long long>(probe.group.sets));
+        } else {
+            std::snprintf(text, sizeof(text), ": %llu pools %llu sets; %+.1f KiB + %llu sets %+.1f KiB (%llu not allocated); est %.1f MiB", static_cast<unsigned long long>(probe.group.pools), static_cast<unsigned long long>(probe.group.sets), static_cast<double>(probe.measure.pool) / 1024.0, static_cast<unsigned long long>(probe.measure.probedSets), static_cast<double>(probe.measure.sets) / 1024.0, static_cast<unsigned long long>(probe.failed), mib(ProbeEstimate(probe.group, probe.measure)));
+        }
+        detail += text;
+    }
+    if (probes.empty()) detail += " none";
+    return line + detail + "\n";
 }
 
 std::string cacheLine(VkDevice device) {
@@ -445,7 +722,7 @@ std::string allocatorLine(std::uint64_t& heap) {
     return text;
 }
 
-void report() {
+std::string buildBlock() {
     const auto started = std::chrono::steady_clock::now();
     std::uint64_t total = 0;
     auto block = processLine(total);
@@ -456,6 +733,7 @@ void report() {
     block += addressLine(walk, arena);
     DeviceTotals device;
     block += deviceLines(device);
+    block += poolLines();
     VkDevice handle = VK_NULL_HANDLE;
     {
         std::lock_guard lock(tally().mutex);
@@ -478,7 +756,7 @@ void report() {
     std::snprintf(text, sizeof(text), "[mem-census] remainder: rss %.0f MiB, walk %.0f MiB (%+.0f); other private %.0f MiB = glibc heap %.0f + unattributed %.0f MiB (device memory %.0f MiB host-visible / %.0f MiB device-only is inside these on a CPU driver); census took %.1f ms\n", mib(total), mib(walked), signedMib(Unattributed(total, {walked})), mib(otherPrivate), mib(heap), signedMib(Unattributed(otherPrivate, {heap})), mib(device.hostVisible), mib(device.deviceOnly), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
 #endif
     block += text;
-    ProfilePrint_nid_no_patch("%s", block.c_str());
+    return block;
 }
 
 }
@@ -500,6 +778,17 @@ Scope::Scope(Owner owner) {
 
 Scope::~Scope() {
     if (active) currentOwner = previous;
+}
+
+PoolScope::PoolScope(PoolKind kind) {
+    if (!Enabled()) return;
+    previous = currentPoolKind;
+    currentPoolKind = kind;
+    active = true;
+}
+
+PoolScope::~PoolScope() {
+    if (active) currentPoolKind = previous;
 }
 
 PFN_vkGetDeviceProcAddr Wrap(PFN_vkGetDeviceProcAddr resolver) {
@@ -531,10 +820,14 @@ void Tick() {
     }
     if (now < expected || !due.compare_exchange_strong(expected, now + 10000)) return;
     try {
-        report();
+        ProfilePrint_nid_no_patch("%s", buildBlock().c_str());
     } catch (const std::exception& error) {
         ProfilePrint_nid_no_patch("[mem-census] census failed: %s\n", error.what());
     }
+}
+
+std::string Block() {
+    return Enabled() ? buildBlock() : std::string{};
 }
 
 }

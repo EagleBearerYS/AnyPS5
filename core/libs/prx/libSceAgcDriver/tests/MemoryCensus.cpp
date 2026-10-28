@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -106,6 +107,35 @@ void Remainders() {
     Check(Unattributed(5, {huge}) == -(std::numeric_limits<std::int64_t>::max() - 5), "an overflowing part does not saturate");
 }
 
+void PlansProbes() {
+    using AgcDriver::MemoryCensus::LivePool;
+    using AgcDriver::MemoryCensus::PoolKind;
+    using AgcDriver::MemoryCensus::PoolShape;
+    const PoolShape chain{PoolKind::Chain, 0, 1024, {{7, 4098}, {2, 1024}, {3, 1024}, {0, 512}}};
+    const PoolShape large{PoolKind::Dedicated, 0, 1, {{2, 16384}}};
+    const PoolShape small{PoolKind::Dedicated, 0, 1, {{2, 100}}};
+    const std::vector<LivePool> pools{{chain, 10, true}, {large, 1, true}, {chain, 50, true}, {small, 1, true}, {chain, 20, true}, {large, 1, true}, {chain, 30, false}};
+    Check(AgcDriver::MemoryCensus::Descriptors(chain) == 6658, "a shape's descriptors are not the sum of its sizes");
+    const auto plan = AgcDriver::MemoryCensus::PlanProbes(pools, 2);
+    Check(plan.probed.size() == 2 && plan.skipped.size() == 2, "the plan did not probe two create-infos and skip the rest");
+    Check(plan.probed[0].shape == large && plan.probed[0].pools == 2 && plan.probed[0].sets == 2, "the largest create-info by descriptors times pools is not probed first");
+    Check(plan.probed[1].shape == chain && plan.probed[1].pools == 3 && plan.probed[1].sets == 80 && plan.probed[1].representative == 2, "the chain group or its fullest pool is wrong");
+    Check(plan.skipped[0].shape == chain && !plan.skipped[0].probeable && plan.skipped[0].pools == 1, "a pool with a chained create-info was probed or merged");
+    Check(plan.skipped[1].shape == small && plan.skipped[1].pools == 1, "the create-info beyond the limit was not skipped");
+    Check(AgcDriver::MemoryCensus::PlanProbes({}, 16).probed.empty(), "an empty pool list planned a probe");
+}
+
+void EstimatesProbes() {
+    using AgcDriver::MemoryCensus::ProbeEstimate;
+    AgcDriver::MemoryCensus::PoolGroup group;
+    group.pools = 3;
+    group.sets = 80;
+    Check(ProbeEstimate(group, {4096, 8192, 50}) == 3u * 4096u + 8192u * 80u / 50u, "the estimate does not scale pools and sets");
+    Check(ProbeEstimate(group, {-100, 8192, 50}) == 8192u * 80u / 50u, "a negative pool delta was not clamped");
+    Check(ProbeEstimate(group, {4096, -5, 50}) == 3u * 4096u, "a negative set delta was not clamped");
+    Check(ProbeEstimate(group, {4096, 8192, 0}) == 3u * 4096u, "sets were scaled with no probed set");
+}
+
 }
 
 int main() {
@@ -114,6 +144,8 @@ int main() {
         SumsSmaps();
         ParsesStatus();
         Remainders();
+        PlansProbes();
+        EstimatesProbes();
         std::cout << "memory census parsing tests passed\n";
         return 0;
     } catch (const std::exception& error) {

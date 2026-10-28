@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
+#include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -4244,6 +4245,7 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
             ++stats.sets;
             return reused;
         }
+        const MemoryCensus::PoolScope census(MemoryCensus::PoolKind::Dedicated);
         const auto pool = CreateSetPool(context, sizes, updateAfterBind);
         allocation.descriptorPool = pool;
         VkDescriptorSet set = VK_NULL_HANDLE;
@@ -4280,6 +4282,7 @@ DescriptorCache::SetAllocation DescriptorCache::Allocate(VkDescriptorSetLayout l
     poolInfo.pPoolSizes = ChainPoolCreateSizes.data();
     chain.reserve(chain.size() + 1);
     VkDescriptorPool pool = VK_NULL_HANDLE;
+    const MemoryCensus::PoolScope census(MemoryCensus::PoolKind::Chain);
     Check(context.Function<PFN_vkCreateDescriptorPool>("vkCreateDescriptorPool")(context.device, &poolInfo, nullptr, &pool), "vkCreateDescriptorPool");
     chain.push_back({pool});
     ++stats.pools;

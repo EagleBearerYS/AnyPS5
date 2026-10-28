@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/MemoryCensus.hpp"
 #include <algorithm>
 #include <limits>
+#include <map>
 #include <optional>
 
 namespace AgcDriver::MemoryCensus {
@@ -101,6 +102,44 @@ std::int64_t Unattributed(std::uint64_t total, std::initializer_list<std::uint64
     for (const auto part : named) sum = part > limit - std::min(sum, limit) ? limit : sum + part;
     const auto clampedTotal = std::min(total, limit);
     return clampedTotal >= sum ? static_cast<std::int64_t>(clampedTotal - sum) : -static_cast<std::int64_t>(sum - clampedTotal);
+}
+
+std::uint64_t Descriptors(const PoolShape& shape) {
+    std::uint64_t total = 0;
+    for (const auto& size : shape.sizes) total += size.second;
+    return total;
+}
+
+ProbePlan PlanProbes(std::span<const LivePool> pools, std::size_t limit) {
+    std::map<std::pair<bool, PoolShape>, PoolGroup> groups;
+    for (std::size_t index = 0; index < pools.size(); ++index) {
+        const auto& pool = pools[index];
+        auto [found, inserted] = groups.try_emplace({pool.probeable, pool.shape});
+        auto& group = found->second;
+        if (inserted) {
+            group.shape = pool.shape;
+            group.probeable = pool.probeable;
+            group.representative = index;
+        } else if (pool.sets > pools[group.representative].sets) {
+            group.representative = index;
+        }
+        ++group.pools;
+        group.sets += pool.sets;
+    }
+    std::vector<PoolGroup> ordered;
+    ordered.reserve(groups.size());
+    for (auto& [key, group] : groups) ordered.push_back(std::move(group));
+    std::stable_sort(ordered.begin(), ordered.end(), [](const PoolGroup& a, const PoolGroup& b) { return Descriptors(a.shape) * a.pools > Descriptors(b.shape) * b.pools; });
+    ProbePlan plan;
+    for (auto& group : ordered) (group.probeable && plan.probed.size() < limit ? plan.probed : plan.skipped).push_back(std::move(group));
+    return plan;
+}
+
+std::uint64_t ProbeEstimate(const PoolGroup& group, const ProbeMeasure& measure) {
+    const auto pool = static_cast<std::uint64_t>(std::max<std::int64_t>(measure.pool, 0));
+    const auto sets = static_cast<std::uint64_t>(std::max<std::int64_t>(measure.sets, 0));
+    const auto perSets = measure.probedSets != 0 ? static_cast<std::uint64_t>(static_cast<double>(sets) * static_cast<double>(group.sets) / static_cast<double>(measure.probedSets)) : 0u;
+    return group.pools * pool + perSets;
 }
 
 }

@@ -2734,6 +2734,13 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    add_test(NAME agc_driver_memory_census_block_on COMMAND agc_driver_memory_census_block_tests)
+    set_tests_properties(agc_driver_memory_census_block_on PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_MEMORY_CENSUS=1" SKIP_RETURN_CODE 77 TIMEOUT 60 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_memory_census_block_on PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_job_manager_compute_capacity COMMAND agc_driver_job_manager_compute_tests barrier_capacity_overflow)
     set_tests_properties(agc_driver_job_manager_compute_capacity PROPERTIES
         ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 20 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
