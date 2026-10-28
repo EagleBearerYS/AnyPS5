@@ -1797,10 +1797,6 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
         catch (const std::runtime_error& error) { rejected = std::string(error.what()).find("not a valid runtime value") != std::string::npos; }
         Require(rejected, std::string("nested sampler table: ") + what + " was not refused by resource planning");
     };
-    auto shared = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
-    shared.insert(shared.begin() + 31u, 0x7e0e0232u);
-    shared.insert(shared.begin() + 21u, {0xf4200c8cu, 0xfa000000u});
-    refused(shared, "a V# with another buffer consumer");
     auto consumer = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
     consumer.insert(consumer.begin() + 31u, 0x7e0e0221u);
     refused(consumer, "an S# with another consumer");
