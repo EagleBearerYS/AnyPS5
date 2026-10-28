@@ -1,0 +1,3 @@
+BASE=750cf6cf487f948017295b1f3717af6f886f0f85
+REPEAT=1
+EXTRA_TESTS='agc_memory_census|agc_driver_memory_census_block|agc_driver_memory_census_block_on'
