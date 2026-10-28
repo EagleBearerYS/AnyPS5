@@ -1,9 +1,8 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
+#include "tests/ExportLookup.hpp"
 
-#include <cstdio>
-
-int main() {
+int main(int argc, char** argv) {
     if (sceAgcDriverGetCoredumpAddress() != nullptr) return 1;
     if (sceAgcDriverSetTargetRingForDiag() != static_cast<int>(0x8A6D0001)) return 2;
     auto* volatile linked = &sceAgcDriverSetFlip;
@@ -48,11 +47,6 @@ int main() {
         {sceAgcDriverUserDataWritePushMarker, "sceAgcDriverUserDataWritePushMarker"},
         {sceAgcDriverUserDataWriteSetMarker, "sceAgcDriverUserDataWriteSetMarker"},
     };
-    for (const auto& entry : exports) {
-        if (entry.function == nullptr) {
-            std::fprintf(stderr, "%s is not exported\n", entry.name);
-            return 5;
-        }
-    }
+    if (!ExportsResolveByName(argc > 1 ? argv[1] : nullptr, exports, "sceAgcDriverNotExported")) return 5;
     return 0;
 }

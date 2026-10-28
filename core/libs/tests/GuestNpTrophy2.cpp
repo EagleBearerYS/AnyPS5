@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
+#include "tests/ExportLookup.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <stdexcept>
@@ -10,7 +11,7 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static void APS5_VABI OnUnlock(int, int, void*) {}
 
-static void ResolvePendingExports() {
+static void ResolvePendingExports(const char* path) {
     struct Export {
         int (APS5_VABI* function)(void);
         const char* name;
@@ -39,7 +40,7 @@ static void ResolvePendingExports() {
         {sceNpTrophy2SystemRemoveTitleData, "sceNpTrophy2SystemRemoveTitleData"},
         {sceNpTrophy2SystemRemoveUserData, "sceNpTrophy2SystemRemoveUserData"},
     };
-    for (const auto& entry : exports) Require(entry.function != nullptr);
+    Require(ExportsResolveByName(path, exports, "sceNpTrophy2SystemNotExported"));
 }
 
 template <typename Call> static bool ThrowsInvalidArgument(Call call) {
@@ -51,7 +52,7 @@ template <typename Call> static bool ThrowsInvalidArgument(Call call) {
     return false;
 }
 
-int main() {
+int main(int argc, char** argv) {
     int userdata = 0;
     Require(sceNpTrophy2UnregisterUnlockCallback() == 0);
     Require(sceNpTrophy2RegisterUnlockCallback(reinterpret_cast<void*>(&OnUnlock), &userdata) == 0);
@@ -63,7 +64,7 @@ int main() {
 
     auto* volatile linked = &sceNpTrophy2SystemCreateContext;
     Require(linked != nullptr);
-    ResolvePendingExports();
+    ResolvePendingExports(argc > 1 ? argv[1] : nullptr);
 
     NpTrophy2GameDetails details{};
     NpTrophy2GameData data{};

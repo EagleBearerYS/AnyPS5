@@ -1,6 +1,7 @@
 #include "Ngs2Test.hpp"
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include "prx/libSceNgs2/include/Api.hpp"
+#include "tests/ExportLookup.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -20,7 +21,7 @@ static void CheckExportLinked() {
     Require(linked != nullptr);
 }
 
-static void CheckPendingExports() {
+static void CheckPendingExports(const char* path) {
     struct Export {
         int (APS5_VABI* function)(void);
         const char* name;
@@ -41,12 +42,12 @@ static void CheckPendingExports() {
         {sceNgs2SystemQueryInfo, "sceNgs2SystemQueryInfo"},
         {sceNgs2SystemRunCommands, "sceNgs2SystemRunCommands"},
     };
-    for (const auto& entry : exports) {
-        if (entry.function == nullptr) throw std::runtime_error(std::string(entry.name) + " is not exported");
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2.native exports do not all resolve by name");
     }
 }
 
-static void CheckCorePendingExports() {
+static void CheckCorePendingExports(const char* path) {
     struct Export {
         void (*function)(void);
         const char* name;
@@ -59,8 +60,8 @@ static void CheckCorePendingExports() {
         {reinterpret_cast<void (*)(void)>(&sceNgs2SystemEnumHandles), "sceNgs2SystemEnumHandles"},
         {reinterpret_cast<void (*)(void)>(&sceNgs2SystemEnumRackHandles), "sceNgs2SystemEnumRackHandles"},
     };
-    for (const auto& entry : exports) {
-        if (entry.function == nullptr) throw std::runtime_error(std::string(entry.name) + " is not exported");
+    if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
+        throw std::runtime_error("the pending libSceNgs2 exports do not all resolve by name");
     }
 }
 
@@ -330,7 +331,7 @@ static void CheckSetSampleRate() {
     Status(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "system destroy failed");
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
         constexpr int rackError = static_cast<int>(0x804A8202u);
@@ -368,8 +369,8 @@ int main() {
         CheckSetGrainSamples();
         CheckSetSampleRate();
         CheckExportLinked();
-        CheckPendingExports();
-        CheckCorePendingExports();
+        CheckPendingExports(argc > 1 ? argv[1] : nullptr);
+        CheckCorePendingExports(argc > 2 ? argv[2] : nullptr);
         std::cout << "NGS2 PS5 handle errors and validation precedence checked\n";
         return 0;
     } catch (const std::exception& error) {

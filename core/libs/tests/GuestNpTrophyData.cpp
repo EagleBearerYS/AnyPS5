@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
+#include "tests/ExportLookup.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -228,7 +229,7 @@ static void ReportExportLinked() {
     Require(linked != nullptr, "sceNpUniversalDataSystemIntInitialize is not linked");
 }
 
-static void ResolveInternalExports() {
+static void ResolveInternalExports(const char* path) {
     struct Export {
         int (APS5_VABI* function)(void);
         const char* name;
@@ -245,10 +246,11 @@ static void ResolveInternalExports() {
         {sceNpUniversalDataSystemIntNetSyncTitles, "sceNpUniversalDataSystemIntNetSyncTitles"},
         {sceNpUniversalDataSystemIntTerminate, "sceNpUniversalDataSystemIntTerminate"},
     };
-    for (const auto& entry : exports) Require(entry.function != nullptr, entry.name);
+    Require(ExportsResolveByName(path, exports, "sceNpUniversalDataSystemIntNotExported"),
+            "the internal exports do not all resolve by name");
 }
 
-int main() {
+int main(int argc, char** argv) {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-data-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root);
@@ -262,7 +264,7 @@ int main() {
     PostUnlocks(context);
     ReportPlaceholders();
     ReportExportLinked();
-    ResolveInternalExports();
+    ResolveInternalExports(argc > 1 ? argv[1] : nullptr);
 
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);

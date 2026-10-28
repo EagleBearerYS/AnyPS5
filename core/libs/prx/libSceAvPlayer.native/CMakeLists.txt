@@ -7,7 +7,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_avplayer_native_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_avplayer_native_tests PRIVATE libSceAvPlayer.native libc)
     configure_windows_unwind(guest_avplayer_native_tests)
-    add_test(NAME guest_avplayer_native COMMAND guest_avplayer_native_tests)
+    add_test(NAME guest_avplayer_native COMMAND guest_avplayer_native_tests $<TARGET_FILE:libSceAvPlayer.native>)
     if(WIN32)
         set_tests_properties(guest_avplayer_native PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer.native>")

@@ -6,7 +6,7 @@ if(BUILD_TESTING)
     target_include_directories(guest_audiodec_native_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_audiodec_native_tests PRIVATE libSceAudiodec.native libc)
     configure_windows_unwind(guest_audiodec_native_tests)
-    add_test(NAME guest_audiodec_native COMMAND guest_audiodec_native_tests)
+    add_test(NAME guest_audiodec_native COMMAND guest_audiodec_native_tests $<TARGET_FILE:libSceAudiodec.native>)
     if(WIN32)
         set_tests_properties(guest_audiodec_native PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodec.native>")
