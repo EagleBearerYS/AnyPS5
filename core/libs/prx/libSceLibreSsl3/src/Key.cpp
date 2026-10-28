@@ -1,25 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl3/include/Reference.hpp"
 
-#include <atomic>
-#include <limits>
 #include <stdexcept>
-
-namespace {
-
-static_assert(std::atomic_ref<std::int32_t>::required_alignment <= alignof(std::int32_t));
-
-int Retain_nid_no_patch(std::int32_t& references) {
-    std::atomic_ref<std::int32_t> count(references);
-    auto previous = count.load();
-    for (;;) {
-        if (previous == std::numeric_limits<std::int32_t>::max())
-            throw std::overflow_error("LibreSSL3 key reference count overflow");
-        if (count.compare_exchange_weak(previous, previous + 1))
-            return previous > 0;
-    }
-}
-
-} // namespace
 
 extern "C" {
 
