@@ -1,0 +1,3 @@
+BASE=895ead67f7c11a46a7a29378c802d11864bed37a
+REPEAT=10
+EXTRA_TESTS='guest_libressl_rsa|guest_libressl_runtime'
