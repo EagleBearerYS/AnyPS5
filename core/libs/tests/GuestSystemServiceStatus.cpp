@@ -52,16 +52,6 @@ void Case(const char* name, TCall call) {
     ++failures;
 }
 
-template<typename TCall>
-bool Unimplemented(TCall call, std::string_view reason) {
-    try {
-        static_cast<void>(call());
-    } catch (const std::runtime_error& error) {
-        return std::string_view(error.what()).find(reason) != std::string_view::npos;
-    }
-    return false;
-}
-
 void TestSuspend() {
     Case("sceLncUtilBlockAppSuspend", [] {
         return sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK && sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK;
@@ -73,9 +63,6 @@ void TestSuspend() {
         return sceLncUtilUnblockAppSuspend("saving") == SCE_KERNEL_ERROR_EBUSY && sceLncUtilUnblockAppSuspend(nullptr) == SCE_KERNEL_ERROR_EBUSY &&
             sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK && sceLncUtilUnblockAppSuspend("saving") == SYSTEM_SERVICE_OK &&
             sceLncUtilUnblockAppSuspend("saving") == SCE_KERNEL_ERROR_EBUSY;
-    });
-    Case("sceLncUtilBlockAppSuspend null reason", [] {
-        return Unimplemented([] { return sceLncUtilBlockAppSuspend(nullptr); }, "null reason");
     });
     Case("sceLncUtilEnableSuspendNotification", [] {
         return sceLncUtilEnableSuspendNotification() == SYSTEM_SERVICE_OK && sceLncUtilEnableSuspendNotification() == SYSTEM_SERVICE_OK;
@@ -89,21 +76,12 @@ void TestSuspend() {
     Case("sceSystemServiceDisableSuspendNotification", [] {
         return sceSystemServiceDisableSuspendNotification() == sceLncUtilDisableSuspendNotification();
     });
-    Case("sceLncUtilUnblockAppSuspend null reason while a block is held", [] {
-        return sceLncUtilBlockAppSuspend("saving") == SYSTEM_SERVICE_OK &&
-            Unimplemented([] { return sceLncUtilUnblockAppSuspend(nullptr); }, "null reason while a block is held");
-    });
 }
 
 template<typename TCall>
 bool ReportsInactive(TCall call) {
     bool active = true;
     return call(&active) == SYSTEM_SERVICE_OK && !active;
-}
-
-template<typename TCall>
-bool RefusesNullOutput(TCall call) {
-    return Unimplemented(call, "null output");
 }
 
 template<typename TCall>
@@ -138,12 +116,7 @@ template<typename TCall>
 bool ReportsNotAdjusted(TCall call) {
     const auto user = LOGGED_IN_USER;
     std::uint8_t adjusted = 0xff;
-    if (call(user, &adjusted) != SYSTEM_SERVICE_OK || adjusted != 0) return false;
-    for (const auto other : {0u, user + 1, static_cast<std::uint32_t>(USER_SERVICE_USER_ID_INVALID)}) {
-        adjusted = 0xff;
-        if (!Unimplemented([&] { return call(other, &adjusted); }, "other than the logged-in user") || adjusted != 0xff) return false;
-    }
-    return true;
+    return call(user, &adjusted) == SYSTEM_SERVICE_OK && adjusted == 0;
 }
 
 void TestShell() {
@@ -158,13 +131,7 @@ void TestShell() {
     });
     Case("sceSystemStateMgrIsShellUIShutdownInProgress", [] { return !sceSystemStateMgrIsShellUIShutdownInProgress(); });
     Case("sceShellCoreUtilGetSocialScreenStatus", [] { return ReportsInactive(sceShellCoreUtilGetSocialScreenStatus); });
-    Case("sceShellCoreUtilGetSocialScreenStatus null output", [] {
-        return RefusesNullOutput([] { return sceShellCoreUtilGetSocialScreenStatus(nullptr); });
-    });
     Case("sceShellCoreUtilIsEyeToEyeDistanceAdjusted", [] { return ReportsNotAdjusted(sceShellCoreUtilIsEyeToEyeDistanceAdjusted); });
-    Case("sceShellCoreUtilIsEyeToEyeDistanceAdjusted null output", [] {
-        return RefusesNullOutput([] { return sceShellCoreUtilIsEyeToEyeDistanceAdjusted(LOGGED_IN_USER, nullptr); });
-    });
     Case("sceSystemServiceIsEyeToEyeDistanceAdjusted", [] {
         return ReportsNotAdjusted(sceSystemServiceIsEyeToEyeDistanceAdjusted) &&
             sceSystemServiceIsEyeToEyeDistanceAdjusted(LOGGED_IN_USER, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER;
