@@ -1,0 +1,3 @@
+BASE=acd13871affe9bb42bb4b59bfeb99778c816d3a8
+REPEAT=1
+EXTRA_TESTS='agc_driver_recorder|agc_repeat_storage_guard|agc_driver_sample_multisample_target|agc_driver_native_color_initial|agc_driver_native_color_publication'
