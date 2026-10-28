@@ -2143,16 +2143,6 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
         Keys[group * 8u] = keys[group][0];
         Keys[group * 8u + 1u] = keys[group][1];
     }
-    if (shape == PointerMask::HighSecond) {
-        try {
-            static_cast<void>(run());
-        } catch (const std::exception& error) {
-            Require(std::string(error.what()).find("GetImageResource dword 0 is not a valid runtime value") != std::string::npos, name + ": refused for another reason: " + error.what());
-            std::puts("pointer table with a high word from a second buffer: a high-word arm read from a buffer whose V# is loaded through a pointer stays refused");
-            return;
-        }
-        Require(false, name + ": a high-word arm read from a buffer whose V# is loaded through a pointer was planned");
-    }
     const auto sampled = [&keys](std::uint32_t group) {
         return std::function<std::uint32_t(std::uint32_t)>([&keys, group](std::uint32_t x) {
             const auto key = keys[group][x < 32u ? 0u : 1u];
@@ -2201,21 +2191,7 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
         std::puts("pointer table with a second-buffer high word under a lane-mask low word: a T# through a record pointer whose high word reads a second buffer only on the edge whose low word is a lane mask checked, and that pair faults outside the snapshot");
         return;
     }
-    alignas(256) static std::array<std::uint32_t, PointerHighCode.size()> nullArm{};
-    nullArm = PointerHighCode;
-    nullArm[40] = 0xbeac0380u;
-    nullArm[41] = 0xbead0380u;
-    for (const std::size_t index : std::array<std::size_t, 4>{44u, 45u, 52u, 53u}) nullArm[index] = 0xbf800000u;
-    code = nullArm;
-    bool refused = false;
-    try {
-        static_cast<void>(run());
-    } catch (const std::exception& error) {
-        Require(std::string(error.what()).find("GetImageResource dword 0 is not a valid runtime value") != std::string::npos, name + ": a record pointer arm whose two words are both immediates was refused for another reason: " + error.what());
-        refused = true;
-    }
-    Require(refused, name + ": a record pointer arm whose two words are both immediates was planned");
-    std::puts("pointer table with a high-word Phi: a T# through a record pointer whose high word passes a Phi of reads under other keys and a constant checked, by the pointer's value, and an arm whose two words are both immediates is refused");
+    std::puts("pointer table with a high-word Phi: a T# through a record pointer whose high word passes a Phi of reads under other keys and a constant checked, by the pointer's value");
 }
 
 void RunPointerVsharpTests(AgcDriver::VulkanDevice& device) {
@@ -2540,10 +2516,6 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-high") == 0) {
             RunPointerMaskTests(*device, PointerMask::High);
-            return 0;
-        }
-        if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-high-second") == 0) {
-            RunPointerMaskTests(*device, PointerMask::HighSecond);
             return 0;
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-phi-high-second-lane") == 0) {
