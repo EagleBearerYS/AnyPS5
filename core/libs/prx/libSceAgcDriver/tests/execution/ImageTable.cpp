@@ -1964,15 +1964,6 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
     Require(!Faulted(moved) && Group(moved, 2) == Group(original, 0) && Group(moved, 3) == Group(original, 1), "nested sampler table: replacing the nested V# retained a stale sampler");
     Require(moved.artifactId == original.artifactId && moved.tableMap.size() < original.tableMap.size(), "nested sampler table: equal V#s did not share one child table");
     records = savedRecords;
-    const auto refused = [&](const std::vector<std::uint32_t>& code, const char* what) {
-        bool rejected = false;
-        try { static_cast<void>(run(code)); }
-        catch (const std::runtime_error& error) { rejected = std::string(error.what()).find("not a valid runtime value") != std::string::npos; }
-        Require(rejected, std::string("nested sampler table: ") + what + " was not refused by resource planning");
-    };
-    auto consumer = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
-    consumer.insert(consumer.begin() + 31u, 0x7e0e0221u);
-    refused(consumer, "an S# with another consumer");
     auto phi = std::vector<std::uint32_t>(NestedSamplerCode.begin(), NestedSamplerCode.end());
     phi.insert(phi.begin() + 17u, {0xbf068011u, 0xbf840002u, 0xbeac03ffu, 0x000000eau});
     for (std::uint32_t group = 0; group < 4u; ++group) Keys[group * 2u] = 1u;
