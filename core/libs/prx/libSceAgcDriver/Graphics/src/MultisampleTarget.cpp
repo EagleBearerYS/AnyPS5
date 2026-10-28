@@ -1172,7 +1172,8 @@ VkClearColorValue MultisampledDccClear(const ColorTarget& target, std::span<cons
     std::array<std::uint32_t, 4> pattern{};
     std::memcpy(pattern.data(), texels.data(), texels.size());
     VkClearColorValue clear{};
-    Require(ClearColorForTexel(target.format, target.elementBytes, pattern, clear), "multisampled DCC fast clear has no exact host value");
+    const bool repeated = std::ranges::all_of(pattern, [&](std::uint32_t word) { return word == pattern.front(); });
+    Require(ClearColorForTexel(target.format, target.elementBytes, pattern, clear) || (repeated && MultisampledFillClearColor(target, pattern.front(), clear)), "multisampled DCC fast clear has no exact host value");
     return clear;
 }
 
