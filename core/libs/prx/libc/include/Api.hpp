@@ -482,6 +482,9 @@ int APS5_VABI ispunct_nid_postfix(int c);
 int APS5_VABI isxdigit_nid_postfix(int c);
 int APS5_VABI isascii_nid_postfix(int c);
 int APS5_VABI toascii_nid_postfix(int c);
+int APS5_VABI digittoint_nid_postfix(int c);
+int APS5_VABI isnumber_nid_postfix(int c);
+int APS5_VABI ishexnumber_nid_postfix(int c);
 int APS5_VABI toupper_nid_postfix(int c);
 int APS5_VABI tolower_nid_postfix(int c);
 void APS5_VABI _ZNSt8ios_baseD2Ev_nid_postfix(GuestLocale::IosBase* self);
@@ -940,6 +943,7 @@ void APS5_VABI bcopy_nid_postfix(const void* source, void* destination, size_t c
 void* APS5_VABI memcpy_nid_postfix(void* dest, const void* src, size_t n);
 void* APS5_VABI memmove_nid_postfix(void* dest, const void* src, size_t n);
 int APS5_VABI memcmp_nid_postfix(const void* s1, const void* s2, size_t n);
+int APS5_VABI timingsafe_memcmp_nid_postfix(const void* b1, const void* b2, size_t len);
 const void* APS5_VABI memchr_nid_postfix(const void* s, int c, size_t n);
 void* APS5_VABI memrchr_nid_postfix(const void* s, int c, size_t n);
 void* APS5_VABI memccpy_nid_postfix(void* dest, const void* src, int c, size_t n);
