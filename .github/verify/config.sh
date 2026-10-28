@@ -1,0 +1,4 @@
+BASE=af93ca4e6ccbc23d805eac4b50f97c364c3d9440
+REPEAT=10
+EXTRA_TESTS='guest_semaphore_handoff|guest_semaphore|guest_semaphore_trace'
+BEFORE_REPEAT=3
