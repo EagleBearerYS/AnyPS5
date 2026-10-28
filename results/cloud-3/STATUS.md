@@ -1,2 +1,2 @@
-STOPPED 2026-10-25T22:02:35Z: low usage; BF-246 done
-machine: same VM as 10-18 (not reclaimed): Intel Xeon @ 2.80 GHz, 4 vCPUs, 15 GiB, Ubuntu 24.04, gcc 13.3.0, CMake 3.28.3, lavapipe Mesa 25.2.8, Vulkan validation layers 1.3.275, Xvfb, mingw-w64 g++ 13 (posix), no IPv6, no /dev/udmabuf; /home/user/wt-main fully built at 26ba9b6b71 (BF-246 tree M; trees A/B/AB built there incrementally); upstream/main 26ba9b6b71; 11G disk free
+READY 2026-10-28T03:12:24Z: back on the original account
+machine: same VM (kernel 6.18.44-fc-v180), 4 cores, 9G disk free of 252G, gcc 13.3, Wild 0.10.0; /home/user/AnyPS5 Release build and wt-bf164 CI-flags build kept; upstream/main ae0e0a284b fetched, builds not yet rebuilt on it
