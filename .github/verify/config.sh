@@ -1,0 +1,4 @@
+BASE=f8f5b24b77ad0caaa7ead08fcbad879c0a47208f
+REPEAT=10
+EXTRA_TESTS='guest_audiodec'
+BEFORE_REPEAT=2
