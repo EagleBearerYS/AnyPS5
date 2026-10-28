@@ -43,7 +43,7 @@ public:
         std::uint32_t stage = 0;
         std::uint64_t shader = 0;
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
-        std::vector<std::string> messages;
+        std::vector<std::shared_ptr<const std::string>> messages;
     };
     void SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges);
     struct SrtGuardFaults {

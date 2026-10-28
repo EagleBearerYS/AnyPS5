@@ -5,12 +5,14 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 import warnings
 import zipfile
+import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import build_web
@@ -26,6 +28,60 @@ def library_zip(entries):
 
 
 class LibraryPublicationTests(unittest.TestCase):
+    def test_unicode_path_rewrite_is_rejected_before_decompression(self):
+        original = "libs/../libc.prx"
+        rewritten = "libs/libc.prx"
+        entry = zipfile.ZipInfo(original)
+        unicode_path = b"\x01" + struct.pack("<I", zlib.crc32(original.encode())) + rewritten.encode()
+        entry.extra = struct.pack("<HH", 0x7075, len(unicode_path)) + unicode_path
+        invalid = library_zip([(entry, b"content")])
+        with zipfile.ZipFile(io.BytesIO(invalid)) as archive:
+            decoded = archive.infolist()[0]
+            self.assertEqual(decoded.orig_filename, original)
+            if decoded.filename == original:
+                self.skipTest("zipfile does not interpret Unicode Path extra fields")
+            self.assertEqual(decoded.filename, rewritten)
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        with patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("archive decompressed")):
+            with self.assertRaisesRegex(ValueError, "Invalid library archive layout"):
+                self.publish(invalid, valid)
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+    def test_original_archive_paths_are_rejected_before_decompression(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for name in ("libs/libc.prx\0ignored", "libs/sub\0dir/libc.prx",
+                     "libs\\libc.prx", "libs/sub\\libc.prx"):
+            with self.subTest(name=name):
+                placeholder = name.replace("\0", "!").replace("\\", "!")
+                invalid = library_zip([(placeholder, b"content")])
+                invalid = invalid.replace(placeholder.encode(), name.encode())
+                with zipfile.ZipFile(io.BytesIO(invalid)) as archive:
+                    self.assertEqual(archive.infolist()[0].orig_filename, name)
+                with patch.object(zipfile.ZipFile, "testzip", side_effect=AssertionError("archive decompressed")):
+                    with self.assertRaisesRegex(ValueError, "Invalid library archive layout"):
+                        self.publish(invalid, valid)
+                self.assertEqual(self.manifest.read_bytes(), self.previous)
+                self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+
+    def test_rewritten_path_in_second_platform_preserves_previous_manifest(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        invalid = library_zip([("libs/libc.prx!ignored", b"content")])
+        invalid = invalid.replace(b"libs/libc.prx!ignored", b"libs/libc.prx\0ignored")
+        with self.assertRaisesRegex(ValueError, "Invalid library archive layout"):
+            self.publish(valid, invalid)
+        self.assertEqual(self.manifest.read_bytes(), self.previous)
+        self.assertEqual(self.existing.read_bytes(), b"previous archive")
+        self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
+
+    def test_unicode_archive_paths_are_published_unchanged(self):
+        payload = library_zip([("libs/\u65e5\u672c\u8a9e/\u00e9.prx", b"content"),
+                               ("libs/licenses/Third party.txt", b"license")])
+        self.publish(payload, payload)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        for asset in manifest["platforms"].values():
+            self.assertEqual((self.output / asset["path"]).read_bytes(), payload)
+
     def test_expanded_limit_is_checked_before_decompression(self):
         payload = library_zip([("libs/libc.prx", b"a" * 4097)])
         with patch.object(build_web, "MAX_EXPANDED_BYTES", 4096, create=True), \
@@ -175,6 +231,53 @@ class BuildWebCliTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+class ReleaseMetadataTests(unittest.TestCase):
+    def test_malformed_api_responses_are_cli_errors_without_site_changes(self):
+        documents = ({}, [], None, {"tag_name": 1}, {"tag_name": "v1", "html_url": "url", "assets": None},
+                     {"tag_name": "v1", "html_url": "url", "assets": [None]},
+                     {"tag_name": "v1", "html_url": "url", "assets": [{"name": 1}]})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            web = root / "web"
+            web.mkdir()
+            preserved = web / "keep.txt"
+            preserved.write_bytes(b"previous site")
+            for document in documents:
+                with self.subTest(document=document):
+                    errors, output = io.StringIO(), io.StringIO()
+                    with patch.object(build_web, "request", return_value=io.BytesIO(json.dumps(document).encode())), contextlib.redirect_stderr(errors), contextlib.redirect_stdout(output):
+                        with self.assertRaises(SystemExit) as raised:
+                            build_web.main(["--build", str(root), "--release"])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertNotIn("Traceback", errors.getvalue())
+                    self.assertIn("release", errors.getvalue().lower())
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual(preserved.read_bytes(), b"previous site")
+                    self.assertEqual(list(root.iterdir()), [web])
+                    self.assertEqual(list(web.iterdir()), [preserved])
+
+    def test_selected_asset_metadata_is_checked_before_any_download(self):
+        def asset(platform):
+            return {"name": f"prx-{platform}-v1.zip", "size": 10, "browser_download_url": "https://example.invalid/asset", "digest": None}
+        changes = [("size", x) for x in (True, 0, -1, 1.5, "10", 512*1024*1024+1)]
+        changes += [("browser_download_url", x) for x in (None, "", 1)]
+        changes += [("digest", x) for x in (False, 1, [])]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / "release.json"
+            existing.write_bytes(b"previous manifest")
+            for field, value in changes:
+                with self.subTest(field=field, value=value):
+                    windows, linux = asset("windows"), asset("linux")
+                    linux[field] = value
+                    release = {"tag_name": "v1", "html_url": "https://example.invalid/v1", "assets": [windows, linux]}
+                    with patch.object(build_web, "request", side_effect=AssertionError("download occurred before preflight")):
+                        with self.assertRaisesRegex(ValueError, "release asset"):
+                            build_web.publish_libraries(root, release)
+                    self.assertEqual(existing.read_bytes(), b"previous manifest")
+                    self.assertEqual(list(root.iterdir()), [existing])
 
 
 if __name__ == "__main__":
