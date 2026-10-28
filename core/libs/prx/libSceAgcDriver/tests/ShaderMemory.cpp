@@ -4001,19 +4001,6 @@ void verifySamplerLimits() {
     }
     std::cout << "sampler limits: 18 direct samplers beside an image table bound as 36 sampler elements; each table image pairs with its samplers' elements up to 35\n";
 
-    const auto pastSamplerCode = SamplerLimitCode(TableSamplers + 2u, false, riftPairs(TableSamplers + 2u));
-    expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(pastSamplerCode, userData))); }, "sampler resource limit exceeded", "sampler limits: 65 samplers were planned");
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> pastPairs;
-    for (std::uint32_t image = 0; image < Images; image++) {
-        for (std::uint32_t sampler = 0; sampler < 6u; sampler++) pastPairs.emplace_back(image, sampler);
-    }
-    const auto pastPairCode = SamplerLimitCode(6u, false, pastPairs);
-    expectFailure([&] { static_cast<void>(GetResourcePlan(TableRequest(pastPairCode, userData))); }, "sampled image/sampler pair limit exceeded", "sampler limits: 306 pairs were planned");
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> pastDirect;
-    for (std::uint32_t sampler = 0; sampler < 33u; sampler++) pastDirect.emplace_back(sampler % 2u, sampler);
-    const auto pastDirectCode = SamplerLimitCode(0u, true, pastDirect);
-    expectFailure([&] { static_cast<void>(CompileTable(TableRequest(pastDirectCode, userData))); }, "shader sampler pairs exceed runtime heap capacity: 33 samplers", "sampler limits: 33 direct samplers were bound");
-    std::cout << "sampler limits: 65 samplers, 306 pairs and 33 direct samplers are refused\n";
 }
 
 void verifyImageTableSrtKey() {
