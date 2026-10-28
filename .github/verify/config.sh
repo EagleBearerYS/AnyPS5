@@ -1,0 +1,3 @@
+BASE=facac6a4c52fa6e4bfb2b77ba98cab5e449555d4
+REPEAT=10
+EXTRA_TESTS='guest_raise_exception|agc_driver_host_write_pending_storage|agc_driver_host_write_hook'
