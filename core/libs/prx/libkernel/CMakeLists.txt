@@ -20,6 +20,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/SandboxCertificates.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/File/src/Stdio.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libc/src/Rename.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Ksem.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Semaphore/src/Semaphore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/SyncOnAddress/src/SyncOnAddress.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/DirectMemory/Export.cpp
@@ -1854,8 +1855,12 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME guest_memory COMMAND guest_memory_tests)
     add_test(NAME guest_mmap_fixed_anonymous COMMAND guest_memory_tests fixed-anonymous)
+    if(WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test(NAME guest_mmap_executable COMMAND guest_memory_tests executable-mappings)
+        set_tests_properties(guest_mmap_executable PROPERTIES TIMEOUT 20)
+    endif()
     if(WIN32)
-        set_tests_properties(guest_memory guest_mmap_fixed_anonymous PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_memory guest_mmap_fixed_anonymous guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     if(NOT ANYPS5_ENABLE_ASAN AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
@@ -2070,6 +2075,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_fstat_fault PROPERTIES TIMEOUT 15)
     if(WIN32)
         set_tests_properties(guest_fstat_fault PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+    endif()
+    add_test_executable(guest_posix_mutex_trylock_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixMutexTrylock.cpp)
+    target_include_directories(guest_posix_mutex_trylock_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_posix_mutex_trylock_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_posix_mutex_trylock_tests)
+    add_test(NAME guest_posix_mutex_trylock COMMAND guest_posix_mutex_trylock_tests)
+    set_tests_properties(guest_posix_mutex_trylock PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_posix_mutex_trylock PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_posix_specific_tests ${LIBS_INCLUDE_DIR}/tests/GuestPosixSpecific.cpp)
