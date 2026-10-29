@@ -125,7 +125,7 @@ void QuickReallocation() {
     std::int32_t error = -1;
     void* block = ft_mem_qrealloc_nid_postfix(&recorder.memory, 4, 0, 3, nullptr, &error);
     Require(block && error == 0 && recorder.allocs == 1 && recorder.lastSize == 12 && recorder.reallocs == 0, "qrealloc from zero items allocates new_count * item_size");
-    Require(Filled(block, 12, 0xAA), "qrealloc from zero items leaves the block uncleared");
+    Require(Filled(block, 12, 0), "qrealloc from zero items clears the new block, as ft_mem_alloc does");
     std::memset(block, 0x11, 12);
 
     error = -1;

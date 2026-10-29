@@ -55,8 +55,7 @@ void* APS5_VABI ft_mem_qrealloc_nid_postfix(FreeType::GuestMemoryRec* memory, st
     } else if (newCount > IntMax / itemSize) {
         result = ArrayTooLarge;
     } else if (currentCount == 0) {
-        block = memory->alloc(memory, newCount * itemSize);
-        if (!block) result = OutOfMemory;
+        block = ft_mem_alloc_nid_postfix(memory, newCount * itemSize, &result);
     } else {
         void* resized = memory->realloc(memory, Bytes(currentCount, itemSize), newCount * itemSize, block);
         if (resized) {
