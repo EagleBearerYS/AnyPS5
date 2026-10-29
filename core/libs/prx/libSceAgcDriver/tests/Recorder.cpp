@@ -12041,9 +12041,10 @@ void pipelineLibraryTests(const Device& device) {
     std::cout << "Pipeline library reuse tests passed\n";
 }
 
-bool deferredDrawBuildTests(const Device& device, Recorder& recorder) {
+bool drawResolveRaceTests(const Device& device, Recorder& recorder, bool cached) {
+    const std::string path = cached ? "a cached draw build found before the lock and proved under it" : "a deferred draw build";
     if (!device.NullDescriptors()) {
-        std::cout << "nullDescriptor unavailable: deferred draw builds not tested\n";
+        std::cout << "nullDescriptor unavailable: " << path << " not tested\n";
         return false;
     }
     constexpr std::uint32_t side = 64;
@@ -12051,7 +12052,7 @@ bool deferredDrawBuildTests(const Device& device, Recorder& recorder) {
     constexpr std::size_t bytes = 65536;
     void* block = AllocateWatched(bytes, 65536);
     if (block == nullptr) {
-        std::cout << "no write watching: deferred draw builds not tested\n";
+        std::cout << "no write watching: " << path << " not tested\n";
         return false;
     }
     auto* memory = static_cast<std::uint8_t*>(block);
@@ -12108,7 +12109,7 @@ bool deferredDrawBuildTests(const Device& device, Recorder& recorder) {
     };
     vertex.bindings.push_back(binding);
     const auto resource = DecodeTextureResource(binding.guestDescriptor);
-    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the deferred draw build T# does not describe its surface");
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the draw build race T# does not describe its surface");
     const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}};
     const ColorTarget target{};
     SampleProgram program(context, recorder);
@@ -12119,42 +12120,49 @@ bool deferredDrawBuildTests(const Device& device, Recorder& recorder) {
         const auto red = program.Red(textures[0]->View(), textures[0]->Layout(), 0.0f);
         Require(std::abs(red - static_cast<float>(byte) / 255.0f) < 0.5f / 255.0f, what + ": the build sampled " + std::to_string(red * 255.0f) + ", expected " + std::to_string(byte));
     };
-    const auto deferred = [&] { return std::make_shared<ShaderResources>(context, std::span<const CompiledShader>(shaders), target, 1u, 0u, 0u, std::span<const GuestMemorySnapshot>{}, true); };
-    const auto complete = [&](ShaderResources& resources) {
+    const auto build = [&] {
         std::lock_guard gpu(GpuMutex());
-        resources.Complete();
+        return std::make_shared<ShaderResources>(context, std::span<const CompiledShader>(shaders), target, 1u, 0u, 0u);
     };
     const auto store = [&](std::uint8_t byte) {
         std::memset(memory, byte, surfaceBytes);
         AgcDriver::GuestMemory::MarkWritten(address, surfaceBytes);
     };
     AgcDriver::GuestMemory::BumpCollectEpoch();
-    std::shared_ptr<ShaderResources> immediate;
-    {
-        std::lock_guard gpu(GpuMutex());
-        immediate = std::make_shared<ShaderResources>(context, std::span<const CompiledShader>(shaders), target, 1u, 0u, 0u);
-    }
-    expect(*immediate, 0x20, "an immediate draw build");
-    auto unchanged = deferred();
-    Require(!unchanged->Completed(), "a deferred draw build completed in its constructor");
-    complete(*unchanged);
-    expect(*unchanged, 0x20, "a deferred draw build over unchanged memory");
-    Require(unchanged->Reusable() == immediate->Reusable() && unchanged->SampledTextures() == immediate->SampledTextures(), "a deferred draw build over unchanged memory bound other textures than the immediate build");
-    auto driver = deferred();
-    store(0x40);
-    complete(*driver);
-    expect(*driver, 0x40, "a driver store between a deferred draw build's stages");
-    auto evicted = deferred();
-    {
+    auto object = build();
+    expect(*object, 0x20, "an immediate draw build");
+    const auto reference = object->SampledTextures();
+    const auto resolve = [&](const std::function<void()>& race) {
+        if (!cached) {
+            auto deferred = std::make_shared<ShaderResources>(context, std::span<const CompiledShader>(shaders), target, 1u, 0u, 0u, std::span<const GuestMemorySnapshot>{}, true);
+            Require(!deferred->Completed(), "a deferred draw build completed in its constructor");
+            race();
+            std::lock_guard gpu(GpuMutex());
+            deferred->Complete();
+            return deferred;
+        }
+        race();
+        {
+            std::lock_guard gpu(GpuMutex());
+            if (object->Revalidate(std::span<const CompiledShader>(shaders))) return object;
+        }
+        object = build();
+        return object;
+    };
+    auto unchanged = resolve([] {});
+    expect(*unchanged, 0x20, path + " over unchanged memory");
+    Require(unchanged->Reusable() && unchanged->SampledTextures() == reference, path + " over unchanged memory bound other textures than the immediate build");
+    auto driver = resolve([&] { store(0x40); });
+    expect(*driver, 0x40, path + " with a driver store before the lock");
+    const auto stored = driver->SampledTextures();
+    auto evicted = resolve([&] {
         std::lock_guard gpu(GpuMutex());
         ClearCachedTextures(context.device);
-    }
-    complete(*evicted);
-    expect(*evicted, 0x40, "a texture cache eviction between a deferred draw build's stages");
-    Require(evicted->SampledTextures() != driver->SampledTextures(), "a deferred draw build bound a texture evicted between its stages");
-    auto gpu = deferred();
+    });
+    expect(*evicted, 0x40, path + " with a texture cache eviction before the lock");
+    Require(evicted->SampledTextures() != stored, path + " bound a texture evicted before the lock");
     std::shared_ptr<StorageTexture> image;
-    {
+    auto gpu = resolve([&] {
         std::lock_guard lock(GpuMutex());
         image = StorageTexture::Create(context, detiler, resource, 0);
         recorder.Keep(image);
@@ -12165,9 +12173,8 @@ bool deferredDrawBuildTests(const Device& device, Recorder& recorder) {
         context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
         image->MarkDirty();
-    }
-    complete(*gpu);
-    expect(*gpu, 0x80, "results a GPU write left pending over the surface between a deferred draw build's stages");
+    });
+    expect(*gpu, 0x80, path + " with GPU results left pending over the surface before the lock");
     {
         std::lock_guard lock(GpuMutex());
         image->WriteBack();
@@ -12178,14 +12185,123 @@ bool deferredDrawBuildTests(const Device& device, Recorder& recorder) {
     std::vector<std::byte> written(surfaceBytes);
     AgcDriver::GuestMemory::Read(address, written);
     Require(std::to_integer<std::uint8_t>(written[0]) == 0x80 && std::to_integer<std::uint8_t>(written[surfaceBytes - 4]) == 0x80, "the pending GPU results did not reach guest memory");
-    auto cpu = deferred();
-    std::memset(memory, 0x60, surfaceBytes);
-    complete(*cpu);
+    resolve([&] { std::memset(memory, 0x60, surfaceBytes); });
     AgcDriver::GuestMemory::BumpCollectEpoch();
-    auto ordered = deferred();
-    complete(*ordered);
-    expect(*ordered, 0x60, "a CPU store between a deferred draw build's stages, after the next ordering point");
-    std::cout << "deferred draw build tests passed\n";
+    auto ordered = resolve([] {});
+    expect(*ordered, 0x60, path + " with a CPU store before the lock, after the next ordering point");
+    std::cout << path << ": races before the lock passed\n";
+    return true;
+}
+
+bool preResolveDrawTests(const Device& device, Recorder& recorder) {
+    if (!device.Graphics() || !device.NullDescriptors()) {
+        std::cout << "a graphics queue and nullDescriptor are needed: pre-resolved draws not tested\n";
+        return false;
+    }
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t bytes = unit;
+    constexpr std::uint32_t side = 64;
+    void* watched = AllocateWatched(bytes, unit);
+    std::vector<std::byte> fallback(watched == nullptr ? bytes + unit : 0);
+    auto* block = watched != nullptr ? static_cast<std::byte*>(watched) : reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(fallback.data()) + unit - 1) & ~(unit - 1));
+    struct Release {
+        void* watched;
+        ~Release() { if (watched != nullptr) ReleaseWatched(watched, bytes); }
+    } release{watched};
+    std::fill_n(block, bytes, std::byte{0x30});
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    auto context = device.GetContext();
+    context.recorder = &recorder;
+    context.hostImportAlignment = 0;
+    context.dmaBufImport = false;
+    context.nullDescriptors = true;
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    TextureCache textureCache(context);
+    context.textureCache = &textureCache;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Cleanup {
+        const Context& context;
+        Recorder& recorder;
+        void* block;
+        ~Cleanup() {
+            {
+                std::lock_guard gpu(GpuMutex());
+                recorder.Sync();
+                WaitForOptimizedPipelines(context.device);
+                SharedResourceCache().Clear();
+                ClearCachedTextures(context.device);
+                recorder.Sync();
+                ClearCachedPipelines(context.device);
+            }
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block);
+        }
+    } cleanup{context, recorder, block};
+    ShaderRecompiler::RecompileResult vertex;
+    vertex.spirv = std::vector<std::uint32_t>(std::begin(COVER_VERT_SPV), std::end(COVER_VERT_SPV));
+    vertex.variantId = 111;
+    ShaderRecompiler::RecompileResult pixel;
+    pixel.spirv = std::vector<std::uint32_t>(std::begin(COVER_FRAG_SPV), std::end(COVER_FRAG_SPV));
+    pixel.variantId = 112;
+    const std::array shaders{CompiledShader{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, CompiledShader{ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}};
+    State state{};
+    state.stages.path = ShaderPath::Vertex;
+    state.color = {address, {side, side}, VK_FORMAT_R8G8B8A8_UNORM, unit, 0xe4u, ColorTileMode::RenderTarget, 4};
+    state.colors = {state.color};
+    state.hasColorTarget = true;
+    state.renderExtent = {side, side};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.viewport = {0, static_cast<float>(side), static_cast<float>(side), -static_cast<float>(side), 0, 1};
+    state.scissor = {{0, 0}, {side, side}};
+    state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    state.blend.colorWriteMask = 15;
+    state.blends = {state.blend};
+    const AgcDriver::Pm4::DrawParameters triangle{0, 3, 0, 1, 0, false};
+    const auto draw = [&](const State& drawn, PreResolvedDraw* preResolved, const std::string& what) {
+        std::lock_guard gpu(GpuMutex());
+        Draw(context, drawn, triangle, shaders, {}, nullptr, nullptr, 0, preResolved);
+        WaitForOptimizedPipelines(context.device);
+        std::vector<std::byte> texels(side * side * 4);
+        ReadColorTarget(state.color, texels);
+        Require(std::all_of(texels.begin(), texels.end(), [](std::byte texel) { return texel == std::byte{255}; }), what + ": the draw did not cover its target");
+        std::vector<std::byte> cleared(side * side * 4);
+        AgcDriver::GuestMemory::Write(address, cleared);
+    };
+    const auto expect = [&](const PreResolveCounts& before, std::uint64_t found, std::uint64_t built, std::uint64_t used, std::uint64_t unused, const std::string& what) {
+        const auto after = PreResolveCounted();
+        Require(after.found - before.found == found && after.built - before.built == built && after.used - before.used == used && after.unused - before.unused == unused && after.failed == before.failed, what + ": pre-resolve counts moved by found " + std::to_string(after.found - before.found) + ", built " + std::to_string(after.built - before.built) + ", used " + std::to_string(after.used - before.used) + ", unused " + std::to_string(after.unused - before.unused) + ", failed " + std::to_string(after.failed - before.failed));
+    };
+    auto before = PreResolveCounted();
+    auto first = PreResolveDraw(context, state, triangle, shaders, {});
+    Require(first != nullptr, "a recordable draw was not pre-resolved");
+    draw(state, first.get(), "a draw built in stage A before the GPU mutex");
+    expect(before, 0, 1, 1, 0, "a draw built in stage A before the GPU mutex");
+    before = PreResolveCounted();
+    auto second = PreResolveDraw(context, state, triangle, shaders, {});
+    draw(state, second.get(), "a cache hit found before the GPU mutex");
+    expect(before, 1, 0, 1, 0, "a cache hit found before the GPU mutex");
+    before = PreResolveCounted();
+    auto third = PreResolveDraw(context, state, triangle, shaders, {});
+    {
+        std::lock_guard gpu(GpuMutex());
+        SharedResourceCache().Clear();
+    }
+    draw(state, third.get(), "a cache hit evicted between the pre-resolve and the GPU mutex");
+    expect(before, 1, 0, 1, 0, "a cache hit evicted between the pre-resolve and the GPU mutex");
+    before = PreResolveCounted();
+    auto fourth = PreResolveDraw(context, state, triangle, shaders, {});
+    draw(state, fourth.get(), "the draw after an eviction before the GPU mutex");
+    expect(before, 0, 1, 1, 0, "the draw after an eviction before the GPU mutex");
+    before = PreResolveCounted();
+    const State other = state;
+    auto stray = PreResolveDraw(context, other, triangle, shaders, {});
+    draw(state, stray.get(), "a draw handed another draw's pre-resolve");
+    expect(before, 1, 0, 0, 1, "a draw handed another draw's pre-resolve");
+    std::cout << "pre-resolved draw tests passed\n";
     return true;
 }
 
@@ -12559,9 +12675,9 @@ int main(int argc, char** argv) {
             unchangedCpuStampTests(device, recorder);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--deferred-draw-build-only") {
+        if (argc == 2 && (std::string_view(argv[1]) == "--deferred-draw-build-only" || std::string_view(argv[1]) == "--pre-resolve-hit-only" || std::string_view(argv[1]) == "--pre-resolve-draw-only")) {
             gpu.unlock();
-            const bool ran = deferredDrawBuildTests(device, recorder);
+            const bool ran = std::string_view(argv[1]) == "--pre-resolve-draw-only" ? preResolveDrawTests(device, recorder) : drawResolveRaceTests(device, recorder, std::string_view(argv[1]) == "--pre-resolve-hit-only");
             gpu.lock();
             return ran ? 0 : 77;
         }
