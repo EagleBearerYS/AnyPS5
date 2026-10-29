@@ -5674,6 +5674,11 @@ void untrackedForgetTests(const Device& device, Recorder& recorder) {
     std::cout << "untracked comparison memo: ok\n";
 }
 
+bool tableIndexRequested() {
+    const char* text = std::getenv("APS5_TABLE_INDEX");
+    return text != nullptr && text[0] != '\0' && text[0] != '0';
+}
+
 void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     context.nullDescriptors = device.NullDescriptors();
@@ -5733,19 +5738,26 @@ void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
     imageBinding.imageSamplers = {0};
     imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
     imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+    const auto imageBytes = DescribeSurface(DecodeTextureResource(imageBinding.guestDescriptor)).guestBytes;
     imageProgram.bindings.push_back(imageBinding);
     const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
     AgcDriver::GuestMemory::BumpCollectEpoch();
     auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
     recorder.Sync();
+    const auto version = [&] {
+        const auto image = StorageTexture::FindLive(address, imageBytes);
+        Require(image != nullptr, "the view's storage image is not cached");
+        return image->Version();
+    };
     ShaderResources::ProofReport report;
     Require(sampled->Revalidate(std::span(&imageCompute, 1), &report), "a sampled template over untracked memory did not revalidate");
     Require(report.path == ShaderResources::ProofPath::Fast, "a sampled template over untracked memory took the full walk in the same collect epoch");
     Require(sampled->Revalidate(std::span(&imageCompute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "a second proof in the same collect epoch was not fast");
+    const auto before = version();
     std::memset(block, 0x41, 4096);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     static_cast<void>(sampled->Revalidate(std::span(&imageCompute, 1), &report));
-    Require(report.path != ShaderResources::ProofPath::Fast, "a sampled template over untracked memory kept its fast proof across a store and a new collect epoch");
+    Require(report.path != ShaderResources::ProofPath::Fast || (tableIndexRequested() && version() != before), "a sampled template over untracked memory kept its fast proof across a store and a new collect epoch");
     sampled.reset();
     std::cout << "fast revalidation over untracked memory: ok\n";
 }
@@ -5853,40 +5865,47 @@ void untrackedHintProofTests(const Device& device, Recorder& recorder) {
         Require(image != nullptr, "the view's storage image is not cached");
         return image->Version();
     };
+    const bool indexed = tableIndexRequested();
+    const auto followed = [&](bool stored) {
+        const auto firstBefore = version(first);
+        const auto secondBefore = version(second);
+        if (!fast()) return true;
+        return indexed && (version(first) != firstBefore) == stored && version(second) == secondBefore;
+    };
     const auto settle = [&](const std::string& after) {
         AgcDriver::GuestMemory::BumpCollectEpoch();
         static_cast<void>(fast());
         AgcDriver::GuestMemory::BumpCollectEpoch();
-        Require(fast() == hinted, after + (hinted ? ": a hinted proof walked across an unwritten collect epoch" : ": a proof without a hint stayed fast across a collect epoch"));
+        Require(hinted ? fast() : followed(false), after + (hinted ? ": a hinted proof walked across an unwritten collect epoch" : ": a proof without a hint stayed fast across a collect epoch"));
     };
     Require(fast(), "a sampled template over untracked memory took the full walk in the same collect epoch");
     AgcDriver::GuestMemory::BumpCollectEpoch();
     static_cast<void>(fast());
     Require(fast(), "a sampled template over untracked memory took the full walk twice in one collect epoch");
     AgcDriver::GuestMemory::BumpCollectEpoch();
-    Require(fast() == hinted, hinted ? "a proof over a hinted untracked range walked after a collect epoch with no write" : "a proof over untracked memory without a write-watch hint stayed fast across a collect epoch");
+    Require(hinted ? fast() : followed(false), hinted ? "a proof over a hinted untracked range walked after a collect epoch with no write" : "a proof over untracked memory without a write-watch hint stayed fast across a collect epoch");
 
     auto before = version(first);
     AgcDriver::GuestMemory::BumpCollectEpoch();
     std::memset(block, 0x41, 4096);
-    Require(!fast(), "a CPU store after a collect epoch kept the fast proof");
+    Require(followed(true), "a CPU store after a collect epoch kept the fast proof");
     Require(version(first) != before, "the walk after a CPU store kept the old content");
     settle("after a CPU store");
 
     before = version(first);
     std::memset(block, 0x42, 4096);
     AgcDriver::GuestMemory::MarkWritten(first, 4096);
-    Require(!fast(), "a driver store kept the fast proof");
+    Require(followed(true), "a driver store kept the fast proof");
     Require(version(first) != before, "the walk after a driver store kept the old content");
     settle("after a driver store");
 
     before = version(first);
     std::memset(block, 0x43, 4096);
     recorder.NotePendingWrite(first, 4096);
-    Require(!fast(), "a recorded GPU write over the range kept the fast proof");
+    Require(followed(false), "a recorded GPU write over the range kept the fast proof");
     recorder.Sync();
     AgcDriver::GuestMemory::BumpCollectEpoch();
-    Require(!fast(), "a completed GPU write over the range kept the fast proof after its completion");
+    Require(followed(true), "a completed GPU write over the range kept the fast proof after its completion");
     Require(version(first) != before, "the walk after a completed GPU write kept the old content");
     settle("after a recorded GPU write");
 
@@ -5895,13 +5914,13 @@ void untrackedHintProofTests(const Device& device, Recorder& recorder) {
     AgcDriver::GuestMemory::BumpCollectEpoch();
     AgcDriver::GuestMemory::MarkWritten(second, 4096);
     AgcDriver::GuestMemory::SetFlushHook(&storeDuringWalk);
-    const bool walked = !fast();
+    const bool storeFollowed = followed(false);
     recorder.Activate();
     Require(walkStore.done, "the walk did not compare the second surface");
-    Require(walked, "a driver store over the second surface kept the fast proof");
+    Require(storeFollowed, "a driver store over the second surface kept the fast proof");
     Require(version(first) == before, "the first surface was read again after the store made while the second was compared");
     AgcDriver::GuestMemory::BumpCollectEpoch();
-    Require(!fast(), "a CPU store made after the first surface was compared and before its stamp was recorded kept the fast proof");
+    Require(followed(true), "a CPU store made after the first surface was compared and before its stamp was recorded kept the fast proof");
     Require(version(first) != before, "the walk after a store made during the previous walk kept the old content");
     sampled.reset();
     std::cout << "untracked proofs across collect epochs: ok\n";
