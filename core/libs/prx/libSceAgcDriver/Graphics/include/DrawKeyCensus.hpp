@@ -44,6 +44,29 @@ enum class Count : std::size_t {
     Total,
 };
 
+enum class Uncacheable : std::uint8_t {
+    NotRecordable,
+    NoVariantId,
+    BdaPagetable,
+    FaultBuffer,
+    Switch,
+    Total,
+};
+
+enum class NotRecordable : std::uint8_t {
+    SyncDraws,
+    NoRecorder,
+    DumpTarget,
+    ResidentTargetsOff,
+    NoDetiler,
+    ResidentLinearOff,
+    LinearNotImported,
+    Total,
+};
+
+inline constexpr std::size_t UncacheableReasons = static_cast<std::size_t>(Uncacheable::Total);
+inline constexpr std::size_t NotRecordableReasons = static_cast<std::size_t>(NotRecordable::Total);
+
 enum class Admit : std::uint8_t {
     Cached,
     Seen,
@@ -67,6 +90,23 @@ struct Lookup {
     std::uint64_t alias = 0;
     bool cached = false;
     std::span<const UserWord> words;
+    std::span<const UserWord> registers;
+};
+
+struct ShaderSetCount {
+    std::uint64_t vertex = 0;
+    std::uint64_t pixel = 0;
+    std::uint64_t lookups = 0;
+    std::array<std::uint64_t, UncacheableReasons> reasons{};
+};
+
+struct WindowSummary {
+    std::uint64_t serial = 0;
+    std::uint64_t firstLine = 0;
+    std::uint64_t lastLine = 0;
+    std::uint64_t uncacheable = 0;
+    std::size_t shaderSets = 0;
+    std::vector<ShaderSetCount> top;
 };
 
 struct FrameSummary {
@@ -84,6 +124,17 @@ struct FrameSummary {
     std::uint64_t contentChanged = 0;
     std::uint64_t contentUnhashed = 0;
     std::vector<std::pair<std::uint32_t, std::uint64_t>> slots;
+    std::array<std::uint64_t, UncacheableReasons> uncacheable{};
+    std::array<std::uint64_t, NotRecordableReasons> notRecordable{};
+    std::array<std::uint64_t, UncacheableReasons> uncacheableNanoseconds{};
+    std::uint64_t missBuilds = 0;
+    std::uint64_t missNanoseconds = 0;
+    std::uint64_t hitLookups = 0;
+    std::uint64_t hitNanoseconds = 0;
+    std::uint64_t shaderSetOnlyRepeats = 0;
+    std::uint64_t comparedRegisterDraws = 0;
+    std::uint64_t differingRegisters = 0;
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> registerSlots;
 };
 
 bool Enabled();
@@ -91,8 +142,14 @@ void Add(Count count);
 void Admitted(Admit admit);
 void NoteRelocationsLearned(std::size_t shaderSets);
 void NoteLookup(const Lookup& lookup);
+void NoteProgram(const void* program, std::uint64_t codeAddress);
+void NoteUncacheable(Uncacheable reason, NotRecordable why, const void* vertex, const void* pixel);
+void NoteUncacheableBuild(Uncacheable reason, std::uint64_t nanoseconds);
+void NoteMissBuild(std::uint64_t nanoseconds);
+void NoteHit(std::uint64_t nanoseconds);
 void Frame();
 std::vector<FrameSummary> RecentFrames();
+std::vector<WindowSummary> RecentWindows();
 
 }
 

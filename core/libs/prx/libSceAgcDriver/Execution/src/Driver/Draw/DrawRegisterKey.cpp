@@ -104,9 +104,21 @@ std::uint64_t DrawShaderSetKey(const QueueState& queue, const ShaderRegistry& re
 void NoteDrawKeyCensus(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t key, std::uint64_t shape, std::uint64_t alias, bool cached) {
     static const bool allUserWords = std::getenv("APS5_DRAW_KEY_ALL_USER_WORDS") != nullptr;
     thread_local std::vector<Graphics::DrawKeyCensus::UserWord> words;
+    thread_local std::vector<Graphics::DrawKeyCensus::UserWord> registers;
     words.clear();
+    registers.clear();
     forEachKeyedUserWord(queue, allUserWords, [&](std::uint32_t offset, std::uint32_t value) { words.push_back({offset, value}); });
-    Graphics::DrawKeyCensus::NoteLookup({key, shape, DrawShaderSetKey(queue, registry), alias, cached, words});
+    const auto& masks = registerMasks();
+    const auto keyed = [&](const Registers& bank, Graphics::RegisterBank which) {
+        const auto& mask = *masks[static_cast<std::size_t>(which)];
+        bank.ForEach([&](std::uint32_t offset, std::uint32_t value) {
+            if (mask.Contains(offset)) registers.push_back({(static_cast<std::uint32_t>(which) << 16u) | offset, value});
+        });
+    };
+    keyed(queue.context, Graphics::RegisterBank::Context);
+    keyed(queue.shader, Graphics::RegisterBank::Shader);
+    keyed(queue.userConfig, Graphics::RegisterBank::UserConfig);
+    Graphics::DrawKeyCensus::NoteLookup({key, shape, DrawShaderSetKey(queue, registry), alias, cached, words, registers});
 }
 
 std::uint64_t Driver::drawIdentityKey(const QueueState& queue, const ShaderRegistry& registry) {

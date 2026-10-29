@@ -23,7 +23,9 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <numeric>
 #include <stdexcept>
+#include <string_view>
 #include <string>
 #include <utility>
 #include <vector>
@@ -43,6 +45,7 @@ constexpr std::uint32_t OutputHandle = 7;
 constexpr std::uint32_t Frames = 4;
 constexpr std::uint32_t MovedCopies = 3;
 constexpr std::uint32_t VertexBufferRegister = 0x08c;
+constexpr std::uint32_t ViewportZOffsetRegister = 0x114;
 constexpr std::size_t Block = 65536;
 constexpr std::size_t CopyBytes = 256;
 std::byte* ColorMemory = nullptr;
@@ -128,12 +131,13 @@ void AppendDraw(std::vector<std::uint32_t>& words, const std::byte* vertices) {
     words.insert(words.end(), {0xc0000000u | (1u << 16u) | (DrawIndexAuto << 8u), static_cast<std::uint32_t>(Vertices.size()), 2u});
 }
 
-std::vector<std::uint32_t> Frame(const std::byte* fixed, const std::byte* moved) {
+std::vector<std::uint32_t> Frame(const std::byte* fixed, const std::byte* moved, std::uint32_t zOffset) {
     const auto colorAddress = reinterpret_cast<std::uintptr_t>(ColorMemory);
     const auto vertexAddress = reinterpret_cast<std::uintptr_t>(VertexCode.data());
     const auto pixelAddress = reinterpret_cast<std::uintptr_t>(PixelCode.data());
     std::vector<std::uint32_t> words;
     for (const auto& [offset, value] : ContextBaseline) SetRegister(words, SetContextReg, offset, value);
+    if (zOffset != 0) SetRegister(words, SetContextReg, ViewportZOffsetRegister, zOffset);
     SetRegister(words, SetContextReg, 0x318, static_cast<std::uint32_t>(colorAddress >> 8u));
     SetRegister(words, SetContextReg, 0x390, static_cast<std::uint32_t>(colorAddress >> 40u));
     SetRegister(words, SetContextReg, 0x3b0, ((Width - 1u) << 14u) | (Height - 1u));
@@ -191,11 +195,28 @@ void CheckConsistent(const Census::FrameSummary& frame) {
     Require(count(Census::Count::KeyCached) <= count(Census::Count::Lookups), what + ": more cached keys than lookups");
     Require(frame.addressLikeWords <= frame.differingWords, what + ": more address-like words than differing words");
     Require(frame.contentSame + frame.contentChanged + frame.contentUnhashed <= frame.shapeRepeats, what + ": more content verdicts than shape-key repeats");
+    const auto sum = [](const auto& values) { return std::accumulate(values.begin(), values.end(), std::uint64_t{0}); };
+    Require(sum(frame.uncacheable) == count(Census::Count::ResourceUncacheable), what + ": the uncacheable lookups by reason do not add up to the uncacheable lookups");
+    Require(sum(frame.notRecordable) == frame.uncacheable[static_cast<std::size_t>(Census::Uncacheable::NotRecordable)], what + ": the not-recordable lookups by condition do not add up to the not-recordable lookups");
+    Require(frame.missBuilds == count(Census::Count::ResourceMisses) && frame.hitLookups == count(Census::Count::ResourceHits), what + ": the timed misses and hits differ from the counted ones");
+    Require(frame.comparedRegisterDraws <= frame.shaderSetOnlyRepeats && frame.shaderSetOnlyRepeats <= frame.shaderSetRepeats, what + ": more register comparisons than shader-set-only repeats, or more of those than shader-set repeats");
+    std::uint64_t slotted = 0;
+    for (const auto& slot : frame.registerSlots) slotted += slot.second;
+    Require(frame.registerSlots.size() <= 8 && slotted <= frame.differingRegisters, what + ": the top register slots count more than the differing registers");
+}
+
+std::uint64_t Total(const std::vector<Census::FrameSummary>& frames, const auto& field) {
+    std::uint64_t total = 0;
+    for (const auto& frame : frames) total += field(frame);
+    return total;
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
+    const std::string_view mode = argc > 1 ? argv[1] : "";
+    const bool syncDraws = mode == "--sync-draws";
+    const bool registers = mode == "--registers";
     try {
         {
             const auto device = OpenVulkanTestDevice();
@@ -215,7 +236,7 @@ int main() {
         AgcDriverRegisterVideoOutput_nid_postfix(OutputHandle, output);
         for (std::uint32_t frame = 0; frame < Frames; ++frame) {
             EndOfPipe = 0;
-            auto words = Frame(copies, copies + (1u + frame % MovedCopies) * CopyBytes);
+            auto words = Frame(copies, copies + (1u + frame % MovedCopies) * CopyBytes, registers && frame % 2u == 1u ? std::bit_cast<std::uint32_t>(0.25f) : 0u);
             Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
             Require(sceAgcDriverSubmitDcb(&packet) == 0, "draw key census: the frame submission failed");
             AgcDriverWaitIdle_nid_postfix();
@@ -238,11 +259,32 @@ int main() {
         const auto& last = frames.back();
         const auto what = Describe(last);
         Require(last.flipped && last.keyed == 2, what + ": the last frame's two draws were not both keyed at a flip");
+        if (registers) {
+            Require(last.keyRepeats == 0 && last.shapeRepeats == 0 && last.shaderSetRepeats == 2, what + ": with the viewport Z offset changed, the draws repeated a key or a shape, or did not repeat their shader set");
+            Require(last.shaderSetOnlyRepeats == 2 && last.comparedRegisterDraws == 2, what + ": the two draws were not compared as shader-set-only repeats");
+            const bool zOffsetSlot = std::any_of(last.registerSlots.begin(), last.registerSlots.end(), [](const auto& slot) { return slot.first == ViewportZOffsetRegister && slot.second == 2; });
+            Require(zOffsetSlot && last.differingRegisters == 2, what + ": the changed viewport Z offset was not the one register counted as differing in both draws");
+            std::puts("draw key census register comparison passed");
+            return 0;
+        }
         Require(last.keyRepeats == 1 && last.shapeRepeats == 2, what + ": the unchanged draw did not repeat its key, or the moved one did not repeat its shape");
         Require(last.shapeOnlyRepeats == 1, what + ": the moved draw was not counted as a shape-only repeat");
         const bool movedSlot = std::any_of(last.slots.begin(), last.slots.end(), [](const auto& slot) { return slot.first == VertexBufferRegister && slot.second == 1; });
         Require(movedSlot, what + ": the moved vertex buffer's user-data slot was not the one counted as differing");
         Require(last.differingWords == 1 && last.addressLikeWords == 1, what + ": the moved draw's one differing word was not counted as one mapped address");
+        Require(last.shaderSetOnlyRepeats == 0 && last.differingRegisters == 0, what + ": draws that repeat their shape were compared register by register");
+        if (syncDraws) {
+            const auto uncacheable = Total(frames, [](const Census::FrameSummary& frame) { return frame.counts[static_cast<std::size_t>(Census::Count::ResourceUncacheable)]; });
+            const auto notRecordable = Total(frames, [](const Census::FrameSummary& frame) { return frame.uncacheable[static_cast<std::size_t>(Census::Uncacheable::NotRecordable)]; });
+            const auto synchronous = Total(frames, [](const Census::FrameSummary& frame) { return frame.notRecordable[static_cast<std::size_t>(Census::NotRecordable::SyncDraws)]; });
+            const auto cached = Total(frames, [](const Census::FrameSummary& frame) { return frame.hitLookups + frame.missBuilds; });
+            const auto nanoseconds = Total(frames, [](const Census::FrameSummary& frame) { return frame.uncacheableNanoseconds[static_cast<std::size_t>(Census::Uncacheable::NotRecordable)]; });
+            Require(uncacheable >= Frames * 2u && notRecordable == uncacheable && synchronous == uncacheable, "with APS5_SYNC_DRAWS, " + std::to_string(uncacheable) + " uncacheable lookups were counted, " + std::to_string(notRecordable) + " of them not recordable and " + std::to_string(synchronous) + " for synchronous draws");
+            Require(cached == 0, "with APS5_SYNC_DRAWS, " + std::to_string(cached) + " resource lookups were counted as cache hits or misses");
+            Require(nanoseconds > 0, "with APS5_SYNC_DRAWS, the not-recordable builds took no time");
+            std::puts("draw key census uncacheable reasons passed");
+            return 0;
+        }
         std::puts("draw key census consistency passed");
         return 0;
     } catch (const std::exception& error) {

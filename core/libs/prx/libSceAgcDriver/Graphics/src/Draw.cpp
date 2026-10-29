@@ -1683,6 +1683,18 @@ std::shared_ptr<StorageTexture> refreshResidentTarget(const Context& context, co
     return resident;
 }
 
+DrawKeyCensus::Uncacheable uncacheableReason(bool recordable, std::span<const CompiledShader> shaders) {
+    if (!recordable) return DrawKeyCensus::Uncacheable::NotRecordable;
+    if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program == nullptr || shader.program->PipelineVariantId() == 0; })) return DrawKeyCensus::Uncacheable::NoVariantId;
+    if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; }); })) return DrawKeyCensus::Uncacheable::BdaPagetable;
+    if (ShaderResources::NeverReusable(shaders)) return DrawKeyCensus::Uncacheable::FaultBuffer;
+    return DrawKeyCensus::Uncacheable::Switch;
+}
+
+std::uint64_t censusNanoseconds(std::chrono::steady_clock::time_point start) {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+}
+
 // A draw's resources (resolveDrawResources): the resource-cache template a recordable draw's
 // stages repeat, or a fresh build.
 struct ResolvedResources {
@@ -1693,7 +1705,7 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
-ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
+ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawKeyCensus::NotRecordable notRecordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
     // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
@@ -1708,6 +1720,9 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+    const bool census = DrawKeyCensus::Enabled();
+    const auto lookupStart = census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    auto uncacheable = DrawKeyCensus::Uncacheable::Total;
     if (resolved.cacheable) {
         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
         if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
@@ -1721,7 +1736,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 resolved.moved = std::move(*moved);
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
-                DrawKeyCensus::Add(DrawKeyCensus::Count::ResourceHits);
+                if (census) DrawKeyCensus::NoteHit(censusNanoseconds(lookupStart));
             } else if (valid) {
                 countCache(&DrawProfile::cacheMisses);
             } else {
@@ -1732,18 +1747,30 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
         }
     } else {
         countCache(&DrawProfile::uncacheable);
-        DrawKeyCensus::Add(DrawKeyCensus::Count::ResourceUncacheable);
+        if (census) {
+            uncacheable = uncacheableReason(recordable, shaders);
+            const void* vertex = nullptr;
+            const void* pixel = nullptr;
+            for (const auto& shader : shaders) {
+                if (shader.stage == ShaderRecompiler::ShaderStage::Fragment) pixel = shader.program;
+                else if (vertex == nullptr) vertex = shader.program;
+            }
+            DrawKeyCensus::NoteUncacheable(uncacheable, notRecordable, vertex, pixel);
+        }
     }
     timer.phase(PhaseLookup);
     if (resolved.resources == nullptr) {
+        const auto buildStart = census ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+        if (census) {
+            const auto nanoseconds = censusNanoseconds(buildStart);
+            if (resolved.cacheable) DrawKeyCensus::NoteMissBuild(nanoseconds);
+            else DrawKeyCensus::NoteUncacheableBuild(uncacheable, nanoseconds);
+        }
         resolved.built = &resolved.resources->Timing();
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;
-        if (resolved.cacheable) {
-            countCache(&DrawProfile::cacheMisses);
-            DrawKeyCensus::Add(DrawKeyCensus::Count::ResourceMisses);
-        }
+        if (resolved.cacheable) countCache(&DrawProfile::cacheMisses);
     }
     timer.phase(PhaseResources);
     APS5_LOG_CHARS_OUT_DEBUG("ShaderResources created");
@@ -2517,6 +2544,22 @@ struct TargetBinding {
     std::unique_ptr<Buffer> dump;
 };
 
+DrawKeyCensus::NotRecordable notRecordableReason(const Context& context, bool recordDraws, const Recorder* recorder, int dumpLimit, std::span<const TargetBinding> targets) {
+    if (!recordDraws) return DrawKeyCensus::NotRecordable::SyncDraws;
+    if (recorder == nullptr) return DrawKeyCensus::NotRecordable::NoRecorder;
+    if (dumpLimit != 0) return DrawKeyCensus::NotRecordable::DumpTarget;
+    static const bool residentTargets = std::getenv("APS5_NO_RESIDENT_TARGETS") == nullptr;
+    static const bool residentLinear = std::getenv("APS5_NO_RESIDENT_LINEAR") == nullptr;
+    for (const auto& binding : targets) {
+        if (binding.resident != nullptr || binding.multisampled) continue;
+        if (!residentTargets) return DrawKeyCensus::NotRecordable::ResidentTargetsOff;
+        if (context.detiler == nullptr) return DrawKeyCensus::NotRecordable::NoDetiler;
+        if (!residentLinear) return DrawKeyCensus::NotRecordable::ResidentLinearOff;
+        return DrawKeyCensus::NotRecordable::LinearNotImported;
+    }
+    return DrawKeyCensus::NotRecordable::Total;
+}
+
 struct PreparedDraw {
     explicit PreparedDraw(bool profile) : timer(profile) {}
     PreparedDraw(const PreparedDraw&) = delete;
@@ -2869,8 +2912,9 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     const bool recordDraws = RecordDraws();
     auto* recorder = prepared.recorder = Recorder::Active();
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
+    const auto notRecordable = !recordable && DrawKeyCensus::Enabled() ? notRecordableReason(context, recordDraws, recorder, dumpLimit, targets) : DrawKeyCensus::NotRecordable::Total;
     auto& resolved = prepared.resolved;
-    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, notRecordable, outcome, timer);
     auto& resources = resolved.resources;
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
