@@ -1779,7 +1779,7 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     Require(Faulted(phiFault) && phiFault.log.find("outside the snapshot") != std::string::npos, "nested image table: the uncaptured Phi arm was assumed unreachable");
     Require(std::all_of(phiFault.words.begin(), phiFault.words.end(), [](auto word) { return word == 0xdeadbeefu; }), "nested image table: an uncaptured pointer published copied output");
     Require(phiFault.artifactId == phiValid.artifactId, "nested image table: the pointer choice was specialized on the CPU");
-    std::puts("nested image table independent keys, alias, descriptor replacement, faults, budget and refusals checked");
+    std::puts("nested image table independent keys, alias, descriptor replacement, faults and budget checked");
 }
 
 void RunPointerChainRecordTests(AgcDriver::VulkanDevice& device) {
