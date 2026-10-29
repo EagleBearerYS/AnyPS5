@@ -264,6 +264,7 @@ struct AddressStoreStats {
     std::uint64_t gatheredBytes = 0;
     std::uint64_t spilledBytes = 0;
     std::uint64_t readbackBytes = 0;
+    std::uint64_t maskedBytes = 0;
 };
 AddressStoreStats AddressStoreCounters();
 std::uint64_t SnapshotMismatches();
@@ -535,7 +536,6 @@ private:
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
     void addAddressStoreSpans();
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> comparedRuns(std::uint64_t begin, std::uint64_t end, std::span<const std::pair<std::uint64_t, std::uint64_t>> declared) const;
     void takeHeapReferences();
     void recordHeapReferences();
     std::span<const std::byte> heapReference(std::uint64_t begin);
