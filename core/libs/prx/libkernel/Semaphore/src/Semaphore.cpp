@@ -1,4 +1,5 @@
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
@@ -13,9 +14,6 @@
 KernelSemaPrivate::KernelSemaPrivate(std::int32_t initCount, std::int32_t maxCount, std::string name, bool isFifo)
  : name(std::move(name)), tokenCount(initCount), initCount(initCount), maxCount(maxCount), isFifo(isFifo) {
 }
-
-extern "C" Pthread APS5_VABI scePthreadSelf();
-extern "C" int APS5_VABI scePthreadGetprio(Pthread thread, int* prio);
 
 static bool TraceSync() {
  static const bool enabled = std::getenv("APS5_TRACE_SYNC") != nullptr;

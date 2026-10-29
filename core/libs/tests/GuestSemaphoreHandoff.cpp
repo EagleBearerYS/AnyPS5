@@ -1,16 +1,10 @@
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf();
-int APS5_VABI scePthreadSetprio(Pthread thread, int prio);
-}
 
 static constexpr int SCE_OK = 0;
 static constexpr std::uint32_t SemaFifo = 1;
