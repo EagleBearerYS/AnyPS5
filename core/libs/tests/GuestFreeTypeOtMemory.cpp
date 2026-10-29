@@ -6,10 +6,10 @@
 
 namespace {
 
-using FreeType::GuestMemory;
+using FreeType::GuestMemoryRec;
 
 struct Recorder {
-    GuestMemory memory{};
+    GuestMemoryRec memory{};
     int allocs = 0;
     int frees = 0;
     int reallocs = 0;
@@ -17,15 +17,15 @@ struct Recorder {
     std::int64_t lastCurrent = 0;
     std::int64_t lastNew = 0;
     void* lastBlock = nullptr;
-    GuestMemory* lastMemory = nullptr;
+    GuestMemoryRec* lastMemory = nullptr;
     bool fail = false;
 };
 
-Recorder* Owner(GuestMemory* memory) {
+Recorder* Owner(GuestMemoryRec* memory) {
     return static_cast<Recorder*>(memory->user);
 }
 
-void* APS5_VABI RecordAlloc(GuestMemory* memory, std::int64_t size) {
+void* APS5_VABI RecordAlloc(GuestMemoryRec* memory, std::int64_t size) {
     auto* recorder = Owner(memory);
     ++recorder->allocs;
     recorder->lastMemory = memory;
@@ -36,7 +36,7 @@ void* APS5_VABI RecordAlloc(GuestMemory* memory, std::int64_t size) {
     return block;
 }
 
-void APS5_VABI RecordFree(GuestMemory* memory, void* block) {
+void APS5_VABI RecordFree(GuestMemoryRec* memory, void* block) {
     auto* recorder = Owner(memory);
     ++recorder->frees;
     recorder->lastMemory = memory;
@@ -44,7 +44,7 @@ void APS5_VABI RecordFree(GuestMemory* memory, void* block) {
     std::free(block);
 }
 
-void* APS5_VABI RecordRealloc(GuestMemory* memory, std::int64_t current, std::int64_t size, void* block) {
+void* APS5_VABI RecordRealloc(GuestMemoryRec* memory, std::int64_t current, std::int64_t size, void* block) {
     auto* recorder = Owner(memory);
     ++recorder->reallocs;
     recorder->lastMemory = memory;

@@ -19,7 +19,7 @@ std::int64_t Bytes(std::int64_t count, std::int64_t itemSize) {
 
 extern "C" {
 
-void* APS5_VABI ft_mem_qalloc_nid_postfix(FreeType::GuestMemory* memory, std::int64_t size, std::int32_t* error) {
+void* APS5_VABI ft_mem_qalloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t size, std::int32_t* error) {
     std::int32_t result = 0;
     void* block = nullptr;
     if (size > 0) {
@@ -32,7 +32,7 @@ void* APS5_VABI ft_mem_qalloc_nid_postfix(FreeType::GuestMemory* memory, std::in
     return block;
 }
 
-void* APS5_VABI ft_mem_alloc_nid_postfix(FreeType::GuestMemory* memory, std::int64_t size, std::int32_t* error) {
+void* APS5_VABI ft_mem_alloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t size, std::int32_t* error) {
     std::int32_t result = 0;
     void* block = ft_mem_qalloc_nid_postfix(memory, size, &result);
     if (!result && block && size > 0) std::memset(block, 0, static_cast<std::size_t>(size));
@@ -40,11 +40,11 @@ void* APS5_VABI ft_mem_alloc_nid_postfix(FreeType::GuestMemory* memory, std::int
     return block;
 }
 
-void APS5_VABI ft_mem_free_nid_postfix(FreeType::GuestMemory* memory, const void* block) {
+void APS5_VABI ft_mem_free_nid_postfix(FreeType::GuestMemoryRec* memory, const void* block) {
     if (block) memory->free(memory, const_cast<void*>(block));
 }
 
-void* APS5_VABI ft_mem_qrealloc_nid_postfix(FreeType::GuestMemory* memory, std::int64_t itemSize, std::int64_t currentCount,
+void* APS5_VABI ft_mem_qrealloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t itemSize, std::int64_t currentCount,
                                             std::int64_t newCount, void* block, std::int32_t* error) {
     std::int32_t result = 0;
     if (currentCount < 0 || newCount < 0 || itemSize < 0) {
@@ -69,7 +69,7 @@ void* APS5_VABI ft_mem_qrealloc_nid_postfix(FreeType::GuestMemory* memory, std::
     return block;
 }
 
-void* APS5_VABI ft_mem_realloc_nid_postfix(FreeType::GuestMemory* memory, std::int64_t itemSize, std::int64_t currentCount,
+void* APS5_VABI ft_mem_realloc_nid_postfix(FreeType::GuestMemoryRec* memory, std::int64_t itemSize, std::int64_t currentCount,
                                            std::int64_t newCount, void* block, std::int32_t* error) {
     std::int32_t result = 0;
     block = ft_mem_qrealloc_nid_postfix(memory, itemSize, currentCount, newCount, block, &result);
@@ -80,7 +80,7 @@ void* APS5_VABI ft_mem_realloc_nid_postfix(FreeType::GuestMemory* memory, std::i
     return block;
 }
 
-void* APS5_VABI ft_mem_dup_nid_postfix(FreeType::GuestMemory* memory, const void* address, std::uint64_t size, std::int32_t* error) {
+void* APS5_VABI ft_mem_dup_nid_postfix(FreeType::GuestMemoryRec* memory, const void* address, std::uint64_t size, std::int32_t* error) {
     std::int32_t result = 0;
     void* copy = ft_mem_qalloc_nid_postfix(memory, static_cast<std::int64_t>(size), &result);
     if (!result && address && size > 0) std::memcpy(copy, address, static_cast<std::size_t>(size));
@@ -88,7 +88,7 @@ void* APS5_VABI ft_mem_dup_nid_postfix(FreeType::GuestMemory* memory, const void
     return copy;
 }
 
-void* APS5_VABI ft_mem_strdup_nid_postfix(FreeType::GuestMemory* memory, const char* string, std::int32_t* error) {
+void* APS5_VABI ft_mem_strdup_nid_postfix(FreeType::GuestMemoryRec* memory, const char* string, std::int32_t* error) {
     const std::uint64_t length = string ? std::strlen(string) + 1 : 0;
     return ft_mem_dup_nid_postfix(memory, string, length, error);
 }
