@@ -6241,6 +6241,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> mergeWrites(std::vector<std
 
 void GuestBufferMemory::addAddressStoreSpans() {
     if (!addressStores) return;
+    const auto before = writes.size();
     const auto add = [&](const Region& region) {
         if (region.mirror == nullptr || !region.mirror->heap || !region.mirror->writable || !region.writable) return;
         const auto served = servedEnd(region);
@@ -6255,6 +6256,15 @@ void GuestBufferMemory::addAddressStoreSpans() {
         for (const auto& region : space->base) add(region);
     }
     for (const auto& region : regions) add(region);
+    static std::atomic<std::uint64_t> builds{0}, spanned{0}, spanBytes{0};
+    std::uint64_t added = 0;
+    for (auto i = before; i < writes.size(); ++i) added += writes[i].second - writes[i].first;
+    if (added != 0) {
+        spanned.fetch_add(1, std::memory_order_relaxed);
+        spanBytes.fetch_add(added, std::memory_order_relaxed);
+    }
+    const auto count = builds.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (count == 1 || count % 1000 == 0) std::fprintf(stderr, "[bda-store-spans] %llu address-storing builds, %llu with writable heap mirror spans, %.1f MiB of spans in all, last build %.1f MiB\n", static_cast<unsigned long long>(count), static_cast<unsigned long long>(spanned.load(std::memory_order_relaxed)), static_cast<double>(spanBytes.load(std::memory_order_relaxed)) / 1048576.0, static_cast<double>(added) / 1048576.0);
 }
 
 void GuestBufferMemory::takeHeapReferences() {
