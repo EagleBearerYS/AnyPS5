@@ -172,12 +172,14 @@ public:
     std::uint32_t Percent() const { return percent; }
     bool Skip();
     void Note(bool useful);
+    std::uint64_t TakeBypassed();
 
 private:
     std::uint32_t percent, minimumHits;
     std::atomic<std::uint64_t> window{0};
     std::atomic<std::uint32_t> left{0};
     std::atomic<std::uint32_t> lowWindows{0};
+    std::atomic<std::uint64_t> bypassed{0};
 };
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);

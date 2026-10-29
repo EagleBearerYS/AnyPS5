@@ -5,6 +5,7 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -375,6 +376,17 @@ void ConcurrentNotesCloseEachWindowOnce() {
     std::size_t skipped = 0;
     while (bypass.Skip()) ++skipped;
     Require(skipped == DrawCacheBypass::FirstBypassDraws, "4096 misses after 256 windows noted by four threads bypassed " + std::to_string(skipped) + " draws, expected two windows closed and 2048 draws bypassed");
+    for (std::size_t n = 0; n < DrawCacheBypass::Window; ++n) bypass.Note(false);
+    std::atomic<std::size_t> drained{0};
+    std::vector<std::thread> drainers;
+    for (std::size_t t = 0; t < Threads; ++t) {
+        drainers.emplace_back([&bypass, &drained] {
+            while (bypass.Skip()) drained.fetch_add(1, std::memory_order_relaxed);
+        });
+    }
+    for (auto& drainer : drainers) drainer.join();
+    const auto counted = bypass.TakeBypassed();
+    Require(drained.load() == 2 * DrawCacheBypass::FirstBypassDraws && counted == skipped + drained.load() && bypass.TakeBypassed() == 0, "the bypass counted " + std::to_string(counted) + " bypassed draws for " + std::to_string(skipped + drained.load()) + " skipped by one and then four threads");
 }
 
 void LowWindowsLengthenTheBypass() {

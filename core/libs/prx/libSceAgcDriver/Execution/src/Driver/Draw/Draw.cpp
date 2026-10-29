@@ -387,10 +387,6 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     phaseTiming.Phase(DrawRowVectors);
 
     const bool bypassed = drawEntries() && drawCacheBypass.Skip();
-    if (bypassed) {
-        std::lock_guard cacheLock(drawCacheMutex);
-        ++drawEntryCounters.bypassed;
-    }
     const bool useDrawEntries = drawEntries() && !bypassed && !ShaderRecompiler::DebugProbeActive() && dumpTarget == 0 && dumpSlot1 == 0;
     tail.registerKey = useDrawEntries && registerKeyEnabled();
     const bool registerKey = tail.registerKey;

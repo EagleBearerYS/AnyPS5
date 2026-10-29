@@ -39,9 +39,16 @@ DrawCacheBypass::DrawCacheBypass(std::uint32_t percent) : percent(std::min(perce
 bool DrawCacheBypass::Skip() {
     auto remaining = left.load(std::memory_order_relaxed);
     while (remaining != 0) {
-        if (left.compare_exchange_weak(remaining, remaining - 1, std::memory_order_relaxed)) return true;
+        if (left.compare_exchange_weak(remaining, remaining - 1, std::memory_order_relaxed)) {
+            bypassed.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
     }
     return false;
+}
+
+std::uint64_t DrawCacheBypass::TakeBypassed() {
+    return bypassed.exchange(0, std::memory_order_relaxed);
 }
 
 void DrawCacheBypass::Note(bool useful) {
