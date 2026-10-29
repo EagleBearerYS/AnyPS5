@@ -15,13 +15,11 @@ static void Require(bool value) { if (!value) std::abort(); }
 struct Waiter {
     KernelSema sem = nullptr;
     int result = -1;
-    std::atomic<bool> started{false};
 };
 
 static void* APS5_VABI Wait(void* arg) {
     auto& waiter = *static_cast<Waiter*>(arg);
     KernelUseconds timeout = 1000000;
-    waiter.started = true;
     waiter.result = sceKernelWaitSema(waiter.sem, 1, &timeout);
     return nullptr;
 }
@@ -129,8 +127,7 @@ int main() {
         Waiter waiter{sem};
         Pthread thread = nullptr;
         Require(scePthreadCreate(&thread, nullptr, Wait, &waiter, nullptr) == SCE_OK);
-        while (!waiter.started) std::this_thread::yield();
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        WaitForQueue(sem, 1);
         Require(sceKernelSignalSema(sem, 1) == SCE_OK);
         Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
         Require(scePthreadJoin(thread, nullptr) == SCE_OK);
