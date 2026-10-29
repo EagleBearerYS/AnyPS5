@@ -123,6 +123,27 @@ std::atomic<std::uint64_t> collectFailures[static_cast<std::size_t>(CollectFailu
 std::mutex collectFailureMutex;
 std::array<CollectFailureSample, 12> collectFailureSamples{};
 thread_local CollectFailure lastCollectFailure = CollectFailure::Count;
+enum class UnwatchSite : std::uint8_t { Store, Import, ImportKept, Api, Count };
+constexpr const char* UnwatchSiteNames[static_cast<std::size_t>(UnwatchSite::Count)] = {"store", "import", "import-kept", "unwatch"};
+enum class OutsideCause : std::uint8_t { StoreUnwatched, ImportUnwatched, ApiUnwatched, ExcludedUntagged, HostRegion, NeverWatched, Other, Count };
+constexpr const char* OutsideCauseNames[static_cast<std::size_t>(OutsideCause::Count)] = {"store-unwatched", "import-unwatched", "unwatched", "excluded-untagged", "host-region", "never-watched", "other"};
+struct UnwatchTag {
+    UnwatchSite site = UnwatchSite::Count;
+    std::uint64_t commitGeneration = 0;
+    std::uint64_t trackerGeneration = 0;
+    const void* caller = nullptr;
+    std::uint32_t opcode = NoPacket;
+    std::uint32_t queue = 0;
+};
+struct OutsideSample {
+    OutsideCause cause = OutsideCause::Count;
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t count = 0;
+    UnwatchTag tag;
+};
+std::atomic<std::uint64_t> outsideCauses[static_cast<std::size_t>(OutsideCause::Count)] = {};
+std::array<OutsideSample, 8> outsideSamples{};
 std::uintptr_t PagesBase();
 std::size_t PagesSize();
 std::uintptr_t ImagePagesBase();
@@ -352,6 +373,7 @@ public:
         for (std::size_t reason = 0; reason < static_cast<std::size_t>(CollectFailure::Count); ++reason) {
             AgcDriver::ProfilePrint_nid_no_patch(" %s %llu", CollectFailureNames[reason], static_cast<unsigned long long>(collectFailures[reason].exchange(0, std::memory_order_relaxed)));
         }
+        std::array<OutsideSample, 8> outside{};
         {
             std::lock_guard lock(collectFailureMutex);
             AgcDriver::ProfilePrint_nid_no_patch(", ranges:");
@@ -360,6 +382,21 @@ public:
                 AgcDriver::ProfilePrint_nid_no_patch(" %s 0x%llx+0x%llx x%llu", CollectFailureNames[static_cast<std::size_t>(sample.reason)], static_cast<unsigned long long>(sample.address), static_cast<unsigned long long>(sample.bytes), static_cast<unsigned long long>(sample.count));
                 sample = {};
             }
+            outside = outsideSamples;
+            outsideSamples = {};
+        }
+        AgcDriver::ProfilePrint_nid_no_patch(" | outside (10 s):");
+        for (std::size_t cause = 0; cause < static_cast<std::size_t>(OutsideCause::Count); ++cause) {
+            AgcDriver::ProfilePrint_nid_no_patch("%s %s %llu", cause == 0 ? "" : ",", OutsideCauseNames[cause], static_cast<unsigned long long>(outsideCauses[cause].exchange(0, std::memory_order_relaxed)));
+        }
+        AgcDriver::ProfilePrint_nid_no_patch("; ranges:");
+        for (const auto& sample : outside) {
+            if (sample.count == 0) continue;
+            AgcDriver::ProfilePrint_nid_no_patch(" %s 0x%llx+0x%llx x%llu", OutsideCauseNames[static_cast<std::size_t>(sample.cause)], static_cast<unsigned long long>(sample.address), static_cast<unsigned long long>(sample.bytes), static_cast<unsigned long long>(sample.count));
+            if (sample.tag.site == UnwatchSite::Count) continue;
+            const auto caller = sample.tag.caller != nullptr ? ModuleOffset(sample.tag.caller) : 0ull;
+            if (sample.tag.opcode == NoPacket) AgcDriver::ProfilePrint_nid_no_patch(" (by %s at commit gen %llu, tracker gen %llu, no packet, from +0x%llx)", UnwatchSiteNames[static_cast<std::size_t>(sample.tag.site)], static_cast<unsigned long long>(sample.tag.commitGeneration), static_cast<unsigned long long>(sample.tag.trackerGeneration), caller);
+            else AgcDriver::ProfilePrint_nid_no_patch(" (by %s at commit gen %llu, tracker gen %llu, packet 0x%x queue %u, from +0x%llx)", UnwatchSiteNames[static_cast<std::size_t>(sample.tag.site)], static_cast<unsigned long long>(sample.tag.commitGeneration), static_cast<unsigned long long>(sample.tag.trackerGeneration), sample.tag.opcode, sample.tag.queue, caller);
         }
         AgcDriver::ProfilePrint_nid_no_patch(" | arena 0x%llx+0x%llx image 0x%llx+0x%llx forgets %llu (%.0f MiB)", static_cast<unsigned long long>(PagesBase()), static_cast<unsigned long long>(PagesSize()), static_cast<unsigned long long>(ImagePagesBase()), static_cast<unsigned long long>(ImagePagesSize()), static_cast<unsigned long long>(forgetCalls.load()), forgetBytes.load() / 1048576.0);
         {
@@ -1116,6 +1153,7 @@ struct WriteTracker {
     std::unordered_map<std::uint64_t, CpuPages> cpuPages;
     std::unordered_map<std::uint64_t, CpuPages> walkPages;
     std::map<std::uint64_t, std::uint32_t> refused;
+    std::unordered_map<std::uint64_t, UnwatchTag> unwatchTags;
 
     void noteCpuStore(std::uint64_t begin, std::uint64_t end, std::uint32_t stampGeneration) {
         notePages(cpuPages, begin, end, stampGeneration);
@@ -1401,11 +1439,24 @@ TrackerLock lockTracker(WriteTracker& tracker) {
 }
 
 #ifdef _WIN32
+void forgetRestoredTags(WriteTracker& tracker, std::uint64_t address, std::size_t bytes) {
+    if (!MemoryProfiled() || tracker.unwatchTags.empty() || bytes == 0 || address < tracker.base || address - tracker.base >= tracker.size) return;
+    const auto stop = std::min<std::uint64_t>(address + bytes, tracker.base + tracker.size);
+    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(stop - 1); ++block) {
+        const auto begin = tracker.blockBegin(block);
+        const auto blockBytes = std::min<std::uint64_t>(WriteBlockBytes, tracker.base + tracker.size - begin);
+        if (tracker.coverage.Covers(begin, static_cast<std::size_t>(blockBytes))) tracker.unwatchTags.erase(block);
+    }
+}
+#endif
+
+#ifdef _WIN32
 void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation) {
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     if (!tracker.watched || bytes == 0 || bytes > tracker.size || address < tracker.base || address - tracker.base > tracker.size - bytes) return;
     tracker.coverage.Restore(address, bytes, generation);
+    forgetRestoredTags(tracker, address, bytes);
     ++tracker.generation;
     tracker.noteCpuStore(address, address + bytes, tracker.generation);
     for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
@@ -1589,11 +1640,67 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
     return complete;
 }
 
-std::uint64_t collectFailed(CollectFailure reason, std::uint64_t address, std::size_t bytes) {
+OutsideCause taggedCause(const WriteTracker& tracker, std::uint64_t block, UnwatchTag& tag) {
+    const auto found = tracker.unwatchTags.find(block);
+    if (found == tracker.unwatchTags.end()) return OutsideCause::ExcludedUntagged;
+    tag = found->second;
+    switch (tag.site) {
+    case UnwatchSite::Store: return OutsideCause::StoreUnwatched;
+    case UnwatchSite::Import:
+    case UnwatchSite::ImportKept: return OutsideCause::ImportUnwatched;
+    case UnwatchSite::Api: return OutsideCause::ApiUnwatched;
+    case UnwatchSite::Count: break;
+    }
+    return OutsideCause::ExcludedUntagged;
+}
+
+OutsideCause classifyOutside(const WriteTracker* tracker, std::uint64_t address, std::size_t bytes, UnwatchTag& tag) {
+    if (tracker == nullptr || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return OutsideCause::Other;
+    const auto end = address + bytes;
+#ifdef _WIN32
+    if (address < tracker->base || end > tracker->base + tracker->size) return OutsideCause::NeverWatched;
+    for (auto block = tracker->blockOf(address); block <= tracker->blockOf(end - 1); ++block) {
+        const auto first = std::max<std::uint64_t>(address, tracker->blockBegin(block));
+        const auto stop = std::min<std::uint64_t>(end, tracker->blockBegin(block) + WriteBlockBytes);
+        if (!tracker->coverage.Covers(first, static_cast<std::size_t>(stop - first))) return taggedCause(*tracker, block, tag);
+    }
+    if (GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(address), bytes)) return OutsideCause::HostRegion;
+    return OutsideCause::Other;
+#else
+    if (end > WriteTracker::LeafCount * WriteTracker::LeafBlocks * WriteBlockBytes) return OutsideCause::NeverWatched;
+    for (auto block = tracker->blockOf(address); block <= tracker->blockOf(end - 1); ++block) {
+        const auto first = std::max<std::uint64_t>(address, tracker->blockBegin(block));
+        const auto stop = std::min<std::uint64_t>(end, tracker->blockBegin(block) + WriteBlockBytes);
+        if (GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first))) continue;
+        if (tracker->unwatchTags.contains(block)) return taggedCause(*tracker, block, tag);
+    }
+    if (!GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(static_cast<std::uintptr_t>(address), bytes)) return OutsideCause::NeverWatched;
+    return OutsideCause::Other;
+#endif
+}
+
+void countOutside(const WriteTracker* tracker, std::uint64_t address, std::size_t bytes) {
+    UnwatchTag tag;
+    const auto cause = classifyOutside(tracker, address, bytes, tag);
+    outsideCauses[static_cast<std::size_t>(cause)].fetch_add(1, std::memory_order_relaxed);
+    OutsideSample* empty = nullptr;
+    for (auto& sample : outsideSamples) {
+        if (sample.count != 0 && sample.cause == cause && sample.address == address && sample.bytes == bytes) {
+            ++sample.count;
+            sample.tag = tag;
+            return;
+        }
+        if (sample.count == 0 && empty == nullptr) empty = &sample;
+    }
+    if (empty != nullptr) *empty = {cause, address, bytes, 1, tag};
+}
+
+std::uint64_t collectFailed(CollectFailure reason, std::uint64_t address, std::size_t bytes, const WriteTracker* tracker = nullptr) {
     if (!MemoryProfiled()) return 0;
     lastCollectFailure = reason;
     collectFailures[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(collectFailureMutex);
+    if (reason == CollectFailure::Outside) countOutside(tracker, address, bytes);
     CollectFailureSample* empty = nullptr;
     for (auto& sample : collectFailureSamples) {
         if (sample.count != 0 && sample.reason == reason && sample.address == address && sample.bytes == bytes) {
@@ -1642,7 +1749,7 @@ std::uint64_t collectWrites(std::uint64_t address, std::size_t bytes, bool memoi
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     if (!tracker.watched) return collectFailed(CollectFailure::Unwatched, address, bytes);
-    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return collectFailed(CollectFailure::Outside, address, bytes);
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return collectFailed(CollectFailure::Outside, address, bytes, &tracker);
     auto cursor = first;
     if (useMemo && sharedCollectMemo()) {
         for (const auto& entry : tracker.memo) {
@@ -1831,14 +1938,31 @@ void beforeUnwatch(std::uint64_t address, std::size_t bytes) {
 #endif
 }
 
-void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t bytes) {
+void tagUnwatched(WriteTracker& tracker, std::uint64_t address, std::size_t bytes, UnwatchSite site, const void* caller, std::uint64_t commitGeneration) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
+    auto first = address;
+    auto stop = address + bytes;
+#ifdef _WIN32
+    first = std::max<std::uint64_t>(first, tracker.base);
+    stop = std::min<std::uint64_t>(stop, tracker.base + tracker.size);
+#endif
+    if (first >= stop) return;
+    const auto packet = CurrentPacket();
+    const UnwatchTag tag{site, commitGeneration, tracker.generation, caller, packet.opcode, packet.queue};
+    for (auto block = tracker.blockOf(first); block <= tracker.blockOf(stop - 1); ++block) tracker.unwatchTags.try_emplace(block, tag);
+}
+
+void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t bytes, UnwatchSite site, const void* caller = nullptr) {
     if (!tracker.watched) return;
 #ifdef _WIN32
     tracker.startHints(address, bytes);
-    if (tracker.coverage.Exclude(address, bytes, GuestArena::GuestArenaCommitGeneration_nid_postfix())) unwatchSerial.fetch_add(1, std::memory_order_release);
+    const auto commitGeneration = GuestArena::GuestArenaCommitGeneration_nid_postfix();
+    if (tracker.coverage.Exclude(address, bytes, commitGeneration)) unwatchSerial.fetch_add(1, std::memory_order_release);
 #else
+    const std::uint64_t commitGeneration = 0;
     if (GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes)) unwatchSerial.fetch_add(1, std::memory_order_release);
 #endif
+    if (MemoryProfiled()) tagUnwatched(tracker, address, bytes, site, caller, commitGeneration);
 }
 
 }
@@ -1859,7 +1983,7 @@ void Unwatch(std::uint64_t address, std::size_t bytes) {
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
-    unwatchLocked(tracker, address, bytes);
+    unwatchLocked(tracker, address, bytes, UnwatchSite::Api, __builtin_return_address(0));
 }
 
 void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
@@ -1875,6 +1999,7 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
         if (tracker.coverage.Covers(begin, bytes)) continue;
         GuestArena::GuestArenaCompareWhenShared_nid_no_patch(static_cast<std::uintptr_t>(begin), bytes);
         if (!walkWrites(tracker, begin, end, StampKind::Cpu) || !tracker.coverage.Restore(begin, bytes)) continue;
+        forgetRestoredTags(tracker, begin, bytes);
         ++tracker.generation;
         tracker.noteCpuStore(begin, end, tracker.generation);
         for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
@@ -1920,8 +2045,8 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     if (!staysWatched) {
         const bool before = covered && walkWrites(tracker, first, stop, StampKind::Cpu, true);
         if (!runImport()) return false;
-        if (!before || !walkWrites(tracker, first, stop, StampKind::ImportWindow, true)) unwatchLocked(tracker, first, static_cast<std::size_t>(stop - first));
-        unwatchLocked(tracker, address, bytes);
+        if (!before || !walkWrites(tracker, first, stop, StampKind::ImportWindow, true)) unwatchLocked(tracker, first, static_cast<std::size_t>(stop - first), UnwatchSite::Import);
+        unwatchLocked(tracker, address, bytes, UnwatchSite::Import);
         return true;
     }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
@@ -1962,10 +2087,10 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
 #ifdef _WIN32
         GuestArena::GuestArenaCompareResidentWhenShared_nid_no_patch(static_cast<std::uintptr_t>(begin), static_cast<std::size_t>(end - begin));
 #endif
-        if (unwatchedFrom < begin) unwatchLocked(tracker, unwatchedFrom, static_cast<std::size_t>(begin - unwatchedFrom));
+        if (unwatchedFrom < begin) unwatchLocked(tracker, unwatchedFrom, static_cast<std::size_t>(begin - unwatchedFrom), UnwatchSite::ImportKept);
         unwatchedFrom = end;
     }
-    if (unwatchedFrom < stop) unwatchLocked(tracker, unwatchedFrom, static_cast<std::size_t>(stop - unwatchedFrom));
+    if (unwatchedFrom < stop) unwatchLocked(tracker, unwatchedFrom, static_cast<std::size_t>(stop - unwatchedFrom), UnwatchSite::ImportKept);
     return true;
 }
 
@@ -2091,7 +2216,7 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> so
     return StoreOwnBytes(address, source.size(), [&] { copyOwnBytes(address, source); });
 }
 
-static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete) {
+static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool complete, const void* caller) {
     BreakProofs();
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
@@ -2116,7 +2241,7 @@ static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool 
             lock.Suspend();
             beforeUnwatch(blockFirst, static_cast<std::size_t>(blockStop - blockFirst));
             lock.Resume();
-            unwatchLocked(tracker, blockFirst, static_cast<std::size_t>(blockStop - blockFirst));
+            unwatchLocked(tracker, blockFirst, static_cast<std::size_t>(blockStop - blockFirst), UnwatchSite::Store, caller);
             tracker.noteUnstampedStore(address, address + bytes);
             return 0;
         }
@@ -2132,11 +2257,11 @@ static std::uint64_t markWritten(std::uint64_t address, std::size_t bytes, bool 
 }
 
 std::uint64_t MarkWritten(std::uint64_t address, std::size_t bytes) {
-    return markWritten(address, bytes, true);
+    return markWritten(address, bytes, true, __builtin_return_address(0));
 }
 
 std::uint64_t MarkPossiblyWritten(std::uint64_t address, std::size_t bytes) {
-    return markWritten(address, bytes, false);
+    return markWritten(address, bytes, false, __builtin_return_address(0));
 }
 
 bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
