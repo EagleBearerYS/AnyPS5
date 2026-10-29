@@ -387,7 +387,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     phaseTiming.Phase(DrawRowVectors);
 
     const bool bypassed = drawEntries() && drawCacheBypass.Skip();
-    if (bypassed) {
+    if (bypassed && profile) {
         std::lock_guard cacheLock(drawCacheMutex);
         ++drawEntryCounters.bypassed;
     }
