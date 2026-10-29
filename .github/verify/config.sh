@@ -1,0 +1,3 @@
+BASE=2960e9a6e7e1fc99c4ed180c71495b5eb83464c7
+REPEAT=10
+EXTRA_TESTS='guest_sce_net|guest_net_ctl|guest_net_boolean_readback|guest_socket_descriptor_flags|guest_socket_error|guest_socket_options|guest_tcp'
