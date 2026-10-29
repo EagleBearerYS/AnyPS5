@@ -22,10 +22,23 @@ struct DrawTraceContext {
     std::uint64_t target = 0;
 };
 
+struct PreResolvedDraw;
+
 // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
 // APS5_NO_DRAW_RECIPE=1).
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0);
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, PreResolvedDraw* preResolved = nullptr);
+bool PreResolveEnabled();
+std::shared_ptr<PreResolvedDraw> PreResolveDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
+struct PreResolveCounts {
+    std::uint64_t resolved = 0;
+    std::uint64_t found = 0;
+    std::uint64_t built = 0;
+    std::uint64_t used = 0;
+    std::uint64_t unused = 0;
+    std::uint64_t failed = 0;
+};
+PreResolveCounts PreResolveCounted();
 
 struct PixelFunctionLdsLayouts {
     VkDescriptorSetLayout empty = VK_NULL_HANDLE;

@@ -45,7 +45,40 @@
 
 namespace AgcDriver::Graphics {
 
+struct PreResolvedDraw {
+    VkDevice device = VK_NULL_HANDLE;
+    const State* state = nullptr;
+    std::span<const CompiledShader> shaders;
+    std::span<const GuestMemorySnapshot> snapshots;
+    std::uint64_t indexAddress = 0;
+    std::uint64_t indexBytes = 0;
+    bool keyed = false;
+    ResourceCache::Key key;
+    std::shared_ptr<ShaderResources> cached;
+    std::shared_ptr<ShaderResources> built;
+};
+
 namespace {
+
+struct PreResolveCounters {
+    std::atomic<std::uint64_t> resolved{0};
+    std::atomic<std::uint64_t> found{0};
+    std::atomic<std::uint64_t> built{0};
+    std::atomic<std::uint64_t> used{0};
+    std::atomic<std::uint64_t> unused{0};
+    std::atomic<std::uint64_t> failed{0};
+    std::atomic<std::uint64_t> nanoseconds{0};
+    std::atomic<std::int64_t> lastReport{0};
+};
+
+PreResolveCounters& PreResolves() {
+    static PreResolveCounters counters;
+    return counters;
+}
+
+bool ServesDraw(const PreResolvedDraw& pre, const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes) {
+    return pre.device == context.device && pre.state == &state && pre.shaders.data() == shaders.data() && pre.shaders.size() == shaders.size() && pre.snapshots.data() == snapshots.data() && pre.snapshots.size() == snapshots.size() && pre.indexAddress == draw.indexAddress && pre.indexBytes == indexBytes;
+}
 
 struct PixelFunctionLdsPool {
     Context context{};
@@ -1737,7 +1770,7 @@ bool TrimDrawResourceKey() {
     return trimKey;
 }
 
-ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
+ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer, PreResolvedDraw* preResolved) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
     // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
@@ -1750,9 +1783,14 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     const bool trimKey = TrimDrawResourceKey();
     resolved.cacheable = recordable && DrawResourcesCacheable(shaders);
+    const bool preUsed = preResolved != nullptr && ServesDraw(*preResolved, context, state, draw, shaders, snapshots, indexBytes);
+    if (preResolved != nullptr) (preUsed ? PreResolves().used : PreResolves().unused).fetch_add(1, std::memory_order_relaxed);
+    std::shared_ptr<ShaderResources> built = preUsed ? std::move(preResolved->built) : nullptr;
+    std::shared_ptr<ShaderResources> carried = preUsed ? std::move(preResolved->cached) : nullptr;
     if (resolved.cacheable) {
-        resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
-        if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
+        resolved.contentKey = preUsed && preResolved->keyed ? std::move(preResolved->key) : DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        std::shared_ptr<ShaderResources> cached = built != nullptr ? nullptr : carried != nullptr ? std::move(carried) : SharedResourceCache().Find(resolved.contentKey);
+        if (cached != nullptr) {
             const bool valid = cached->Revalidate(shaders);
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
@@ -1766,7 +1804,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             } else if (valid) {
                 countCache(&DrawProfile::cacheMisses);
             } else {
-                SharedResourceCache().Remove(resolved.contentKey);
+                SharedResourceCache().Remove(resolved.contentKey, preUsed ? cached.get() : nullptr);
                 countCache(&DrawProfile::cacheInvalidated);
             }
         }
@@ -1775,7 +1813,12 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     }
     timer.phase(PhaseLookup);
     if (resolved.resources == nullptr) {
-        resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+        if (built != nullptr) {
+            built->Complete();
+            resolved.resources = std::move(built);
+        } else {
+            resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+        }
         resolved.built = &resolved.resources->Timing();
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;
@@ -2591,6 +2634,7 @@ struct PreparedDraw {
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
     const DrawTraceContext* trace = nullptr;
     std::uint64_t shape = 0;
+    PreResolvedDraw* preResolved = nullptr;
     std::vector<std::uint32_t> stencilReferences;
     std::optional<PerformanceTimer> timing;
     DrawTimer timer;
@@ -2937,7 +2981,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto* recorder = prepared.recorder = Recorder::Active();
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
     auto& resolved = prepared.resolved;
-    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer, prepared.preResolved);
     auto& resources = resolved.resources;
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
@@ -3604,7 +3648,7 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     Draw(context, meshed, captured, second, snapshots, nullptr, trace);
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape) {
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, PreResolvedDraw* preResolved) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
     if (state.stages.tessellationGeometry) {
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
@@ -3615,6 +3659,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     prepared.recipeOut = recipeOut;
     prepared.trace = trace;
     prepared.shape = shape;
+    prepared.preResolved = preResolved;
     if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
 }
 
@@ -3822,6 +3867,57 @@ bool DrawPipelineEnabled() {
 
 bool CommitTrims() {
     return DrawPipelineEnabled();
+}
+
+bool PreResolveEnabled() {
+    static const bool enabled = std::getenv("APS5_PRERESOLVE") != nullptr;
+    return enabled;
+}
+
+std::shared_ptr<PreResolvedDraw> PreResolveDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots) {
+    if (draw.indirect || draw.indexCount == 0 || draw.instanceCount == 0 || state.stages.tessellationGeometry || !RecordDraws() || Recorder::Active() == nullptr || GuestMemory::GpuMutex().HeldByThisThread()) return nullptr;
+    if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program == nullptr; })) return nullptr;
+    auto& counters = PreResolves();
+    const auto start = std::chrono::steady_clock::now();
+    auto pre = std::make_shared<PreResolvedDraw>();
+    pre->device = context.device;
+    pre->state = &state;
+    pre->shaders = shaders;
+    pre->snapshots = snapshots;
+    pre->indexAddress = draw.indexAddress;
+    pre->indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
+    try {
+        if (DrawResourcesCacheable(shaders)) {
+            pre->key = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, pre->indexBytes, !TrimDrawResourceKey());
+            pre->keyed = true;
+            pre->cached = SharedResourceCache().Find(pre->key);
+            if (pre->cached != nullptr) counters.found.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (pre->cached == nullptr) {
+            pre->built = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(pre->indexBytes), snapshots, true);
+            counters.built.fetch_add(1, std::memory_order_relaxed);
+        }
+    } catch (const std::exception&) {
+        counters.failed.fetch_add(1, std::memory_order_relaxed);
+        return nullptr;
+    }
+    counters.resolved.fetch_add(1, std::memory_order_relaxed);
+    counters.nanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    if (profile) {
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto last = counters.lastReport.load(std::memory_order_relaxed);
+        if (nowMs - last >= 10000 && counters.lastReport.compare_exchange_strong(last, nowMs)) {
+            const auto counted = PreResolveCounted();
+            AgcDriver::ProfilePrint_nid_no_patch("[preresolve] %llu draws resolved before the GPU mutex in %.1f ms (cumulative): %llu cache hits carried, %llu builds' stage A, %llu failed and left to the lock; under the lock %llu used, %llu unused\n", static_cast<unsigned long long>(counted.resolved), static_cast<double>(counters.nanoseconds.load(std::memory_order_relaxed)) / 1e6, static_cast<unsigned long long>(counted.found), static_cast<unsigned long long>(counted.built), static_cast<unsigned long long>(counted.failed), static_cast<unsigned long long>(counted.used), static_cast<unsigned long long>(counted.unused));
+        }
+    }
+    return pre;
+}
+
+PreResolveCounts PreResolveCounted() {
+    const auto& counters = PreResolves();
+    return {counters.resolved.load(std::memory_order_relaxed), counters.found.load(std::memory_order_relaxed), counters.built.load(std::memory_order_relaxed), counters.used.load(std::memory_order_relaxed), counters.unused.load(std::memory_order_relaxed), counters.failed.load(std::memory_order_relaxed)};
 }
 
 }

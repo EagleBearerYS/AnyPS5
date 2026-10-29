@@ -1279,6 +1279,8 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
 
 void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, VulkanDevice::DrawTraceContext trace, std::uint64_t shape) {
     const auto* tracePtr = trace.token != 0 ? &trace : nullptr;
+    std::shared_ptr<Graphics::PreResolvedDraw> preResolved;
+    if (recipe == nullptr && Graphics::PreResolveEnabled()) preResolved = localDevice->PreResolveDraw(graphics, drawParameters, stages, snapshots);
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     if (auto current = device.Load(); current != nullptr && current != localDevice) localDevice = std::move(current);
@@ -1296,7 +1298,7 @@ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t
         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
     }
     std::shared_ptr<const DrawRecipe> built;
-    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, shape);
+    localDevice->Draw(graphics, drawParameters, stages, snapshots, recipeStages.empty() ? nullptr : &built, tracePtr, shape, preResolved.get());
     if (built != nullptr) attachDrawRecipe(drawKey, recipeStages, std::move(built));
 }
 
