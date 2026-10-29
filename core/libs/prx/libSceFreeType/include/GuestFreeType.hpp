@@ -15,6 +15,13 @@ struct GuestGeneric {
     void (APS5_VABI *finalizer)(void*);
 };
 
+struct GuestMemory {
+    void* user;
+    void* (APS5_VABI *alloc)(GuestMemory*, std::int64_t);
+    void (APS5_VABI *free)(GuestMemory*, void*);
+    void* (APS5_VABI *realloc)(GuestMemory*, std::int64_t, std::int64_t, void*);
+};
+
 struct GuestVector {
     std::int64_t x;
     std::int64_t y;
@@ -191,6 +198,7 @@ struct GuestPropIncreaseXHeight {
 
 static_assert(sizeof(GuestMatrix) == 32 && offsetof(GuestMatrix, xy) == 8 && offsetof(GuestMatrix, yx) == 16 && offsetof(GuestMatrix, yy) == 24);
 static_assert(sizeof(GuestGeneric) == 16 && offsetof(GuestGeneric, finalizer) == 8);
+static_assert(sizeof(GuestMemory) == 32 && offsetof(GuestMemory, alloc) == 8 && offsetof(GuestMemory, free) == 16 && offsetof(GuestMemory, realloc) == 24);
 static_assert(sizeof(GuestBitmapSize) == 32 && offsetof(GuestBitmapSize, size) == 8);
 static_assert(sizeof(GuestCharMapRec) == 16 && offsetof(GuestCharMapRec, platform_id) == 12);
 static_assert(sizeof(GuestSfntName) == 24 && offsetof(GuestSfntName, string) == 8 && offsetof(GuestSfntName, string_len) == 16);
