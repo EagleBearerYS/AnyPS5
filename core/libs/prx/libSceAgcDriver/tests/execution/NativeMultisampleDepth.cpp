@@ -1481,7 +1481,7 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
     std::printf("Native depth-stencil samples=%u clear=%u fill=%u: imported, stencil-tested, sampled%s\n", fragments, one, filling, filling ? " and refilled three times" : "");
 }
 
-enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord, PartialStencilFill, StencilFillPattern, StencilFillUnstored, StencilFillCpuWrite };
+enum class PlaneFault { None, StencilByte, StencilWrite, UnwatchedStencil, HtileWord, PartialStencilFill, StencilFillPattern, StencilFillUnstored, StencilFillCpuWrite, StencilFillStoredFirst };
 enum class PlaneFill { None, Htile, Stencil, Both };
 
 void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool one, PlaneFill fill, PlaneFault fault = PlaneFault::None, bool pipeAligned = true) {
@@ -1579,8 +1579,10 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
         if (stencilFill) {
             const auto fillBytes = fault == PlaneFault::PartialStencilFill ? stencilBytes / 2u : stencilBytes;
             const std::uint32_t pattern = fault == PlaneFault::StencilFillPattern ? 0x00010001u : stencilValue * 0x01010101u;
+            const auto storeStencil = [&] { AgcDriver::GuestMemory::StoreOwnBytes(stencil.Address(), fillBytes, [&] { std::memset(stencil.Data(), stencilValue, fillBytes); }); };
+            if (fault == PlaneFault::StencilFillStoredFirst) storeStencil();
             NoteDepthMetadataFill(stencil.Address(), fillBytes, pattern);
-            if (fault != PlaneFault::StencilFillUnstored) AgcDriver::GuestMemory::StoreOwnBytes(stencil.Address(), fillBytes, [&] { std::memset(stencil.Data(), stencilValue, fillBytes); });
+            if (fault != PlaneFault::StencilFillUnstored && fault != PlaneFault::StencilFillStoredFirst) storeStencil();
             if (fault == PlaneFault::StencilFillCpuWrite) stencil.Data()[stencilBytes - 1u] ^= std::byte{0x01};
         }
         Require(CachedSampledTexture(context, words) == texture, "a whole-plane fill replaced the sampled view of a target with a separate stencil plane");
@@ -2054,6 +2056,37 @@ void CheckEligibility(Context context) {
     NoteDepthMetadataFill(target.htileAddress, HtileMetadataBytes(extent), 0u);
     TargetRefuses([&] { lookup(target); }, "no complete tracked HTILE store");
     clear();
+    const auto storeHtile = [&] { AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, HtileMetadataBytes(extent), [&] { std::memset(metadata.Data(), 0, HtileMetadataBytes(extent)); }); };
+    storeHtile();
+    DepthSurfaceView(context, target);
+    NoteDepthMetadataFill(target.htileAddress, HtileMetadataBytes(extent), 0u);
+    TargetRefuses([&] { lookup(target); }, "no complete tracked HTILE store");
+    clear();
+    DepthSurfaceView(context, target);
+    storeHtile();
+    NoteDepthMetadataFill(target.htileAddress, HtileMetadataBytes(extent), 0u);
+    Require(lookup(target) != nullptr, "a native depth clear whose HTILE fill was stored before its note was refused");
+    clear();
+    DepthSurfaceView(context, target);
+    QueueTargetWordFill(context, recorder, target.htileAddress, HtileMetadataBytes(extent), 0u);
+    recorder.Submit();
+    NoteDepthMetadataFill(target.htileAddress, HtileMetadataBytes(extent), 0u);
+    recorder.Sync();
+    Require(lookup(target) != nullptr, "a native depth clear whose HTILE fill retired unseen by its note was refused");
+    clear();
+    DepthSurfaceView(context, target);
+    QueueTargetWordFill(context, recorder, target.htileAddress, HtileMetadataBytes(extent), 0u);
+    NoteDepthMetadataFill(target.htileAddress, HtileMetadataBytes(extent), 0u);
+    recorder.Sync();
+    Require(lookup(target) != nullptr, "a native depth clear whose noted HTILE fill retired before the first check was refused");
+    clear();
+    DepthSurfaceView(context, target);
+    storeHtile();
+    NoteDepthMetadataFill(target.htileAddress, HtileMetadataBytes(extent), 0u);
+    metadata.Data()[0] = std::byte{0x01};
+    TargetRefuses([&] { lookup(target); }, "CPU writes raced");
+    clear();
+    std::memset(metadata.Data(), 0, 65536u);
     const auto initialView = DepthSurfaceView(context, target);
     auto changedClearRegister = target;
     changedClearRegister.clearDepth = 1.0f;
@@ -2514,6 +2547,8 @@ int main(int argc, char** argv) {
                 TargetRefuses([&] { CheckSeparateStencilTarget(context, 4u, true, PlaneFill::Stencil, fault, false); }, expected);
                 std::printf("Native depth with a separate stencil plane fill fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
+            CheckSeparateStencilTarget(context, 4u, true, PlaneFill::Stencil, PlaneFault::StencilFillStoredFirst, false);
+            std::puts("Native depth with a separate stencil plane accepted a fill stored before its note");
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!supported(samples)) { unavailable += 4u; continue; }
                 for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote, GhostFill::QueuedBeforeNote, GhostFill::QueuedNotedTwice}) { CheckGhostSequence(context, samples, path); ++checked; }
