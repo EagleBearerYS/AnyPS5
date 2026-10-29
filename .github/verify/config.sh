@@ -1,0 +1,4 @@
+BASE=bb04a4f1ea0175e9e4f149f0359a764d62ff3296
+REPEAT=20
+EXTRA_TESTS='guest_pthread_stack|guest_freetype_ot_memory'
+NO_BEFORE=1
