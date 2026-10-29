@@ -6762,6 +6762,144 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+thread_local bool importingAtMap = false;
+std::atomic<bool> importAtMapHooked{false};
+
+void hookImportAtMap(std::uint64_t address, std::size_t bytes) {
+    if (importingAtMap) importAtMapHooked.store(true, std::memory_order_release);
+    StorageTexture::SaveBeforeUnwatch(address, bytes);
+}
+
+bool importAtMapLockOrderTests(const Device& device) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: the lock order of an import at map not tested\n";
+        return false;
+    }
+    std::unique_lock gpu(GpuMutex());
+    Recorder recorder(base);
+    recorder.Activate();
+    constexpr std::uint32_t side = 1024;
+    constexpr std::size_t surfaceBytes = std::size_t{side} * side * 4;
+    const auto decided = PrepareImportWatch(base);
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() {
+            AgcDriver::GuestMemory::SetImportWalkFailureForTest(0, 0);
+            AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch);
+            SetImportWatch(context, decided);
+        }
+    } restore{base, decided};
+    for (const bool failedWalk : {false, true}) {
+        const std::string what = failedWalk ? "an import at map that stays watched and whose first page walk failed" : "an import at map that leaves the write watch";
+        SetImportWatch(base, failedWalk ? ImportWatch::Watch : ImportWatch::Unwatch);
+        void* block = AllocateWatched(surfaceBytes, 65536);
+        if (block == nullptr) {
+            std::cout << "no write watching: the lock order of an import at map not tested\n";
+            return false;
+        }
+        std::memset(block, 0x5a, surfaceBytes);
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        struct Release {
+            const Context& context;
+            void* block;
+            std::uint64_t address;
+            std::size_t surfaceBytes;
+            bool registered = false;
+            ~Release() {
+                if (registered) {
+                    {
+                        GuestAllocations::Mutation mutation;
+                        mutation.Remove(block);
+                    }
+                    HostImportFor(context, address, surfaceBytes);
+                }
+                ReleaseWatched(block, surfaceBytes);
+            }
+        } release{base, block, address, surfaceBytes};
+        AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+        TextureDetiler detiler(base);
+        struct Finish {
+            Recorder& recorder;
+            ~Finish() { recorder.Sync(); }
+        } finish{recorder};
+        auto context = base;
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == surfaceBytes, "(m) unexpected surface size");
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        recorder.Keep(image);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, surfaceBytes, true, true, true);
+        }
+        release.registered = true;
+        GuestAllocations::Mapped ranges;
+        for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+            if (range->address == address) ranges.push_back(range);
+        }
+        Require(ranges.size() == 1, "(m) " + what + ": the mapping is not registered");
+        const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+        Require(ImportMappedRanges(context, {}, generation, true), "(m) " + what + ": the device did not take the imports");
+        Require(ExistingHostImportFor(context, address, surfaceBytes) == nullptr, "(m) " + what + ": the image's memory was imported before it was mapped");
+        if (failedWalk) AgcDriver::GuestMemory::SetImportWalkFailureForTest(1, 0);
+        importAtMapHooked = false;
+        AgcDriver::GuestMemory::SetUnwatchHook(&hookImportAtMap);
+        gpu.unlock();
+        std::atomic<bool> held{false};
+        std::atomic<bool> returned{false};
+        std::atomic<bool> holderDone{false};
+        std::atomic<bool> mapperDone{false};
+        std::thread holder([&] {
+            std::lock_guard gpu(GpuMutex());
+            held = true;
+            while (!importAtMapHooked && !returned) std::this_thread::yield();
+            static_cast<void>(HostImportFor(context, address, surfaceBytes));
+            holderDone = true;
+        });
+        std::thread mapper([&] {
+            while (!held) std::this_thread::yield();
+            importingAtMap = true;
+            const bool imported = ImportMappedRanges(context, ranges, generation, false);
+            importingAtMap = false;
+            returned = true;
+            if (!imported) {
+                std::lock_guard gpu(GpuMutex());
+                static_cast<void>(ImportMappedRanges(context, ranges, generation, true));
+            }
+            mapperDone = true;
+        });
+        const auto start = std::chrono::steady_clock::now();
+        while (!holderDone || !mapperDone) {
+            if (std::chrono::steady_clock::now() - start > std::chrono::seconds(10)) {
+                std::cerr << "(m) " << what << ": deadlock, neither thread finished in 10 s: the import at map " << (importAtMapHooked ? "ran the unwatch hook" : "did not run the unwatch hook") << " and " << (returned ? "returned" : "did not return") << ", the thread holding the GPU lock " << (holderDone ? "got" : "did not get") << " its host import" << std::endl;
+                std::_Exit(1);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        holder.join();
+        mapper.join();
+        gpu.lock();
+        AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch);
+        AgcDriver::GuestMemory::SetImportWalkFailureForTest(0, 0);
+        Require(ExistingHostImportFor(context, address, surfaceBytes) != nullptr, "(m) " + what + ": the mapped image's memory was not imported");
+    }
+    std::cout << "import at map lock order tests passed\n";
+    return true;
+}
+
 // A write-back stores the texels of an image and leaves every other byte of the surface's memory
 // as it was: the padding of the tile blocks the surface covers only partly (its last block column
 // and row), the tail block of a mip chain, the bytes between the mips and the pitch padding of a
@@ -12089,6 +12227,7 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-cut-only") return hostImportCutTests(device);
 #endif
         if (argc == 2 && std::string_view(argv[1]) == "--windowed-import-refresh-only") return windowedImportRefreshTests(device) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--import-at-map-lock-order-only") return importAtMapLockOrderTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-retirement-only") {
             const auto alignment = device.GetContext().hostImportAlignment;
             if (alignment == 0 || alignment > 65536) {
