@@ -1343,7 +1343,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             chases.Value(chase.immediate);
             chases.Value(chase.readOffset);
             chases.Value(chase.readImmediate);
-            chases.Value(chase.readHighImmediate);
+            { std::uint32_t dropped = 0; chases.Value(dropped); }
             for (auto& edit : chase.edits) {
                 chases.Value(edit.shift);
                 chases.Value(edit.mask);
