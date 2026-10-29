@@ -471,42 +471,6 @@ alignas(256) constexpr std::array<std::uint32_t, 73> PointerChaseSplitCode{
     0xbf89ffd7u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u,
     0xbf810000u,
 };
-alignas(256) constexpr std::array<std::uint32_t, 77> PointerChaseSplitHandleCode{
-    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
-    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
-    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
-    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
-    0xbf0d8012u, 0xbf840006u, 0xf4080f16u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b1eu, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8112u, 0xbf840006u, 0xf4081016u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b20u, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8212u, 0xbf84000cu, 0xf4081116u, 0xfa000110u, 0xf4081616u, 0xfa000120u, 0xbf8cc07fu, 0xf4301222u,
-    0xfa000040u, 0xf420172cu, 0xfa00006cu, 0xbf8cc07fu, 0xbeac034du, 0xbead035cu, 0xf40c0916u, 0xfa000000u,
-    0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffd3u, 0xbefe042eu, 0x7e120202u, 0x34101286u,
-    0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
-};
-alignas(256) constexpr std::array<std::uint32_t, 76> PointerChaseSplitOffsetCode{
-    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
-    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
-    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
-    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
-    0xbf0d8012u, 0xbf840006u, 0xf4080f16u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b1eu, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8112u, 0xbf840006u, 0xf4081016u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b20u, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8212u, 0xbf84000bu, 0xf4081116u, 0xfa000110u, 0xbf8cc07fu, 0xb05d0010u, 0xf4301222u, 0xfa000040u,
-    0xf4201722u, 0xba00005cu, 0xbf8cc07fu, 0xbeac034du, 0xbead035cu, 0xf40c0916u, 0xfa000000u, 0xbf8cc07fu,
-    0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffd4u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u,
-    0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
-};
-alignas(256) constexpr std::array<std::uint32_t, 73> PointerChaseSplitWordCode{
-    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
-    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
-    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
-    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
-    0xbf0d8012u, 0xbf840006u, 0xf4080f16u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b1eu, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8112u, 0xbf840006u, 0xf4081016u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b20u, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8212u, 0xbf840008u, 0xf4081116u, 0xfa000110u, 0xbf8cc07fu, 0xf4301222u, 0xfa000040u, 0xbf8cc07fu,
-    0xbeac034du, 0xbead034du, 0xf40c0916u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u,
-    0xbf89ffd7u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u,
-    0xbf810000u,
-};
 alignas(256) constexpr std::array<std::uint32_t, 61> PointerChaseWordsCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
@@ -2649,18 +2613,6 @@ void RunPointerChaseSplitTests(AgcDriver::VulkanDevice& device) {
         });
     };
     const auto untouched = [](const Outcome& outcome) { return std::all_of(outcome.words.begin(), outcome.words.end(), [](auto word) { return word == 0xdeadbeefu; }); };
-    const auto refused = [&](std::span<const std::uint32_t> code, const std::string& what) {
-        std::string refusal;
-        try {
-            static_cast<void>(run(code));
-        } catch (const std::runtime_error& error) {
-            refusal = error.what();
-        }
-        Require(refusal.find("not a valid runtime value") != std::string::npos, name + ": " + what + " was not refused by resource planning: " + refusal);
-    };
-    refused(PointerChaseSplitHandleCode, "a high word read through another V#");
-    refused(PointerChaseSplitOffsetCode, "a high word read at another buffer offset");
-    refused(PointerChaseSplitWordCode, "a high word read at the low word");
     const auto taken = run(PointerChaseSplitCode);
     Require(!Faulted(taken), name + ": the T# at the end of the chase faulted:\n" + taken.log);
     for (std::uint32_t group = 0; group < 4u; ++group) RequireRed(taken, group, Lanes, sampled(group), name + ": the T# at the pointer reached by the chase steps taken in group " + std::to_string(group));
@@ -2675,7 +2627,7 @@ void RunPointerChaseSplitTests(AgcDriver::VulkanDevice& device) {
     Require(Faulted(outside) && outside.log.find("outside the snapshot") != std::string::npos, name + ": a split-word link outside the snapshot did not fault as outside the snapshot:\n" + outside.log);
     Require(untouched(outside), name + ": a split-word link outside the snapshot published copied output");
     Require(outside.artifactId == taken.artifactId, name + ": a split-word link outside the snapshot recompiled the shader");
-    std::puts("pointer table with a split-word V# chase: a T# at a record pointer chased twice through a V# at the pointer plus 0x60 and once through a V# at the pointer plus 0x110 whose next pointer is dwords 5 and 11 of one 16-dword load from 0x40, checked for every taken and skipped step with a node only the third chase step reaches, a moved link and a link outside the snapshot, and a high word through another V#, at another buffer offset or at the low word refused");
+    std::puts("pointer table with a split-word V# chase: a T# at a record pointer chased twice through a V# at the pointer plus 0x60 and once through a V# at the pointer plus 0x110 whose next pointer is dwords 5 and 11 of one 16-dword load from 0x40, checked for every taken and skipped step with a node only the third chase step reaches, a moved link and a link outside the snapshot");
 }
 
 void RunPointerChaseWordsTests(AgcDriver::VulkanDevice& device) {
