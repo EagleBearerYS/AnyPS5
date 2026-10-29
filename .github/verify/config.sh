@@ -1,0 +1,3 @@
+BASE=f7e84c4cf1609cc10bac95a44cd431805e5ebc8a
+REPEAT=10
+EXTRA_TESTS='^agc_driver_partially_|agc_driver_copy_surface_bytes_no_alias|agc_driver_large_tracked_snapshot'
