@@ -1701,6 +1701,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_unchanged_cpu_stamps PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_deferred_draw_build COMMAND agc_driver_recorder_tests --deferred-draw-build-only)
+    set_tests_properties(agc_deferred_draw_build PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_deferred_draw_build PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     foreach(mode IN ITEMS map ring shared uncached)
         add_test(NAME agc_collect_mapping_history_${mode} COMMAND agc_driver_recorder_tests --collect-mapping-history-only)
         set_tests_properties(agc_collect_mapping_history_${mode} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)

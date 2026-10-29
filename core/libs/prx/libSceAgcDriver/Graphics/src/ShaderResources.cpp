@@ -1656,11 +1656,7 @@ void ShaderResources::KeepStorageImageBytes(Recorder& recorder) const {
     }
 }
 
-ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots) : context(context), guestMemory(context) {
-    drawBuild = true;
-    prepareAddressBindings(shaders, snapshots);
-    build(shaders, &target, colorAttachments, indexAddress, indexBytes);
-}
+ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots) : ShaderResources(context, shaders, target, colorAttachments, indexAddress, indexBytes, snapshots, false) {}
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots) : ShaderResources(context, compute, snapshots, false) {}
 
@@ -1672,6 +1668,26 @@ bool UsesAddressTables(const CompiledShader& compute) {
     return std::any_of(compute.program->bindings.begin(), compute.program->bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
 }
 
+}
+
+ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots, bool deferred) : context(context), guestMemory(context) {
+    drawBuild = true;
+    if (!deferred) {
+        prepareAddressBindings(shaders, snapshots);
+        build(shaders, &target, colorAttachments, indexAddress, indexBytes);
+        return;
+    }
+    deferredDraw = shaders;
+    deferredSnapshots = snapshots;
+    deferredTarget = target;
+    deferredColorAttachments = colorAttachments;
+    deferredIndexAddress = indexAddress;
+    deferredIndexBytes = indexBytes;
+    lockedBuild = std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return UsesAddressTables(shader); });
+    if (lockedBuild) return;
+    unlockedPrepare = true;
+    prepareAddressBindings(shaders, snapshots);
+    buildPrepare(shaders, &target, colorAttachments, indexAddress, indexBytes);
 }
 
 ShaderResources::ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred, std::uint64_t dispatchThreads) : context(context), guestMemory(context), dispatchThreads(dispatchThreads), deferredCompute(compute), deferredSnapshots(snapshots) {
@@ -1704,10 +1720,10 @@ ShaderResources::ShaderResources(const Context& context, const CompiledShader& c
 
 void ShaderResources::Complete() {
     Require(!completed, "shader resources were already completed");
-    const std::span<const CompiledShader> shaders(&deferredCompute, 1);
+    const auto shaders = drawBuild ? deferredDraw : std::span<const CompiledShader>(&deferredCompute, 1);
     if (lockedBuild) {
         prepareAddressBindings(shaders, deferredSnapshots);
-        buildPrepare(shaders, nullptr, 0, 0, 0);
+        buildPrepare(shaders, drawBuild ? &deferredTarget : nullptr, deferredColorAttachments, deferredIndexAddress, deferredIndexBytes);
     }
     buildComplete();
     forgetDeferredInputs();
@@ -1719,6 +1735,7 @@ void ShaderResources::forgetDeferredInputs() {
     // build, so they are dropped rather than left dangling.
     deferredCompute = {};
     deferredSnapshots = {};
+    deferredDraw = {};
 }
 
 void ShaderResources::build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
