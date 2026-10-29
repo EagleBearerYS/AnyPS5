@@ -5576,7 +5576,7 @@ void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     std::cout << "idle publish wait verified\n";
 }
 
-void untrackedForgetTests(const Device& device) {
+void untrackedForgetTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: untracked comparison memo not tested\n";
@@ -5626,6 +5626,10 @@ void untrackedForgetTests(const Device& device) {
         return;
     }
     TextureDetiler detiler(base);
+    struct Finish {
+        Recorder& recorder;
+        ~Finish() { recorder.Sync(); }
+    } finish{recorder};
     auto context = base;
     context.detiler = &detiler;
     GuestTextureResource resource{};
@@ -12420,7 +12424,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
-            untrackedForgetTests(device);
+            untrackedForgetTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
