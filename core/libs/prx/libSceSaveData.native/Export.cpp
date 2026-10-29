@@ -354,6 +354,27 @@ static bool running_title(const SceSaveDataTitleId* titleId) {
     return titleId == nullptr || std::strncmp(titleId->data, GetAppTitleId_nid_postfix().value, sizeof(titleId->data)) == 0;
 }
 
+static int read_backup(const std::string& dirName, SaveDataParam* param) {
+    const std::string entry = backup_entry(BACKUP_DIR, dirName);
+    std::error_code error;
+    if (!std::filesystem::exists(entry, error)) {
+        return error ? SAVE_DATA_ERROR_INTERNAL : SAVE_DATA_ERROR_NOT_FOUND;
+    }
+    const std::string backup = entry_save(entry);
+    std::vector<char> bytes;
+    if (!std::filesystem::is_directory(backup, error) || !std::filesystem::is_regular_file(param_path(backup), error) || !read_file_all(param_path(backup), bytes) || bytes.size() != sizeof(SaveDataParam)) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
+    const auto blocks = std::filesystem::status(blocks_path(backup), error).type();
+    if (blocks != std::filesystem::file_type::not_found && blocks != std::filesystem::file_type::regular) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
+    if (param != nullptr) {
+        std::memcpy(param, bytes.data(), sizeof(SaveDataParam));
+    }
+    return SAVE_DATA_OK;
+}
+
 static void backupSave(const std::string& dirName) {
     const std::string source = save_root() + "/" + dirName;
     const std::string entry = backup_entry(BACKUP_DIR, dirName);
@@ -1143,14 +1164,7 @@ static int checkBackupData(const SaveDataCheckBackupData* check) {
     if (isMountedDirectory(save_root() + "/" + dirName)) {
         return SAVE_DATA_ERROR_BUSY;
     }
-    const std::string backup = entry_save(backup_entry(BACKUP_DIR, dirName));
-    if (!std::filesystem::is_directory(backup)) {
-        return SAVE_DATA_ERROR_NOT_FOUND;
-    }
-    if (check->param != nullptr && !read_param_file(param_path(backup), check->param)) {
-        return SAVE_DATA_ERROR_INTERNAL;
-    }
-    return SAVE_DATA_OK;
+    return read_backup(dirName, check->param);
 }
 
 int APS5_VABI sceSaveDataCheckBackupData(const SaveDataCheckBackupData* check) {
@@ -1413,15 +1427,15 @@ static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
     if (isMountedDirectory(target)) {
         return SAVE_DATA_ERROR_BUSY;
     }
-    const std::string backup = entry_save(backup_entry(BACKUP_DIR, dirName));
-    if (!std::filesystem::is_directory(backup)) {
-        return SAVE_DATA_ERROR_NOT_FOUND;
+    const int backup = read_backup(dirName, nullptr);
+    if (backup != SAVE_DATA_OK) {
+        return backup;
     }
     if (!std::filesystem::is_directory(target)) {
         return SAVE_DATA_ERROR_INTERNAL;
     }
     try {
-        restoreSave(target, backup);
+        restoreSave(target, entry_save(backup_entry(BACKUP_DIR, dirName)));
     } catch (const std::filesystem::filesystem_error&) {
         return SAVE_DATA_ERROR_INTERNAL;
     }

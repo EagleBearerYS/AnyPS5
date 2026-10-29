@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <random>
 #include <set>
 #include <string>
@@ -25,6 +26,7 @@ constexpr int SaveDataErrorNotInitialized = -2137063423;
 constexpr int SaveDataErrorNotMounted = -2137063420;
 constexpr int SaveDataErrorBusy = -2137063421;
 constexpr int SaveDataErrorNotFound = -2137063416;
+constexpr int SaveDataErrorInternal = -2137063413;
 
 int failures = 0;
 
@@ -267,6 +269,41 @@ bool MountSave(SceSaveDataDirName* dirName, std::uint32_t mode, SaveDataMountRes
     return sceSaveDataMount3(&mount, result) == 0;
 }
 
+std::map<std::string, std::string> Snapshot(const std::filesystem::path& save) {
+    std::map<std::string, std::string> files;
+    for (const char* side : {".param", ".blocks"}) {
+        std::filesystem::path path = save;
+        path += side;
+        if (std::filesystem::exists(path)) files[side] = ReadText(path);
+    }
+    if (!std::filesystem::is_directory(save)) return files;
+    files["/"] = "";
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(save)) {
+        const std::string relative = std::filesystem::relative(entry.path(), save).generic_string();
+        if (entry.is_directory()) {
+            files[relative + "/"] = "";
+        } else {
+            files[relative] = ReadText(entry.path());
+        }
+    }
+    return files;
+}
+
+int BackUp(SceSaveDataDirName* dirName, const std::string& data, const char* title) {
+    const std::string name = dirName->data;
+    SaveDataMountResult mounted{};
+    if (!MountSave(dirName, MountReadWrite | MountCreate2, &mounted)) {
+        Check(false, name + " mounts to be backed up");
+        return SaveDataErrorNotMounted;
+    }
+    WriteText(std::filesystem::path("_sd") / name / "data.bin", data);
+    Check(sceSaveDataSetParam(&mounted.mount_point, 1, title, std::strlen(title) + 1) == 0, name + " takes the title " + title);
+    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, name + " unmounts with a backup");
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, name + "'s backup posts an event");
+    return event.error_code;
+}
+
 void CheckBackups() {
     std::filesystem::create_directories("app0/sce_sys");
     WriteText("app0/sce_sys/param.json", "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}");
@@ -336,6 +373,43 @@ void CheckBackups() {
     Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "deleting a save deletes its backup");
 }
 
+template <typename Damage>
+void CheckCorruptBackup(const std::string& label, Damage damage) {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "corrupt", sizeof("corrupt"));
+    Check(BackUp(&name, "backed up", "Corrupt") == 0, label + ": the save is backed up");
+    WriteText(std::filesystem::path("_sd") / "corrupt" / "data.bin", "live");
+    damage(std::filesystem::path("_sd_backup") / "corrupt");
+    const auto live = std::filesystem::path("_sd") / "corrupt";
+    const auto before = Snapshot(live);
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorInternal, label + ": checkBackupData without param is INTERNAL");
+    SaveDataParam param;
+    std::memset(&param, 0xA5, sizeof(param));
+    const SaveDataParam untouched = param;
+    check.param = &param;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorInternal, label + ": checkBackupData with param is INTERNAL");
+    Check(std::memcmp(&param, &untouched, sizeof(param)) == 0, label + ": checkBackupData leaves param as it was");
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorInternal, label + ": restoreBackupData is INTERNAL");
+    Check(Snapshot(live) == before, label + ": restoreBackupData leaves the save byte for byte");
+}
+
+void CheckCorruptBackups() {
+    CheckCorruptBackup("a backup without its .param", [](const std::filesystem::path& entry) { std::filesystem::remove(entry / "save.param"); });
+    CheckCorruptBackup("an empty backup directory", [](const std::filesystem::path& entry) {
+        std::filesystem::remove_all(entry);
+        std::filesystem::create_directory(entry);
+    });
+    CheckCorruptBackup("a backup with a short .param", [](const std::filesystem::path& entry) {
+        const std::string bytes = ReadText(entry / "save.param");
+        WriteText(entry / "save.param", bytes.substr(0, bytes.size() - 1));
+    });
+    CheckCorruptBackup("a backup with a long .param", [](const std::filesystem::path& entry) { WriteText(entry / "save.param", ReadText(entry / "save.param") + "x"); });
+}
+
 }
 
 int main() {
@@ -354,6 +428,7 @@ int main() {
     CheckEquivalentMounts();
     CheckInvalidNamesAreRejected();
     CheckBackups();
+    CheckCorruptBackups();
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);
