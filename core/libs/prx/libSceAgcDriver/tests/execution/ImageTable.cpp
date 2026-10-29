@@ -1632,7 +1632,7 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     Require(Faulted(phiFault) && phiFault.log.find("outside the snapshot") != std::string::npos, "nested image table: the uncaptured Phi arm was assumed unreachable");
     Require(std::all_of(phiFault.words.begin(), phiFault.words.end(), [](auto word) { return word == 0xdeadbeefu; }), "nested image table: an uncaptured pointer published copied output");
     Require(phiFault.artifactId == phiValid.artifactId, "nested image table: the pointer choice was specialized on the CPU");
-    std::puts("nested image table independent keys, alias, descriptor replacement, faults, budget and refusals checked");
+    std::puts("nested image table independent keys, alias, descriptor replacement, faults and budget checked");
 }
 
 void RunPointerChainRecordTests(AgcDriver::VulkanDevice& device) {
@@ -1796,7 +1796,7 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
         const bool clamp = keys[group * 2u + 1u] == 0u;
         RequireRed(sharedBudget, group, Lanes, [clamp](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[clamp ? Width - 1u : x]); }, "nested sampler table: aliased parent at the snapshot budget");
     }
-    std::puts("nested sampler table: S# through record, pointer and V# checked on wave64 and wave32, with sharing, budgets and refusals");
+    std::puts("nested sampler table: S# through record, pointer and V# checked on wave64 and wave32, with sharing and budgets");
 }
 
 void RunPointerSamplerTests(AgcDriver::VulkanDevice& device) {
