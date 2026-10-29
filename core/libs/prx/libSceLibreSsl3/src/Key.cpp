@@ -35,4 +35,22 @@ int APS5_VABI EC_KEY_up_ref_nid_postfix(LibreSsl3EcKey* key) {
     return Retain_nid_no_patch(key->references);
 }
 
+int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl3Bio* bio) {
+    if (!bio)
+        throw std::invalid_argument("BIO_up_ref requires a BIO");
+    return Retain_nid_no_patch(bio->references);
+}
+
+int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl) {
+    if (!ssl)
+        throw std::invalid_argument("SSL_up_ref requires a connection");
+    return Retain_nid_no_patch(ssl->references);
+}
+
+int APS5_VABI SSL_SESSION_up_ref_nid_postfix(LibreSsl3SslSession* session) {
+    if (!session)
+        throw std::invalid_argument("SSL_SESSION_up_ref requires a session");
+    return Retain_nid_no_patch(session->references);
+}
+
 }
