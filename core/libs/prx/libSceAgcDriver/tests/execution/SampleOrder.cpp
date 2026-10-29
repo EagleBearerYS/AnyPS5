@@ -1041,21 +1041,91 @@ constexpr std::array<std::uint8_t, 32> VillageLocations{0x04, 0x0c, 0, 0, 0, 0, 
 constexpr float ClearDepth = 0.9375f;
 constexpr std::size_t SceneSlots = 6u;
 const Vertices Slopes{{-1.0f, -1.0f, 0.125f, 1.0f}, {1.0f, -0.8125f, 0.875f, 1.0f}, {-0.5625f, 1.0f, 0.5f, 1.0f}, {1.0f, -1.0f, 0.75f, 1.0f}, {0.6875f, 1.0f, 0.0625f, 1.0f}, {-1.0f, 0.4375f, 0.3125f, 1.0f}};
+const Vertices Shade{{-0.9375f, -0.875f, 0.25f, 1.0f}, {0.9375f, -0.625f, 0.6875f, 1.0f}, {0.0625f, 0.9375f, 0.4375f, 1.0f}};
 
 struct Rendered {
     Samples color;
     Samples depth;
 };
 
-double SlopeDepth(std::size_t triangle, double x, double y) {
+std::array<std::array<double, 3>, 3> Corners(const Vertices& vertices, std::size_t triangle) {
     std::array<std::array<double, 3>, 3> corner{};
     for (std::size_t vertex = 0; vertex < corner.size(); ++vertex) {
-        const auto& at = Slopes[triangle * 3u + vertex];
+        const auto& at = vertices[triangle * 3u + vertex];
         corner[vertex] = {(at[0] + 1.0) * ReferenceExtent.width / 2.0, (1.0 - at[1]) * ReferenceExtent.height / 2.0, at[2]};
     }
-    const auto edge = [](const std::array<double, 3>& from, const std::array<double, 3>& to, double px, double py) { return (to[0] - from[0]) * (py - from[1]) - (to[1] - from[1]) * (px - from[0]); };
-    const auto area = edge(corner[0], corner[1], corner[2][0], corner[2][1]);
-    return (edge(corner[1], corner[2], x, y) * corner[0][2] + edge(corner[2], corner[0], x, y) * corner[1][2] + edge(corner[0], corner[1], x, y) * corner[2][2]) / area;
+    return corner;
+}
+
+double EdgeFunction(const std::array<double, 3>& from, const std::array<double, 3>& to, double x, double y) {
+    return (to[0] - from[0]) * (y - from[1]) - (to[1] - from[1]) * (x - from[0]);
+}
+
+std::array<double, 3> TriangleWeights(const Vertices& vertices, std::size_t triangle, double x, double y) {
+    const auto corner = Corners(vertices, triangle);
+    const auto area = EdgeFunction(corner[0], corner[1], corner[2][0], corner[2][1]);
+    return {EdgeFunction(corner[1], corner[2], x, y) / area, EdgeFunction(corner[2], corner[0], x, y) / area, EdgeFunction(corner[0], corner[1], x, y) / area};
+}
+
+double SlopeDepth(std::size_t triangle, double x, double y) {
+    const auto corner = Corners(Slopes, triangle);
+    const auto area = EdgeFunction(corner[0], corner[1], corner[2][0], corner[2][1]);
+    return (EdgeFunction(corner[1], corner[2], x, y) * corner[0][2] + EdgeFunction(corner[2], corner[0], x, y) * corner[1][2] + EdgeFunction(corner[0], corner[1], x, y) * corner[2][2]) / area;
+}
+
+std::array<double, 2> GuestLocation(const std::array<std::uint8_t, 32>& locations, std::uint32_t x, std::uint32_t y, std::uint32_t sample) {
+    const auto bits = static_cast<std::uint32_t>(locations[Quad(x, y) * 8u + sample]);
+    return {0.5 + (static_cast<int>(bits & 7u) - static_cast<int>(bits & 8u)) / 16.0, 0.5 + (static_cast<int>((bits >> 4u) & 7u) - static_cast<int>((bits >> 4u) & 8u)) / 16.0};
+}
+
+struct Shading {
+    bool shaded = false;
+    bool tied = false;
+};
+
+Shading ShadeAt(double x, double y) {
+    constexpr double coverageMargin = 1.0e-6;
+    constexpr double depthMargin = 1.0e-4;
+    Shading shading;
+    double stored = ClearDepth;
+    for (std::size_t triangle = 0; triangle < Slopes.size() / 3u; ++triangle) {
+        const auto weights = TriangleWeights(Slopes, triangle, x, y);
+        const auto least = std::min({weights[0], weights[1], weights[2]});
+        shading.tied |= std::abs(least) < coverageMargin;
+        if (least >= 0.0) stored = std::min(stored, SlopeDepth(triangle, x, y));
+    }
+    const auto weights = TriangleWeights(Shade, 0u, x, y);
+    const auto least = std::min({weights[0], weights[1], weights[2]});
+    const auto depth = weights[0] * Shade[0][2] + weights[1] * Shade[1][2] + weights[2] * Shade[2][2];
+    shading.tied |= std::abs(least) < coverageMargin || std::abs(depth - stored) < depthMargin;
+    shading.shaded = least >= 0.0 && depth <= stored;
+    return shading;
+}
+
+bool EdgeSample(const std::array<std::uint8_t, 32>& locations, std::uint32_t x, std::uint32_t y, std::uint32_t sample) {
+    const auto at = GuestLocation(locations, x, y, sample);
+    const auto first = ShadeAt((x & ~1u) + at[0], (y & ~1u) + at[1]);
+    for (std::uint32_t pixel = 0; pixel < 4u; ++pixel) {
+        const auto shading = ShadeAt((x & ~1u) + (pixel & 1u) + at[0], (y & ~1u) + (pixel >> 1u) + at[1]);
+        if (shading.tied || shading.shaded != first.shaded) return true;
+    }
+    return false;
+}
+
+float HalfStep(float magnitude) {
+    return magnitude < 0x1p-14f ? 0x1p-24f : std::ldexp(1.0f, std::ilogb(magnitude) - 10);
+}
+
+float RoundHalf(float value) {
+    const auto step = HalfStep(std::abs(value));
+    return std::nearbyint(value / step) * step;
+}
+
+bool AdjacentHalves(std::uint32_t first, std::uint32_t second) {
+    const auto a = std::bit_cast<float>(first);
+    const auto b = std::bit_cast<float>(second);
+    if (!std::isfinite(a) || !std::isfinite(b) || (a < 0.0f) != (b < 0.0f)) return false;
+    return std::abs(a - b) == HalfStep(std::min(std::abs(a), std::abs(b)));
 }
 
 struct DepthLocations {
@@ -1079,8 +1149,7 @@ DepthLocations LocateDepth(const Samples& depth, const std::array<std::uint8_t, 
         const auto x = pixel % ReferenceExtent.width;
         const auto y = pixel / ReferenceExtent.width;
         ++located.slopedByRow[y & 1u];
-        const auto bits = static_cast<std::uint32_t>(locations[Quad(x, y) * 8u + sample]);
-        const std::array<double, 2> guest{0.5 + (static_cast<int>(bits & 7u) - static_cast<int>(bits & 8u)) / 16.0, 0.5 + (static_cast<int>((bits >> 4u) & 7u) - static_cast<int>((bits >> 4u) & 8u)) / 16.0};
+        const auto guest = GuestLocation(locations, x, y, sample);
         const auto holds = [&](const std::array<double, 2>& at) {
             for (std::size_t triangle = 0; triangle < 2u; ++triangle) {
                 if (std::abs(SlopeDepth(triangle, x + at[0], y + at[1]) - value) < 1.0e-5) return true;
@@ -1154,7 +1223,6 @@ Rendered RenderCheckerboard(AgcDriver::VulkanDevice& device, const Context& cont
     AgcDriver::Graphics::DepthTarget depth{reinterpret_cast<std::uintptr_t>(DepthMemory.data()) + 256u * 1024u * run, 0u, ReferenceExtent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
     depth.samples = samples;
     const Vertices clear = Screen(ClearDepth);
-    const Vertices shade{{-0.9375f, -0.875f, 0.25f, 1.0f}, {0.9375f, -0.625f, 0.6875f, 1.0f}, {0.0625f, 0.9375f, 0.4375f, 1.0f}};
     Pass depthOnly;
     depthOnly.vertices = &clear;
     depthOnly.code = NullExportCode;
@@ -1179,7 +1247,7 @@ Rendered RenderCheckerboard(AgcDriver::VulkanDevice& device, const Context& cont
     colorPass.color = color;
     colorPass.locations = locations;
     Draw(device, context, colorPass);
-    colorPass.vertices = &shade;
+    colorPass.vertices = &Shade;
     colorPass.depthCompare = VK_COMPARE_OP_LESS_OR_EQUAL;
     Draw(device, context, colorPass);
     Settle(device);
@@ -1198,6 +1266,31 @@ std::size_t Differences(const Samples& reference, const Samples& rendered, std::
             std::printf("%s: %s is 0x%08x 0x%08x 0x%08x 0x%08x, the reference's is 0x%08x 0x%08x 0x%08x 0x%08x\n", what.c_str(), At(pixel % ReferenceExtent.width, pixel / ReferenceExtent.width, static_cast<std::uint32_t>(index % samples)).c_str(), rendered[index][0], rendered[index][1], rendered[index][2], rendered[index][3], reference[index][0], reference[index][1], reference[index][2], reference[index][3]);
         }
         ++differences;
+    }
+    return differences;
+}
+
+struct ColorDifferences {
+    std::size_t exact = 0;
+    std::size_t edge = 0;
+};
+
+ColorDifferences EdgeColorDifferences(const Samples& reference, const Samples& rendered, std::uint32_t samples, const std::array<std::uint8_t, 32>& locations, const std::string& what) {
+    ColorDifferences differences;
+    for (std::size_t index = 0; index < reference.size(); ++index) {
+        if (reference[index] == rendered[index]) continue;
+        const auto pixel = static_cast<std::uint32_t>(index / samples);
+        const auto x = pixel % ReferenceExtent.width;
+        const auto y = pixel / ReferenceExtent.width;
+        const auto sample = static_cast<std::uint32_t>(index % samples);
+        bool barycentricStep = reference[index][2] == rendered[index][2] && reference[index][3] == rendered[index][3];
+        for (std::size_t channel = 0; channel < 2u; ++channel) barycentricStep &= reference[index][channel] == rendered[index][channel] || AdjacentHalves(reference[index][channel], rendered[index][channel]);
+        const bool edge = barycentricStep && EdgeSample(locations, x, y, sample);
+        auto& count = edge ? differences.edge : differences.exact;
+        if (count < 4u) {
+            std::printf("%s%s: %s is 0x%08x 0x%08x 0x%08x 0x%08x, the reference's is 0x%08x 0x%08x 0x%08x 0x%08x\n", what.c_str(), edge ? ", one f16 step in a barycentric of an edge sample" : "", At(x, y, sample).c_str(), rendered[index][0], rendered[index][1], rendered[index][2], rendered[index][3], reference[index][0], reference[index][1], reference[index][2], reference[index][3]);
+        }
+        ++count;
     }
     return differences;
 }
@@ -1327,14 +1420,58 @@ int GridReference(AgcDriver::VulkanDevice& device) {
     } else {
         std::printf("the device has no 2x2 sample location grid at 2 samples: the composite of four uniform renders is the reference\n");
     }
-    const auto colorDifferences = Differences(reference.color, exact.color, samples, "color with the samples put in the guest's order", true);
+    const auto colorDifferences = EdgeColorDifferences(reference.color, exact.color, samples, VillageLocations, "color with the samples put in the guest's order");
     const auto depthDifferences = Differences(reference.depth, exact.depth, samples, "depth with the samples put in the guest's order", true);
     const auto approximateDifferences = Differences(reference.color, approximate.color, samples, "color", false) + Differences(reference.depth, approximate.depth, samples, "depth", false);
-    std::printf("2x checkerboard at %ux%u: the exact path differs from the reference in %zu color and %zu depth samples; pixel (0,0)'s locations alone differ in %zu samples\n", ReferenceExtent.width, ReferenceExtent.height, colorDifferences, depthDifferences, approximateDifferences);
+    std::printf("2x checkerboard at %ux%u: the exact path differs from the reference in %zu color and %zu depth samples, and by one f16 step in a barycentric of %zu edge samples; pixel (0,0)'s locations alone differ in %zu samples\n", ReferenceExtent.width, ReferenceExtent.height, colorDifferences.exact, depthDifferences, colorDifferences.edge, approximateDifferences);
     Require(approximateDifferences != 0u, "pixel (0,0)'s locations alone rendered the checkerboard like the reference: the scene does not tell the paths apart");
     Require(gridDifferences == 0u, "the composite of four uniform renders does not render the checkerboard like the device's 2x2 grid");
-    Require(colorDifferences == 0u && depthDifferences == 0u, "the exact path did not render the checkerboard bit for bit like the reference");
-    std::puts(grid && gridDepthCompared ? "the exact path renders Village's 2x checkerboard like the device's 2x2 sample location grid, bit for bit" : "the exact path renders Village's 2x checkerboard like four uniform renders composed by pixel parity, bit for bit");
+    Require(colorDifferences.exact == 0u && depthDifferences == 0u, "the exact path did not render the checkerboard like the reference: bit for bit in depth and in every sample but an edge sample's barycentrics, and within one f16 step in those");
+    const char* like = grid && gridDepthCompared ? "the device's 2x2 sample location grid" : "four uniform renders composed by pixel parity";
+    if (colorDifferences.edge == 0u) std::printf("the exact path renders Village's 2x checkerboard like %s, bit for bit\n", like);
+    else std::printf("the exact path renders Village's 2x checkerboard like %s, bit for bit but for %zu edge samples whose barycentrics are one f16 step apart\n", like, colorDifferences.edge);
+    return 0;
+}
+
+int EdgeTolerance() {
+    constexpr std::uint32_t samples = 2u;
+    const Vertices clear = Screen(ClearDepth);
+    Samples reference(static_cast<std::size_t>(ReferenceExtent.width) * ReferenceExtent.height * samples);
+    std::optional<std::size_t> edge;
+    std::optional<std::size_t> interior;
+    for (std::size_t index = 0; index < reference.size(); ++index) {
+        const auto pixel = static_cast<std::uint32_t>(index / samples);
+        const auto x = pixel % ReferenceExtent.width;
+        const auto y = pixel / ReferenceExtent.width;
+        const auto sample = static_cast<std::uint32_t>(index % samples);
+        const auto at = GuestLocation(VillageLocations, x, y, sample);
+        const auto shading = ShadeAt(x + at[0], y + at[1]);
+        const auto weights = TriangleWeights(shading.shaded ? Shade : clear, 0u, x + at[0], y + at[1]);
+        const auto id = std::bit_cast<std::uint32_t>(static_cast<float>(sample));
+        reference[index] = {std::bit_cast<std::uint32_t>(RoundHalf(static_cast<float>(weights[1]))), std::bit_cast<std::uint32_t>(RoundHalf(static_cast<float>(weights[2]))), id, id};
+        if (!shading.shaded || shading.tied) continue;
+        auto& found = EdgeSample(VillageLocations, x, y, sample) ? edge : interior;
+        if (!found) found = index;
+    }
+    Require(edge.has_value() && interior.has_value(), "the 2x checkerboard has no shaded edge sample or no shaded interior sample");
+    const auto stepped = [&](std::size_t index, std::size_t channel, std::uint32_t steps) {
+        auto rendered = reference;
+        auto value = std::bit_cast<float>(rendered[index][channel]);
+        for (std::uint32_t step = 0; step < steps; ++step) value += HalfStep(std::abs(value));
+        rendered[index][channel] = std::bit_cast<std::uint32_t>(value);
+        return EdgeColorDifferences(reference, rendered, samples, VillageLocations, "color with one sample stepped");
+    };
+    const auto expect = [&](const ColorDifferences& found, std::size_t exact, std::size_t tolerated, const std::string& what) {
+        Require(found.exact == exact && found.edge == tolerated, what + ": the compare counted " + std::to_string(found.exact) + " differences and " + std::to_string(found.edge) + " edge steps, not " + std::to_string(exact) + " and " + std::to_string(tolerated));
+    };
+    const auto name = [&](std::size_t index) { return At(static_cast<std::uint32_t>(index / samples) % ReferenceExtent.width, static_cast<std::uint32_t>(index / samples) / ReferenceExtent.width, static_cast<std::uint32_t>(index % samples)); };
+    expect(EdgeColorDifferences(reference, reference, samples, VillageLocations, "color unchanged"), 0u, 0u, "the reference against itself");
+    expect(stepped(*edge, 1u, 1u), 0u, 1u, name(*edge) + ", an edge sample, with its second barycentric one f16 step up");
+    expect(stepped(*edge, 0u, 1u), 0u, 1u, name(*edge) + ", an edge sample, with its first barycentric one f16 step up");
+    expect(stepped(*edge, 1u, 2u), 1u, 0u, name(*edge) + ", an edge sample, with its second barycentric two f16 steps up");
+    expect(stepped(*edge, 2u, 1u), 1u, 0u, name(*edge) + ", an edge sample, with its sample index one f16 step up");
+    expect(stepped(*interior, 1u, 1u), 1u, 0u, name(*interior) + ", an interior sample, with its second barycentric one f16 step up");
+    std::printf("the grid reference's color compare takes one f16 step in the barycentrics of %s, an edge sample, and nothing else: two steps there, a step in its sample index, and a step in %s, an interior sample, are differences\n", name(*edge).c_str(), name(*interior).c_str());
     return 0;
 }
 
@@ -1511,6 +1648,7 @@ int Bench(AgcDriver::VulkanDevice& device, VkExtent2D extent, std::uint32_t samp
 int main(int argc, char** argv) {
     try {
         const std::string_view mode = argc > 1 ? std::string_view(argv[1]) : std::string_view();
+        if (mode == "--edge-tolerance") return EdgeTolerance();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (mode == "--grid-reference") return GridReference(*device);
