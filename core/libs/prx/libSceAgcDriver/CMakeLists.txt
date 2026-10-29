@@ -142,6 +142,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcStorePageGatherShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/StorePageGather.comp)
+set(agcStorePageGatherShaderSpv ${agcTextureDetileGeneratedDir}/StorePageGather.spv)
+set(agcStorePageGatherShaderHeader ${agcTextureDetileGeneratedDir}/StorePageGather_spv.h)
+add_custom_command(
+        OUTPUT "${agcStorePageGatherShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcStorePageGatherShaderSpv}" "${agcStorePageGatherShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcStorePageGatherShaderSpv} -DOUTPUT=${agcStorePageGatherShaderHeader}
+        -DSYMBOL=STORE_PAGE_GATHER_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcStorePageGatherShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -367,6 +380,7 @@ set(agcDriverSources
         ${agcTextureDetileImageShaderHeader}
         ${agcTextureRepackShaderHeader}
         ${agcDispatchArgumentsShaderHeader}
+        ${agcStorePageGatherShaderHeader}
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}
@@ -2338,6 +2352,12 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_bda_store_heap_mirror_no_space_cache PROPERTIES ENVIRONMENT "APS5_NO_ADDRESS_SPACE_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
     if(WIN32)
         set_tests_properties(agc_driver_bda_store_heap_mirror_no_space_cache PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_bda_store_heap_mirror_budget COMMAND agc_driver_bda_store_heap_mirror_tests --budget)
+    set_tests_properties(agc_driver_bda_store_heap_mirror_budget PROPERTIES ENVIRONMENT "APS5_HEAP_MIRROR_MIB=64" SKIP_RETURN_CODE 77 TIMEOUT 120)
+    if(WIN32)
+        set_tests_properties(agc_driver_bda_store_heap_mirror_budget PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

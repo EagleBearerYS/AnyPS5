@@ -261,12 +261,16 @@ struct AddressStoreStats {
     std::uint64_t comparedBytes = 0;
     std::uint64_t copiedReferenceBytes = 0;
     std::uint64_t readReferenceBytes = 0;
+    std::uint64_t gatheredBytes = 0;
+    std::uint64_t spilledBytes = 0;
+    std::uint64_t readbackBytes = 0;
 };
 AddressStoreStats AddressStoreCounters();
 std::uint64_t SnapshotMismatches();
 struct HeapMirrorHold {
     std::uint64_t mirrors = 0;
     std::uint64_t bytes = 0;
+    std::uint64_t resident = 0;
 };
 HeapMirrorHold HeapMirrorsWithin(std::uint64_t begin, std::uint64_t end);
 void ClearSnapshotCopies(VkDevice device);
@@ -330,6 +334,19 @@ public:
     void AllowAdjustedRegions() { adjustedRegions = true; }
     void AllowAddressStores() { addressStores = true; }
     void NoteAddressStores(std::vector<std::pair<std::uint64_t, std::uint64_t>> pages);
+    struct StoreSpan {
+        std::uint64_t begin = 0;
+        std::uint64_t end = 0;
+        VkDeviceAddress device = 0;
+        bool resident = false;
+    };
+    struct StorePage {
+        std::uint64_t address = 0;
+        std::vector<std::byte> data;
+        std::array<std::uint32_t, ShaderRecompiler::BdaAbi::StoreMaskWords> mask{};
+    };
+    std::vector<StoreSpan> AddressStoreSpans() const;
+    void NoteStorePages(std::vector<StorePage> pages);
     // Records the copy-in of every staged region anew for another use of this upload (a resource
     // cache hit, from ShaderResources::Revalidate, under GuestMemory::GpuMutex, once the imports
     // were confirmed unchanged): the previous use's copy-back left the shadow behind, and the next
@@ -529,6 +546,7 @@ private:
     bool addressStores = false;
     std::size_t declaredWrites = 0;
     std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> storedPages;
+    std::vector<StorePage> storePageEntries;
     GuestAllocations::Lease lease;
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).

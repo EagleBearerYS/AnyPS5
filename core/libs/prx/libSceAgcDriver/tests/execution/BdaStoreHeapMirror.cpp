@@ -28,6 +28,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -51,6 +52,10 @@ alignas(256) constexpr std::array<std::uint32_t, 6> StoreCode{0x34020082, 0x3804
 alignas(256) constexpr std::array<std::uint32_t, 8> MixedCode{0x34020082, 0x380402ff, Marker, 0xdc708000, 0x00000201, 0xe0701000, 0x80010201, 0xbf810000};
 
 alignas(256) constexpr std::array<std::uint32_t, 7> CopyCode{0x34060082, 0xe0301000, 0x80000403, 0xbf8c3f70, 0xe0701000, 0x80010403, 0xbf810000};
+
+alignas(256) constexpr std::array<std::uint32_t, 11> StoreLoadCode{0x34020082, 0x380402ff, Marker, 0xdc708000, 0x00000201, 0xdc308000, 0x03000001, 0xbf8c3f70, 0xe0701000, 0x80010301, 0xbf810000};
+
+alignas(256) constexpr std::array<std::uint32_t, 6> StoreByteCode{0x34020082, 0x380402ff, Marker, 0xdc608000, 0x00000201, 0xbf810000};
 
 class OutputBlock {
 public:
@@ -84,31 +89,31 @@ private:
 
 class GuestHeap {
 public:
-    explicit GuestHeap(bool writable, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs = {}) {
+    explicit GuestHeap(bool writable, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs = {}, std::uint64_t bytes = HeapBytes) : bytes(bytes) {
 #ifdef _WIN32
-        raw = GuestArena::GuestArenaAllocate_nid_postfix(HeapBytes, Block);
+        raw = GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block);
         Require(raw != nullptr, "BDA store heap mirror: cannot allocate the guest heap");
         base = static_cast<std::uint8_t*>(raw);
-        if (runs.empty()) GuestArena::GuestArenaCommit_nid_postfix(raw, HeapBytes, PAGE_READWRITE, HeapBytes);
+        if (runs.empty()) GuestArena::GuestArenaCommit_nid_postfix(raw, bytes, PAGE_READWRITE, bytes);
         for (const auto& [begin, end] : runs) GuestArena::GuestArenaCommit_nid_postfix(base + begin, end - begin, PAGE_READWRITE, Block);
 #else
-        raw = mmap(nullptr, HeapBytes + Block, runs.empty() ? PROT_READ | PROT_WRITE : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        raw = mmap(nullptr, bytes + Block, runs.empty() ? PROT_READ | PROT_WRITE : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
         Require(raw != MAP_FAILED, "BDA store heap mirror: cannot map the guest heap");
         base = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(raw) + Block - 1) / Block * Block);
         for (const auto& [begin, end] : runs) Require(mprotect(base + begin, end - begin, PROT_READ | PROT_WRITE) == 0, "BDA store heap mirror: cannot commit a run of the sparse guest heap");
 #endif
-        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(base, HeapBytes);
-        GuestAllocations::Mutation().Add(base, HeapBytes, true, writable, true);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(base, bytes);
+        GuestAllocations::Mutation().Add(base, bytes, true, writable, true);
     }
 
     ~GuestHeap() {
         GuestAllocations::Mutation().Remove(base);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(base, HeapBytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(base, bytes);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(raw, HeapBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(raw, HeapBytes);
+        GuestArena::GuestArenaReset_nid_postfix(raw, bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(raw, bytes);
 #else
-        munmap(raw, HeapBytes + Block);
+        munmap(raw, bytes + Block);
 #endif
     }
 
@@ -116,8 +121,11 @@ public:
     GuestHeap& operator=(const GuestHeap&) = delete;
 
     std::uint64_t Address() const { return reinterpret_cast<std::uintptr_t>(base); }
+    std::uint64_t Bytes() const { return bytes; }
 
     void Store(std::uint64_t offset, std::uint32_t value) const { std::memcpy(base + offset, &value, sizeof(value)); }
+    void StoreByte(std::uint64_t offset, std::uint8_t value) const { base[offset] = value; }
+    std::uint8_t LoadByte(std::uint64_t offset) const { return base[offset]; }
 
     std::uint32_t Load(std::uint64_t offset) const {
         std::uint32_t value = 0;
@@ -126,6 +134,7 @@ public:
     }
 
 private:
+    std::uint64_t bytes = HeapBytes;
     void* raw = nullptr;
     std::uint8_t* base = nullptr;
 };
@@ -189,7 +198,7 @@ std::uint32_t Stored(std::uint32_t thread) {
     return Marker | (thread * 4u);
 }
 
-std::string Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const std::function<void()>& during = {}) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -199,7 +208,11 @@ std::string Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
+    return ShaderRecompiler::Recompile(request);
+}
+
+std::string Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const std::function<void()>& during = {}) {
+    const auto result = Compile(device, code, userData);
     StderrCapture log;
     std::string thrown;
     try {
@@ -210,6 +223,10 @@ std::string Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
         thrown = error.what();
     }
     return log.Finish() + thrown;
+}
+
+std::vector<std::uint32_t> AddressData(std::uint64_t address) {
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u)};
 }
 
 std::string Store(AgcDriver::VulkanDevice& device, std::uint64_t address, const std::function<void()>& during = {}) {
@@ -357,17 +374,24 @@ struct Compared {
     std::uint64_t compared = 0;
     std::uint64_t copiedReference = 0;
     std::uint64_t readReference = 0;
+    std::uint64_t gathered = 0;
+    std::uint64_t spilled = 0;
+    std::uint64_t readback = 0;
 };
 
 Compared CountCompared(const std::function<void()>& work) {
     const auto before = AgcDriver::Graphics::AddressStoreCounters();
     work();
     const auto after = AgcDriver::Graphics::AddressStoreCounters();
-    return {after.spanBytes - before.spanBytes, after.comparedBytes - before.comparedBytes, after.copiedReferenceBytes - before.copiedReferenceBytes, after.readReferenceBytes - before.readReferenceBytes};
+    return {after.spanBytes - before.spanBytes, after.comparedBytes - before.comparedBytes, after.copiedReferenceBytes - before.copiedReferenceBytes, after.readReferenceBytes - before.readReferenceBytes, after.gatheredBytes - before.gatheredBytes, after.spilledBytes - before.spilledBytes, after.readbackBytes - before.readbackBytes};
+}
+
+bool Resident(const GuestHeap& heap) {
+    return AgcDriver::Graphics::HeapMirrorsWithin(heap.Address(), heap.Address() + heap.Bytes()).resident != 0;
 }
 
 void RequireAccepted(const std::string& log, const std::string& what) {
-    Require(log.find("BDA access failed") == std::string::npos && log.find("write-back failed") == std::string::npos, "BDA store heap mirror: " + what + " was refused:\n" + log);
+    Require(log.find("BDA access failed") == std::string::npos && log.find("write-back failed") == std::string::npos && log.find("(APS5_HEAP_MIRROR_MIB)") == std::string::npos, "BDA store heap mirror: " + what + " was refused:\n" + log);
 }
 
 void RequireStored(const GuestHeap& heap, std::uint64_t offset, const std::string& what) {
@@ -377,9 +401,11 @@ void RequireStored(const GuestHeap& heap, std::uint64_t offset, const std::strin
     }
 }
 
-void RequireCompared(const Compared& counted, std::uint64_t pages, std::uint64_t span, const std::string& what) {
+void RequireCompared(const Compared& counted, std::uint64_t pages, std::uint64_t span, const std::string& what, bool resident) {
     Require(counted.compared == pages * Page && counted.span == span, "BDA store heap mirror: " + what + " compared " + std::to_string(counted.compared) + " of " + std::to_string(counted.span) + " span bytes, expected " + std::to_string(pages * Page) + " of " + std::to_string(span));
-    Require(counted.copiedReference == span && counted.readReference == 0, "BDA store heap mirror: " + what + " took " + std::to_string(counted.copiedReference) + " reference bytes by a GPU copy and " + std::to_string(counted.readReference) + " by the CPU, expected " + std::to_string(span) + " by a GPU copy");
+    const auto expected = resident ? 0 : span;
+    Require(counted.copiedReference == expected && counted.readReference == 0, "BDA store heap mirror: " + what + " took " + std::to_string(counted.copiedReference) + " reference bytes by a GPU copy and " + std::to_string(counted.readReference) + " by the CPU, expected " + std::to_string(expected) + " by a GPU copy");
+    if (resident) Require(counted.gathered + counted.spilled == pages * Page && counted.readback == 0, "BDA store heap mirror: " + what + " gathered " + std::to_string(counted.gathered) + " and spilled " + std::to_string(counted.spilled) + " bytes and read back " + std::to_string(counted.readback) + ", expected " + std::to_string(pages * Page) + " gathered or spilled and none read back");
 }
 
 void StoredPageTests(AgcDriver::VulkanDevice& device) {
@@ -395,7 +421,8 @@ void StoredPageTests(AgcDriver::VulkanDevice& device) {
     RequireAccepted(log, "a store into one block of a multi-block heap mirror");
     RequireStored(heap, StoreOffset, "a store into one block");
     Require(heap.Load(Far) == 0x88888888u, "BDA store heap mirror: the write-back rolled back a CPU store made into another block during the dispatch");
-    RequireCompared(one, 1, HeapBytes, "a store into one page");
+    const bool resident = Resident(heap);
+    RequireCompared(one, 1, HeapBytes, "a store into one page", resident);
     const auto two = CountCompared([&] {
         log = Store(device, heap.Address() + Straddle, [&] {
             heap.Store(Far + sizeof(std::uint32_t), 0x89898989u);
@@ -406,12 +433,12 @@ void StoredPageTests(AgcDriver::VulkanDevice& device) {
     RequireStored(heap, Straddle, "a store across two blocks");
     Require(heap.Load(Straddle - sizeof(std::uint32_t)) == 0x16161616u, "BDA store heap mirror: a store across two blocks rolled back a CPU store made during the dispatch into a page it stored to");
     Require(heap.Load(Far) == 0x88888888u && heap.Load(Far + sizeof(std::uint32_t)) == 0x89898989u, "BDA store heap mirror: a store across two blocks rolled back CPU stores into another block");
-    RequireCompared(two, 2, HeapBytes, "a store across two blocks");
+    RequireCompared(two, 2, HeapBytes, "a store across two blocks", resident);
     const auto tail = CountCompared([&] { log = Store(device, heap.Address() + Tail); });
     RequireAccepted(log, "a store ending at the heap's last dword");
     RequireStored(heap, Tail, "a store ending at the heap's last dword");
     Require(heap.Load(Tail - sizeof(std::uint32_t)) == 0x13131313u, "BDA store heap mirror: a store ending at the heap's last dword changed the dword before it");
-    RequireCompared(tail, 1, HeapBytes, "a store ending at the heap's last dword");
+    RequireCompared(tail, 1, HeapBytes, "a store ending at the heap's last dword", resident);
     RequireStored(heap, StoreOffset, "the first store after two more write-backs");
 }
 
@@ -429,7 +456,126 @@ void SparseRunEndTests(AgcDriver::VulkanDevice& device) {
     Require(heap.Load(LastRun + 2 * sizeof(std::uint32_t)) == 0x15151515u, "BDA store heap mirror: a store ending at a run's last dword rolled back a CPU store into another run");
     std::uint64_t committed = 0;
     for (const auto& [begin, end] : SparseRuns) committed += end - begin;
-    RequireCompared(counted, 1, committed, "a store ending at a run's last dword");
+    RequireCompared(counted, 1, committed, "a store ending at a run's last dword", Resident(heap));
+}
+
+void UnboundBlockTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    const OutputBlock output;
+    constexpr std::uint64_t Unbound = 7 * Block + 0x300;
+    heap.Store(Unbound - Block, 0x31313131u);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    std::fill(output.Data(), output.Data() + Threads, 0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto address = AddressData(heap.Address() + Unbound);
+    std::copy(address.begin(), address.end(), userData.begin());
+    const auto out = BufferDescriptor(reinterpret_cast<std::uintptr_t>(output.Data()), static_cast<std::uint32_t>(Threads * sizeof(std::uint32_t)));
+    std::copy(out.begin(), out.end(), userData.begin() + 4);
+    std::string log;
+    const auto counted = CountCompared([&] { log = Run(device, StoreLoadCode, userData, [&] { heap.Store(Unbound + Threads * sizeof(std::uint32_t), 0x32323232u); }); });
+    RequireAccepted(log, "a store into an unbound block of a heap mirror and a read of it in the same dispatch");
+    const bool resident = Resident(heap);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Require(output.Data()[thread] == Stored(thread), "BDA store heap mirror: a read in the same dispatch of thread " + std::to_string(thread) + "'s store into an unbound block returned " + Hex(output.Data()[thread]) + ", expected " + Hex(Stored(thread)));
+    }
+    RequireStored(heap, Unbound, "a store into an unbound block");
+    Require(heap.Load(Unbound + Threads * sizeof(std::uint32_t)) == 0x32323232u && heap.Load(Unbound - Block) == 0x31313131u, "BDA store heap mirror: the write-back of an unbound block rolled back the CPU's bytes");
+    if (resident) {
+        Require(counted.spilled == Page && counted.gathered == 0 && counted.readback == 0, "BDA store heap mirror: a store into an unbound block spilled " + std::to_string(counted.spilled) + " bytes and gathered " + std::to_string(counted.gathered) + ", expected one page spilled");
+        Require(AgcDriver::Graphics::HeapMirrorsWithin(heap.Address(), heap.Address() + HeapBytes).bytes == Block, "BDA store heap mirror: a store into an unbound block bound blocks of the heap mirror");
+    }
+    const auto created = device.ComputePipelinesCreated();
+    RequireAccepted(Run(device, StoreLoadCode, userData), "a second store into an unbound block of a heap mirror");
+    Require(device.ComputePipelinesCreated() == created, "BDA store heap mirror: a second dispatch storing into a heap mirror built " + std::to_string(device.ComputePipelinesCreated() - created) + " compute pipelines, expected the store page pipeline of the first");
+    Copy(device, heap.Address() + Unbound, output);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Require(output.Data()[thread] == Stored(thread), "BDA store heap mirror: after the write-back the heap mirror holds " + Hex(output.Data()[thread]) + " for thread " + std::to_string(thread) + "'s store into a block that was unbound, expected " + Hex(Stored(thread)));
+    }
+}
+
+void CpuByteTests(AgcDriver::VulkanDevice& device) {
+    for (const bool bound : {true, false}) {
+        GuestHeap heap(true);
+        const std::uint64_t at = (bound ? 3 : 9) * Block + 0x700;
+        const std::string where = bound ? "a bound block" : "an unbound block";
+        if (bound) {
+            for (std::uint64_t offset = 0; offset < Threads * sizeof(std::uint32_t); ++offset) heap.StoreByte(at + offset, 0x11);
+        }
+        const std::uint8_t fill = bound ? 0x11 : 0x00;
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        const auto log = Run(device, StoreByteCode, AddressData(heap.Address() + at), [&] {
+            heap.StoreByte(at + 5 * sizeof(std::uint32_t) + 1, 0xab);
+            heap.StoreByte(at + 9 * sizeof(std::uint32_t) + 3, 0xcd);
+            heap.StoreByte(at + Threads * sizeof(std::uint32_t) + 2, 0xef);
+        });
+        RequireAccepted(log, "a byte store into " + where);
+        for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+            const auto stored = heap.LoadByte(at + thread * sizeof(std::uint32_t));
+            Require(stored == static_cast<std::uint8_t>(Stored(thread)), "BDA store heap mirror: the byte store of thread " + std::to_string(thread) + " into " + where + " reached guest memory as " + Hex(stored));
+        }
+        Require(heap.LoadByte(at + 5 * sizeof(std::uint32_t) + 1) == 0xab && heap.LoadByte(at + 9 * sizeof(std::uint32_t) + 3) == 0xcd, "BDA store heap mirror: the write-back of byte stores into " + where + " rolled back a CPU byte written during the dispatch into the same dword");
+        Require(heap.LoadByte(at + Threads * sizeof(std::uint32_t) + 2) == 0xef, "BDA store heap mirror: the write-back of byte stores into " + where + " rolled back a CPU byte written during the dispatch into the same page");
+        Require(heap.LoadByte(at + 5 * sizeof(std::uint32_t) + 2) == fill && heap.LoadByte(at + 9 * sizeof(std::uint32_t) + 1) == fill, "BDA store heap mirror: the write-back of byte stores into " + where + " changed bytes no store or CPU write touched");
+    }
+}
+
+void TwoDispatchTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    constexpr std::uint64_t First = 2 * Block + 0x100;
+    constexpr std::uint64_t Second = First + 2 * Threads * sizeof(std::uint32_t);
+    constexpr std::uint64_t Overwritten = First + 5 * sizeof(std::uint32_t);
+    heap.Store(First - sizeof(std::uint32_t), 0x41414141u);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    const auto first = Compile(device, StoreCode, AddressData(heap.Address() + First));
+    const auto second = Compile(device, StoreCode, AddressData(heap.Address() + Second));
+    StderrCapture capture;
+    std::string thrown;
+    try {
+        device.Dispatch(first, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+        heap.Store(Second - sizeof(std::uint32_t), 0x42424242u);
+        device.Dispatch(second, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+        RequireStored(heap, First, "the first of two storing dispatches with no wait, before the second's write-back");
+        heap.Store(Overwritten, 0x43434343u);
+        heap.Store(Second + Threads * sizeof(std::uint32_t), 0x44444444u);
+        device.WaitIdle();
+    } catch (const std::exception& error) {
+        thrown = error.what();
+    }
+    RequireAccepted(capture.Finish() + thrown, "two storing dispatches into one page with no wait between them");
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        if (First + thread * sizeof(std::uint32_t) == Overwritten) continue;
+        Require(heap.Load(First + thread * sizeof(std::uint32_t)) == Stored(thread), "BDA store heap mirror: the first of two storing dispatches lost the store of thread " + std::to_string(thread));
+    }
+    RequireStored(heap, Second, "the second of two storing dispatches into one page with no wait");
+    Require(heap.Load(First - sizeof(std::uint32_t)) == 0x41414141u && heap.Load(Second - sizeof(std::uint32_t)) == 0x42424242u, "BDA store heap mirror: two storing dispatches rolled back the CPU's bytes written before them");
+    Require(heap.Load(Overwritten) == 0x43434343u, "BDA store heap mirror: the second dispatch's write-back rolled back a CPU store, made after the first dispatch's write-back, over a dword the first dispatch stored (it holds " + Hex(heap.Load(Overwritten)) + ")");
+    Require(heap.Load(Second + Threads * sizeof(std::uint32_t)) == 0x44444444u, "BDA store heap mirror: the second dispatch's write-back rolled back a CPU store made beside its stores between the two write-backs");
+}
+
+void BudgetTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t Bytes = std::uint64_t{2} << 30u;
+    constexpr std::uint64_t Bound = (std::uint64_t{3} << 29u) + 0x200;
+    constexpr std::uint64_t Unbound = (std::uint64_t{1} << 30u) + 5 * Block + 0x400;
+    GuestHeap heap(true, {}, Bytes);
+    heap.Store(Bound - sizeof(std::uint32_t), 0x51515151u);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    std::string log;
+    const auto bound = CountCompared([&] { log = Store(device, heap.Address() + Bound, [&] { heap.Store(Bound + Threads * sizeof(std::uint32_t), 0x52525252u); }); });
+    RequireAccepted(log, "a store into one bound block of a 2 GiB heap mirror");
+    RequireStored(heap, Bound, "a store into one bound block of a 2 GiB heap");
+    Require(heap.Load(Bound - sizeof(std::uint32_t)) == 0x51515151u && heap.Load(Bound + Threads * sizeof(std::uint32_t)) == 0x52525252u, "BDA store heap mirror: a store into a 2 GiB heap rolled back the CPU's bytes");
+    const auto unbound = CountCompared([&] { log = Store(device, heap.Address() + Unbound); });
+    RequireAccepted(log, "a store into one unbound block of a 2 GiB heap mirror");
+    RequireStored(heap, Unbound, "a store into one unbound block of a 2 GiB heap");
+    const auto held = AgcDriver::Graphics::HeapMirrorsWithin(heap.Address(), heap.Address() + Bytes);
+    Require(held.mirrors == 1, "BDA store heap mirror: the 2 GiB heap was not heap mirrored");
+    Require(Resident(heap), "BDA store heap mirror: the 2 GiB heap mirror is not resident");
+    Require(held.bytes <= 2 * Block, "BDA store heap mirror: storing into a 2 GiB heap bound " + std::to_string(held.bytes) + " bytes of its heap mirror");
+    for (const auto& [counted, what] : {std::pair{bound, "a bound block"}, std::pair{unbound, "an unbound block"}}) {
+        Require(counted.span == Bytes && counted.compared == Page, std::string("BDA store heap mirror: a store into ") + what + " of a 2 GiB heap compared " + std::to_string(counted.compared) + " bytes of a " + std::to_string(counted.span) + "-byte span");
+        Require(counted.copiedReference == 0 && counted.readReference == 0 && counted.readback == 0 && counted.gathered + counted.spilled == Page, std::string("BDA store heap mirror: a store into ") + what + " of a 2 GiB heap took " + std::to_string(counted.copiedReference + counted.readReference) + " reference bytes, read back " + std::to_string(counted.readback) + " and gathered or spilled " + std::to_string(counted.gathered + counted.spilled));
+    }
+    Require(bound.gathered == Page && unbound.spilled == Page, "BDA store heap mirror: a 2 GiB heap's bound store was not gathered or its unbound store not spilled");
 }
 
 void ReadOnlyTests(AgcDriver::VulkanDevice& device) {
@@ -443,8 +589,9 @@ void ReadOnlyTests(AgcDriver::VulkanDevice& device) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool budget = argc > 1 && std::string_view(argv[1]) == "--budget";
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
 #ifdef _WIN32
@@ -456,12 +603,25 @@ int main() {
             std::puts("skipped, no guest write watch: heap mirrors need one");
             return VulkanTestSkipped;
         }
+        if (budget) {
+            const auto context = device->graphicsContext();
+            if (!context.sparseBinding || !context.sparseResidencyBuffer || !context.sparseResidencyAliased) {
+                std::puts("skipped, no sparse residency: a 2 GiB heap mirror is resident only with it");
+                return VulkanTestSkipped;
+            }
+            BudgetTests(*device);
+            std::puts("BDA store heap mirror budget tests passed");
+            return 0;
+        }
         WritableTests(*device);
         MixedTests(*device);
         SparseTests(*device);
         LabelTests(*device);
         StoredPageTests(*device);
         SparseRunEndTests(*device);
+        UnboundBlockTests(*device);
+        CpuByteTests(*device);
+        TwoDispatchTests(*device);
         ReadOnlyTests(*device);
         std::puts("BDA store heap mirror tests passed");
         return 0;
