@@ -1,4 +1,4 @@
-READY 2026-10-28T21:21:39Z: BF-255 done
+BUSY BF-263
 machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 22 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at feat/savedata-backup-progress-sourced 5fed277cf2); origin and upstream fetched, upstream main 319621ba2e; lavapipe only, no GPU, no IPv6
 setup report:
 RESULT:
