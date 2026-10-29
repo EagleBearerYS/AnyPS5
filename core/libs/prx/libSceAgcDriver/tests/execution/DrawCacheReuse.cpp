@@ -301,6 +301,28 @@ void LowHitRateBypassesTheCache() {
     Require(kept.lookups == recovered.lookups + 10, mode + ": a window of 2048 hits bypassed the draw cache");
 }
 
+void ColdScenesKeepTheCacheLookedUp() {
+    constexpr std::size_t Frames = 4;
+    const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
+    const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
+    const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    float scale = 20000.0f;
+    for (const std::size_t draws : {1000u, 2048u, 4096u}) {
+        std::vector<float> scene(draws);
+        for (auto& value : scene) value = scale += 1.0f;
+        auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+        for (std::size_t frame = 1; frame <= Frames; ++frame) {
+            const auto after = Submit(ScaledDraws(scene));
+            const auto hits = after.hits - before.hits;
+            if (frame == Frames) Require(10 * hits >= 9 * draws, mode + ": frame " + std::to_string(frame) + " of a scene that repeats the same " + std::to_string(draws) + " new draws every frame hit " + std::to_string(hits) + " of them, expected at least 90%");
+            before = after;
+        }
+    }
+    std::cout << mode << ": scenes of 1000, 2048 and 4096 new draws repeated every frame hit the draw cache by their fourth frame\n";
+}
+
 void StageHitsKeepTheCacheLookedUp() {
     constexpr std::size_t Window = 2048;
     const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
@@ -356,6 +378,8 @@ int main(int argc, char** argv) {
             LowHitRateBypassesTheCache();
             StageHitsKeepTheCacheLookedUp();
             ConcurrentNotesCloseEachWindowOnce();
+        } else if (argc > 1 && std::string(argv[1]) == "--cold-scene") {
+            ColdScenesKeepTheCacheLookedUp();
         } else if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
             RefreshedStageDataVerifies();
         } else {
