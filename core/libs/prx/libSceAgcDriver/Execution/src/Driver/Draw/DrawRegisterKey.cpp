@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
+#include <vector>
 
 namespace AgcDriver::DriverDetail {
 
@@ -98,6 +99,14 @@ std::uint64_t DrawShaderSetKey(const QueueState& queue, const ShaderRegistry& re
         mix(address - it->first);
     }
     return key;
+}
+
+void NoteDrawKeyCensus(const QueueState& queue, const ShaderRegistry& registry, std::uint64_t key, std::uint64_t shape, std::uint64_t alias, bool cached) {
+    static const bool allUserWords = std::getenv("APS5_DRAW_KEY_ALL_USER_WORDS") != nullptr;
+    thread_local std::vector<Graphics::DrawKeyCensus::UserWord> words;
+    words.clear();
+    forEachKeyedUserWord(queue, allUserWords, [&](std::uint32_t offset, std::uint32_t value) { words.push_back({offset, value}); });
+    Graphics::DrawKeyCensus::NoteLookup({key, shape, DrawShaderSetKey(queue, registry), alias, cached, words});
 }
 
 std::uint64_t Driver::drawIdentityKey(const QueueState& queue, const ShaderRegistry& registry) {

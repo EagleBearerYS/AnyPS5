@@ -319,6 +319,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/KeyboardOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Screenshot.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Draw.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DrawKeyCensus.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DepthSurface.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MultisampleTarget.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/FirstSampleCopy.cpp
@@ -2729,6 +2730,7 @@ if(BUILD_TESTING)
         endif()
     endforeach()
     set_tests_properties(agc_driver_runtime_formatted_store PROPERTIES TIMEOUT 30)
+    set_tests_properties(agc_driver_draw_key_census PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_KEY_CENSUS=1")
     foreach(mode IN ITEMS x1 x2 x3 x1_d16 x2_d16 x3_d16 x4_d16)
         string(REGEX REPLACE "_d16$" "" components "${mode}")
         set(arguments "--${components}")

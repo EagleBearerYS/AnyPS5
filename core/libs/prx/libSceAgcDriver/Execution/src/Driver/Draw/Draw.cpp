@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawProgramTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
@@ -308,6 +309,7 @@ std::unordered_map<std::uint64_t, bool>& CpuIndirectPrograms() {
 DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected) {
     PerformanceTimer timing("Driver.Draw");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::Draws);
     auto tailHolder = std::make_shared<DrawTail>();
     auto& tail = *tailHolder;
     auto& phaseMs = tail.phaseMs;
@@ -473,6 +475,14 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             traceInsert(traceShapes, shapeKey);
         }
         maybeReportDrawCache(profile);
+        if (Graphics::DrawKeyCensus::Enabled()) {
+            const bool cached = found != drawCache.end();
+            Graphics::DrawKeyCensus::NoteRelocationsLearned(drawRelocations.size());
+            cacheLock.unlock();
+            Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::Lookups);
+            if (cached) Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::KeyCached);
+            NoteDrawKeyCensus(queue, *submission.shaders, drawKey, shapeKey, drawAlias, cached);
+        }
     }
     if (decode != nullptr && !DecodeProgramsCurrent(*decode, *submission.shaders)) {
         userPatches.clear();
@@ -483,6 +493,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         decode = nullptr;
     }
     if (dataEntry != nullptr && !DecodeProgramsCurrent(*dataEntry->decode, *submission.shaders)) dataEntry = nullptr;
+    if (dataEntry != nullptr) Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::DataHits);
     phaseTiming.Phase(DrawRowKeyLookupValidate);
 
     if (dataEntry != nullptr) {
@@ -538,6 +549,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             for (std::uint32_t record = 0; record < count && !any; ++record) any = recordDraws(Pm4::ReadDrawArguments(indirect, record));
             if (!any) {
                 Graphics::CountEmptyIndirectDraw(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - readStart).count());
+                Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::EmptyIndirectSkipped);
                 timing.Mark("empty_indirect_skipped");
                 return drawn();
             }
@@ -656,6 +668,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         TraceDrawAttemptException(traceToken, "lookup", submission.serial, submission.queue, packetOffset, std::current_exception());
         throw;
     }
+    if (drawHit) Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::DrawCacheHits);
     for (std::size_t i = 0; i < matched.size(); ++i) {
         if (matched[i] == nullptr || matched[i]->shaderDataPatches.empty()) continue;
         applyShaderDataPatches(*matched[i]);
@@ -663,8 +676,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     const auto relocatedDecode = decode;
     if (!userPatches.empty()) {
+        Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::RelocationsApplied);
         std::lock_guard cacheLock(drawCacheMutex);
         if (drawHit || verifyHit) {
+            Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::RelocationsProductive);
             ++drawRelocationCounters.hits;
             ++drawRelocationTrials[drawIdentity].hits;
             if (const auto alias = drawAliases.find(drawAlias); alias != drawAliases.end()) {
@@ -995,6 +1010,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     };
     const bool shapeNeedsEntry = shapeRefresh && registerKey && shapeKey != 0 && drawDataHits() && !drawParameters.indirect && dataEntry != nullptr && dataStagesCompiled != 0 && refreshSeenTwice();
     cacheDrawStages(stageEntries, drawHit, drawParameters, indirectCpu, programs, stageCaptures, vertexInfos, decodeReads, verifyHit, matched, stageData, fresh, drawKey, registerKey, decode, phaseTiming, reused, entry, shapeKey, shapeNeedsEntry);
+    if (drawParameters.indirect && !indirectCpu) Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::GpuIndirect);
     timing.Mark("shader_compile_and_link");
 
     for (const auto& reads : decodeReads) {
@@ -1199,6 +1215,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 DrawPipeline::Queue0().Enqueue([held] { (*held)(); }, std::move(writes));
                 phaseTiming.Phase(DrawRowLockWait);
                 timing.Mark("draw_enqueued");
+                Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::CpuIndirectQueued);
                 return drawn();
             }
             drainBeforeInline();
@@ -1209,6 +1226,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
             phaseTiming.Phase(DrawRowGraphics);
         }
         timing.Mark("draw_and_resource_release");
+        Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::CpuIndirectInline);
         return drawn();
     }
 
@@ -1222,6 +1240,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     if (drawHit && !recipeStages.empty()) {
         recipe = findDrawRecipe(drawKey, recipeStages);
         if (recipe == nullptr) VulkanDevice::NoteDrawRecipeMiss(VulkanDevice::DrawRecipePrecheck::NoRecipe);
+        else Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::RecipesFound);
     }
     if (recipe == nullptr) {
         if (auto known = localDevice->KnownDrawRejection(graphics, stages)) {
@@ -1262,6 +1281,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     phaseTiming.Phase(DrawRowVectors);
     if (recipe != nullptr) {
         if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe, tracePtr) == RecipeOutcome::Recorded) {
+            Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::RecipesRecorded);
             phaseTiming.Phase(DrawRowGraphics);
             timing.Mark("draw_and_resource_release");
             return drawn();
@@ -1292,7 +1312,10 @@ void Driver::commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t
     recordLabelsForPacket(localDevice.get(), queue);
     noteDrawWriters(stages, queue);
     if (recipe != nullptr) {
-        if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe, tracePtr) == RecipeOutcome::Recorded) return;
+        if (localDevice->DrawFromRecipe(graphics, drawParameters, stages, snapshots, recipe, tracePtr) == RecipeOutcome::Recorded) {
+            Graphics::DrawKeyCensus::Add(Graphics::DrawKeyCensus::Count::RecipesRecorded);
+            return;
+        }
         VulkanDevice::NoteRecipe(VulkanDevice::RecipeEvent::Restart, VulkanDevice::RecipeKind::Draw);
     }
     std::shared_ptr<const DrawRecipe> built;

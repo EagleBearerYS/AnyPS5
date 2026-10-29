@@ -107,11 +107,14 @@ bool DrawKeySightings::SeenBefore(std::uint64_t key) {
     return false;
 }
 
-bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
+bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape, Graphics::DrawKeyCensus::Admit& reason) {
+    using Graphics::DrawKeyCensus::Admit;
     std::lock_guard cacheLock(drawCacheMutex);
+    reason = Admit::Cached;
     if (drawCache.contains(key)) return true;
     if (!drawKeySightings) drawKeySightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
     bool seen = drawKeySightings->SeenBefore(key);
+    reason = Admit::Seen;
     const auto& pending = drawRelocationPending;
     if (pending.key == key && pending.identity != 0) {
         if (pending.alias != 0) {
@@ -120,16 +123,26 @@ bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
                 auto& state = trial->second;
                 if (state.productive || state.hits != 0 || state.admissions < DrawRelocationTrial::ProbationAdmissions) {
                     if (!state.productive && state.hits == 0) ++state.admissions;
+                    if (!seen) reason = Admit::Relocation;
                     seen = true;
                 }
             }
         } else if (!drawRelocations.contains(pending.identity)) {
-            if (drawKeySightings->SeenBefore(pending.identity ^ 0xc2b2ae3d27d4eb4full)) seen = true;
+            if (drawKeySightings->SeenBefore(pending.identity ^ 0xc2b2ae3d27d4eb4full)) {
+                if (!seen) reason = Admit::Identity;
+                seen = true;
+            }
         }
     }
-    if (seen || shape == 0 || drawShapes.contains(shape)) return seen;
+    if (seen) return true;
+    if (shape == 0 || drawShapes.contains(shape)) {
+        reason = shape == 0 ? Admit::NoShape : Admit::ShapeHeld;
+        return false;
+    }
     if (!drawShapeSightings) drawShapeSightings.emplace(drawCacheEntries() * DrawKeySightings::Ways);
-    return drawShapeSightings->SeenBefore(shape);
+    const bool shapeSeen = drawShapeSightings->SeenBefore(shape);
+    reason = shapeSeen ? Admit::Shape : Admit::FirstSighting;
+    return shapeSeen;
 }
 
 void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<DispatchVariant>>& fresh, std::shared_ptr<const DrawDecode> decode, std::uint64_t shape, bool replaceShape) {

@@ -409,6 +409,7 @@ void Driver::execute(const Submission& submission) {
             if (!flipInterruptDeferred) deliverFlipEopInterrupt(submission.queue);
             ++flipsCounted;
             Graphics::NoteHostImportFrame();
+            Graphics::DrawKeyCensus::Frame();
             if (batchesAtFlip != 0) flipSerial = batchesAtFlip;
             flipBatchesUnsignaled += unsignaledAtFlip;
             if (Graphics::AbConfigured()) {

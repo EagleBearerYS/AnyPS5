@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DrawKeyCensus.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GpuColorTransfer.hpp"
@@ -1720,15 +1721,18 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 resolved.moved = std::move(*moved);
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
+                DrawKeyCensus::Add(DrawKeyCensus::Count::ResourceHits);
             } else if (valid) {
                 countCache(&DrawProfile::cacheMisses);
             } else {
                 SharedResourceCache().Remove(resolved.contentKey);
                 countCache(&DrawProfile::cacheInvalidated);
+                DrawKeyCensus::Add(DrawKeyCensus::Count::ResourceInvalidated);
             }
         }
     } else {
         countCache(&DrawProfile::uncacheable);
+        DrawKeyCensus::Add(DrawKeyCensus::Count::ResourceUncacheable);
     }
     timer.phase(PhaseLookup);
     if (resolved.resources == nullptr) {
@@ -1736,7 +1740,10 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
         resolved.built = &resolved.resources->Timing();
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;
-        if (resolved.cacheable) countCache(&DrawProfile::cacheMisses);
+        if (resolved.cacheable) {
+            countCache(&DrawProfile::cacheMisses);
+            DrawKeyCensus::Add(DrawKeyCensus::Count::ResourceMisses);
+        }
     }
     timer.phase(PhaseResources);
     APS5_LOG_CHARS_OUT_DEBUG("ShaderResources created");

@@ -442,6 +442,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             submission.flips.begin()->second->GpuReady(frame);
             lock.unlock();
             Graphics::NoteHostImportFrame();
+            Graphics::DrawKeyCensus::Frame();
             AgcDriverDeliverEopInterrupt(0);
             return;
         }
