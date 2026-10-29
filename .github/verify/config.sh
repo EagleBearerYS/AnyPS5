@@ -1,0 +1,3 @@
+BASE=781dc4525b6cbecd0b9b029fc50da9f732fac544
+REPEAT=10
+EXTRA_TESTS='^agc_driver_bda|agc_driver_flat_store|^agc_driver_runtime_formatted_store|agc_driver_pipeline_journal|agc_shader_disk_cache'
