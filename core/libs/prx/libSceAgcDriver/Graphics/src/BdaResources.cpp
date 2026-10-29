@@ -150,8 +150,12 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         Require(spans.back().end - pageBase <= Abi::StorePageSpan, "heap mirrors stored through addresses that span more than 16 TiB are not implemented");
         fault = std::make_unique<Buffer>(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
         std::memset(fault->Bytes().data(), 0, Abi::FaultBufferBytes);
-        pages = std::make_unique<Buffer>(context, Abi::StorePagePoolBytes(pageSlots), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-        std::memset(pages->Bytes().data(), 0, Abi::StorePagePoolBytes(pageSlots));
+        poolDevice = context.device;
+        if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == context.device) pages = recorder->TakeStorePagePool(Abi::StorePagePoolBytes(pageSlots));
+        if (pages == nullptr) {
+            pages = std::make_unique<Buffer>(context, Abi::StorePagePoolBytes(pageSlots), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+            std::memset(pages->Bytes().data(), 0, Abi::StorePagePoolBytes(pageSlots));
+        }
         std::vector<std::uint64_t> words;
         for (const auto& span : spans) {
             if (!span.resident) continue;
@@ -305,6 +309,7 @@ void BdaResources::collectStorePages() const {
         words[slot] = 0;
         storePages.push_back(std::move(page));
     }
+    if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == poolDevice) recorder->KeepStorePagePool(std::move(pages));
 }
 
 VkDescriptorBufferInfo BdaResources::Fault() const {
@@ -320,8 +325,8 @@ bool LoopGuardTripped() {
 }
 
 void BdaResources::CheckFault() const {
-    markWrittenPages();
     collectStorePages();
+    markWrittenPages();
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, fault->Bytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {

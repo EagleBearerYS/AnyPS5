@@ -2167,6 +2167,20 @@ void Recorder::RecordStorePageGather(VkCommandBuffer commands, const StorePageGa
     CountBarriers(CommandClass::StagingOut, 2);
 }
 
+std::unique_ptr<Buffer> Recorder::TakeStorePagePool(std::size_t bytes) {
+    std::lock_guard lock(storePagePoolsMutex);
+    const auto found = std::find_if(storePagePools.begin(), storePagePools.end(), [&](const auto& pool) { return pool->Bytes().size() == bytes; });
+    if (found == storePagePools.end()) return nullptr;
+    auto pool = std::move(*found);
+    storePagePools.erase(found);
+    return pool;
+}
+
+void Recorder::KeepStorePagePool(std::unique_ptr<Buffer> pool) {
+    std::lock_guard lock(storePagePoolsMutex);
+    if (storePagePools.size() < 4) storePagePools.push_back(std::move(pool));
+}
+
 void Recorder::CountSamples() {
     GuestMemory::AssertGpuLockHeld("Recorder::CountSamples");
     gpuSampleCounter();

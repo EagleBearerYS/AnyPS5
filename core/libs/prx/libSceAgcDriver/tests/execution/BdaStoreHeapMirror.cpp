@@ -56,6 +56,8 @@ alignas(256) constexpr std::array<std::uint32_t, 7> CopyCode{0x34060082, 0xe0301
 
 alignas(256) constexpr std::array<std::uint32_t, 11> StoreLoadCode{0x34020082, 0x380402ff, Marker, 0xdc708000, 0x00000201, 0xdc308000, 0x03000001, 0xbf8c3f70, 0xe0701000, 0x80010301, 0xbf810000};
 
+alignas(256) constexpr std::array<std::uint32_t, 7> LoadCode{0x34020082, 0xdc308000, 0x03000001, 0xbf8c3f70, 0xe0701000, 0x80010301, 0xbf810000};
+
 alignas(256) constexpr std::array<std::uint32_t, 6> StoreByteCode{0x34020082, 0x380402ff, Marker, 0xdc608000, 0x00000201, 0xbf810000};
 
 class OutputBlock {
@@ -561,6 +563,35 @@ void TwoDispatchTests(AgcDriver::VulkanDevice& device) {
     Require(heap.Load(Second + Threads * sizeof(std::uint32_t)) == 0x44444444u, "BDA store heap mirror: the second dispatch's write-back rolled back a CPU store made beside its stores between the two write-backs");
 }
 
+void ChainedDispatchTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    const OutputBlock output;
+    constexpr std::uint64_t Unbound = 13 * Block + 0x500;
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    std::fill(output.Data(), output.Data() + Threads, 0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto address = AddressData(heap.Address() + Unbound);
+    std::copy(address.begin(), address.end(), userData.begin());
+    const auto out = BufferDescriptor(reinterpret_cast<std::uintptr_t>(output.Data()), static_cast<std::uint32_t>(Threads * sizeof(std::uint32_t)));
+    std::copy(out.begin(), out.end(), userData.begin() + 4);
+    const auto store = Compile(device, StoreCode, address);
+    const auto load = Compile(device, LoadCode, userData);
+    StderrCapture capture;
+    std::string thrown;
+    try {
+        device.Dispatch(store, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(StoreCode.data()));
+        device.Dispatch(load, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(LoadCode.data()));
+        device.WaitIdle();
+    } catch (const std::exception& error) {
+        thrown = error.what();
+    }
+    RequireAccepted(capture.Finish() + thrown, "a dispatch reading what the dispatch before it stored into an unbound block, with no wait between them");
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Require(output.Data()[thread] == Stored(thread), "BDA store heap mirror: a dispatch read " + Hex(output.Data()[thread]) + " where the dispatch before it, with no wait between them, stored " + Hex(Stored(thread)) + " for thread " + std::to_string(thread) + " into a block that was unbound");
+    }
+    RequireStored(heap, Unbound, "a store into an unbound block read by the next dispatch");
+}
+
 void BudgetTests(AgcDriver::VulkanDevice& device, bool resident) {
     const std::uint64_t bytes = resident ? std::uint64_t{2} << 30u : std::uint64_t{48} << 20u;
     const std::uint64_t bound = resident ? (std::uint64_t{3} << 29u) + 0x200 : (std::uint64_t{40} << 20u) + 0x200;
@@ -636,6 +667,7 @@ int main(int argc, char** argv) {
             UnboundBlockTests(*device);
             CpuByteTests(*device);
             TwoDispatchTests(*device);
+            ChainedDispatchTests(*device);
         }
         ReadOnlyTests(*device);
         std::puts("BDA store heap mirror tests passed");

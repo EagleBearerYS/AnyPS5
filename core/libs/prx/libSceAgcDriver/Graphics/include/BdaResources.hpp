@@ -68,7 +68,8 @@ private:
     void checkSrtGuard() const;
     std::shared_ptr<Buffer> table;
     std::unique_ptr<Buffer> fault;
-    std::unique_ptr<Buffer> pages;
+    mutable std::unique_ptr<Buffer> pages;
+    VkDevice poolDevice = VK_NULL_HANDLE;
     std::unique_ptr<Buffer> targets;
     std::uint32_t pageSlots = 0;
     std::uint32_t targetCount = 0;

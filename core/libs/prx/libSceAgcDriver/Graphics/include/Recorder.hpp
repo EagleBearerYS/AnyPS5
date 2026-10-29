@@ -218,6 +218,8 @@ public:
         std::uint32_t slots = 0;
     };
     void RecordStorePageGather(VkCommandBuffer commands, const StorePageGather& gather);
+    std::unique_ptr<Buffer> TakeStorePagePool(std::size_t bytes);
+    void KeepStorePagePool(std::unique_ptr<Buffer> pool);
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
     // HasTimeline(); the debug switch APS5_NO_TIMELINE makes the device create the recorder without one.
@@ -757,6 +759,8 @@ private:
     VkPipeline dispatchArgumentPipeline = VK_NULL_HANDLE;
     VkPipelineLayout storePageGatherLayout = VK_NULL_HANDLE;
     VkPipeline storePageGatherPipeline = VK_NULL_HANDLE;
+    AgcDriver::Mutex storePagePoolsMutex;
+    std::vector<std::unique_ptr<Buffer>> storePagePools;
     // BeginGpuTiming on the open batch without Commands() (RecordStore times its own run, which
     // Commands() would close).
     std::uint32_t beginTiming(std::uint64_t key);
