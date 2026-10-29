@@ -1,0 +1,3 @@
+BASE=1db077e876a839f75d11a56e728e7f56a4a8c25e
+REPEAT=10
+EXTRA_TESTS='guest_semaphore_handoff|guest_semaphore|guest_semaphore_trace|guest_pthread_sem|guest_sem_canceled_wake|guest_sem_canceled_wake_coarse'
