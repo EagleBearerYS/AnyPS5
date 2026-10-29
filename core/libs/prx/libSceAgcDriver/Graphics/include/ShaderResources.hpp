@@ -167,6 +167,7 @@ class ShaderResources {
 public:
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
     ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {});
+    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots, bool deferred);
     ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
     // Two-stage build for dispatches (see build): with `deferred` the constructor runs stage A only,
     // which needs no device lock, and Complete() runs stage B under GuestMemory::GpuMutex; until
@@ -673,6 +674,11 @@ private:
     // the build (Complete() for a deferred one) is done, and reset then (forgetDeferredInputs).
     CompiledShader deferredCompute{};
     std::span<const GuestMemorySnapshot> deferredSnapshots;
+    std::span<const CompiledShader> deferredDraw;
+    ColorTarget deferredTarget{};
+    std::uint32_t deferredColorAttachments = 0;
+    std::uint64_t deferredIndexAddress = 0;
+    std::size_t deferredIndexBytes = 0;
     // The deferred build is address-based: everything runs in Complete().
     bool lockedBuild = false;
     // Stage A runs without the device lock (a deferred, non-address-based build).
