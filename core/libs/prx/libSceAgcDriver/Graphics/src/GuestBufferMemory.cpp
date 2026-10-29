@@ -4232,7 +4232,7 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
             const bool replacing = wouldRetireImport(state, run);
             if (!GuestMemory::GpuMutex().HeldByThisThread()) {
                 const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{run.base, run.base + run.bytes}}};
-                if (replacing || StorageTexture::AnyPendingOverlaps(span)) return false;
+                if (replacing || StorageTexture::AnyPendingOverlaps(span) || StorageTexture::AnyHashedBeforeUnwatch(span)) return false;
             } else if (replacing) {
                 current = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
                 if (leasedRangeOwner(current, range->address) != range) continue;

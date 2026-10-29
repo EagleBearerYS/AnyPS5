@@ -2636,6 +2636,10 @@ std::array<std::uint64_t, 2> StorageTexture::unitContentHash(std::uint32_t unit)
     return hash;
 }
 
+bool StorageTexture::hashedBeforeUnwatch(std::uint64_t address, std::size_t bytes) const {
+    return guestBytes > GenerationBaselineBytes && overlapsLive(address, bytes);
+}
+
 void StorageTexture::hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven) {
     if (released || unwatchHash.size() != trackedLayers || generationBaseline.size() == guestBytes) return;
     for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
@@ -4491,7 +4495,7 @@ void StorageTexture::SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes)
         auto& images = Live();
         std::lock_guard lock(images.mutex);
         for (auto* texture : images.textures) {
-            if (texture->guestBytes <= GenerationBaselineBytes || !texture->overlapsLive(address, bytes)) continue;
+            if (!texture->hashedBeforeUnwatch(address, bytes)) continue;
             if (auto alive = texture->weak_from_this().lock()) live.push_back(std::move(alive));
         }
     }
@@ -5005,6 +5009,19 @@ bool StorageTexture::AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, st
         const auto bytes = static_cast<std::size_t>(range.second - range.first);
         for (const auto* texture : live.textures) {
             if (texture->overlapsLive(range.first, bytes)) return true;
+        }
+    }
+    return false;
+}
+
+bool StorageTexture::AnyHashedBeforeUnwatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    auto& live = Live();
+    std::lock_guard lock(live.mutex);
+    for (const auto& range : ranges) {
+        if (range.second <= range.first) continue;
+        const auto bytes = static_cast<std::size_t>(range.second - range.first);
+        for (const auto* texture : live.textures) {
+            if (texture->hashedBeforeUnwatch(range.first, bytes)) return true;
         }
     }
     return false;
