@@ -1,2 +1,2 @@
-READY 2026-10-28T21:08:09Z: BF-257 done
-machine: same VM (kernel 6.18.44-fc-v180), 4 cores, 9G disk free of 252G, gcc 13.3, Wild 0.10.0; /home/user/AnyPS5 Release build and wt-bf164 CI-flags build kept; upstream/main ae0e0a284b fetched, builds not yet rebuilt on it
+BUSY BF-268 since 2026-10-29T07:13:43Z
+machine: same VM (kernel 6.18.44-fc-v185), 4 cores, 7.0G disk free, gcc 13.3, Wild 0.10.0; /home/user/AnyPS5 Release build and wt-bf164 CI-flags build kept
