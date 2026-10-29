@@ -350,6 +350,80 @@ void LabelTests(AgcDriver::VulkanDevice& device) {
     }
 }
 
+constexpr std::uint64_t Page = 4096;
+
+struct Compared {
+    std::uint64_t span = 0;
+    std::uint64_t compared = 0;
+};
+
+Compared CountCompared(const std::function<void()>& work) {
+    const auto before = AgcDriver::Graphics::AddressStoreCounters();
+    work();
+    const auto after = AgcDriver::Graphics::AddressStoreCounters();
+    return {after.spanBytes - before.spanBytes, after.comparedBytes - before.comparedBytes};
+}
+
+void RequireAccepted(const std::string& log, const std::string& what) {
+    Require(log.find("BDA access failed") == std::string::npos && log.find("write-back failed") == std::string::npos, "BDA store heap mirror: " + what + " was refused:\n" + log);
+}
+
+void RequireStored(const GuestHeap& heap, std::uint64_t offset, const std::string& what) {
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        const auto value = heap.Load(offset + thread * sizeof(std::uint32_t));
+        Require(value == Stored(thread), "BDA store heap mirror: " + what + ": the store of thread " + std::to_string(thread) + " reached guest memory as " + Hex(value) + ", expected " + Hex(Stored(thread)));
+    }
+}
+
+void RequireCompared(const Compared& counted, std::uint64_t pages, std::uint64_t span, const std::string& what) {
+    Require(counted.compared == pages * Page && counted.span == span, "BDA store heap mirror: " + what + " compared " + std::to_string(counted.compared) + " of " + std::to_string(counted.span) + " span bytes, expected " + std::to_string(pages * Page) + " of " + std::to_string(span));
+}
+
+void StoredPageTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true);
+    constexpr std::uint64_t Far = 20 * Block + 0x40;
+    constexpr std::uint64_t Straddle = 6 * Block - 2 * Threads;
+    constexpr std::uint64_t Tail = HeapBytes - Threads * sizeof(std::uint32_t);
+    heap.Store(Straddle - sizeof(std::uint32_t), 0x12121212u);
+    heap.Store(Tail - sizeof(std::uint32_t), 0x13131313u);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    std::string log;
+    const auto one = CountCompared([&] { log = Store(device, heap.Address() + StoreOffset, [&] { heap.Store(Far, 0x88888888u); }); });
+    RequireAccepted(log, "a store into one block of a multi-block heap mirror");
+    RequireStored(heap, StoreOffset, "a store into one block");
+    Require(heap.Load(Far) == 0x88888888u, "BDA store heap mirror: the write-back rolled back a CPU store made into another block during the dispatch");
+    RequireCompared(one, 1, HeapBytes, "a store into one page");
+    const auto two = CountCompared([&] { log = Store(device, heap.Address() + Straddle, [&] { heap.Store(Far + sizeof(std::uint32_t), 0x89898989u); }); });
+    RequireAccepted(log, "a store across two blocks");
+    RequireStored(heap, Straddle, "a store across two blocks");
+    Require(heap.Load(Straddle - sizeof(std::uint32_t)) == 0x12121212u, "BDA store heap mirror: a store across two blocks changed the dword before it");
+    Require(heap.Load(Far) == 0x88888888u && heap.Load(Far + sizeof(std::uint32_t)) == 0x89898989u, "BDA store heap mirror: a store across two blocks rolled back CPU stores into another block");
+    RequireCompared(two, 2, HeapBytes, "a store across two blocks");
+    const auto tail = CountCompared([&] { log = Store(device, heap.Address() + Tail); });
+    RequireAccepted(log, "a store ending at the heap's last dword");
+    RequireStored(heap, Tail, "a store ending at the heap's last dword");
+    Require(heap.Load(Tail - sizeof(std::uint32_t)) == 0x13131313u, "BDA store heap mirror: a store ending at the heap's last dword changed the dword before it");
+    RequireCompared(tail, 1, HeapBytes, "a store ending at the heap's last dword");
+    RequireStored(heap, StoreOffset, "the first store after two more write-backs");
+}
+
+void SparseRunEndTests(AgcDriver::VulkanDevice& device) {
+    GuestHeap heap(true, SparseRuns);
+    constexpr std::uint64_t RunEnd = SparseRuns[1].second;
+    constexpr std::uint64_t Ending = RunEnd - Threads * sizeof(std::uint32_t);
+    heap.Store(Ending - sizeof(std::uint32_t), 0x14141414u);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    std::string log;
+    const auto counted = CountCompared([&] { log = Store(device, heap.Address() + Ending, [&] { heap.Store(LastRun + 2 * sizeof(std::uint32_t), 0x15151515u); }); });
+    RequireAccepted(log, "a store ending at the last dword of a committed run of a sparse heap mirror");
+    RequireStored(heap, Ending, "a store ending at the last dword of a committed run");
+    Require(heap.Load(Ending - sizeof(std::uint32_t)) == 0x14141414u, "BDA store heap mirror: a store ending at a run's last dword changed the dword before it");
+    Require(heap.Load(LastRun + 2 * sizeof(std::uint32_t)) == 0x15151515u, "BDA store heap mirror: a store ending at a run's last dword rolled back a CPU store into another run");
+    std::uint64_t committed = 0;
+    for (const auto& [begin, end] : SparseRuns) committed += end - begin;
+    RequireCompared(counted, 1, committed, "a store ending at a run's last dword");
+}
+
 void ReadOnlyTests(AgcDriver::VulkanDevice& device) {
     GuestHeap heap(false);
     heap.Store(StoreOffset, 0x33333333u);
@@ -378,6 +452,8 @@ int main() {
         MixedTests(*device);
         SparseTests(*device);
         LabelTests(*device);
+        StoredPageTests(*device);
+        SparseRunEndTests(*device);
         ReadOnlyTests(*device);
         std::puts("BDA store heap mirror tests passed");
         return 0;

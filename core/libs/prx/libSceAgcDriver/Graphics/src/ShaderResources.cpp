@@ -5878,6 +5878,7 @@ void ShaderResources::WriteBackBuffers() {
         } catch (const BdaUnalignedAccess&) {
             unaligned = std::current_exception();
         }
+        guestMemory.NoteAddressStores(bda->TakeWrittenPages());
     }
     if (!SkipWriteBack()) guestMemory.WriteBack();
     if (unaligned) std::rethrow_exception(unaligned);

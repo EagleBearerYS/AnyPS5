@@ -6253,6 +6253,25 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> mergeWrites(std::vector<std
     return merged;
 }
 
+struct AddressStoreTally {
+    std::atomic<std::uint64_t> spanBytes{0};
+    std::atomic<std::uint64_t> comparedBytes{0};
+};
+
+AddressStoreTally& AddressStoreTallies() {
+    static AddressStoreTally tally;
+    return tally;
+}
+
+}
+
+AddressStoreStats AddressStoreCounters() {
+    const auto& tally = AddressStoreTallies();
+    return {tally.spanBytes.load(std::memory_order_relaxed), tally.comparedBytes.load(std::memory_order_relaxed)};
+}
+
+void GuestBufferMemory::NoteAddressStores(std::vector<std::pair<std::uint64_t, std::uint64_t>> pages) {
+    storedPages = mergeWrites(std::move(pages));
 }
 
 void GuestBufferMemory::addAddressStoreSpans() {
@@ -6272,6 +6291,19 @@ void GuestBufferMemory::addAddressStoreSpans() {
         for (const auto& region : space->base) add(region);
     }
     for (const auto& region : regions) add(region);
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::comparedRuns(std::uint64_t begin, std::uint64_t end, std::span<const std::pair<std::uint64_t, std::uint64_t>> declared) const {
+    if (!addressStores || !storedPages.has_value()) return {{begin, end}};
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
+    const auto clip = [&](const std::pair<std::uint64_t, std::uint64_t>& range) {
+        const auto first = std::max(range.first, begin);
+        const auto last = std::min(range.second, end);
+        if (first < last) runs.emplace_back(first, last);
+    };
+    std::for_each(declared.begin(), declared.end(), clip);
+    std::for_each(storedPages->begin(), storedPages->end(), clip);
+    return mergeWrites(std::move(runs));
 }
 
 void GuestBufferMemory::takeHeapReferences() {
@@ -6329,23 +6361,36 @@ void GuestBufferMemory::WriteBack() {
             if (mirror.heap) {
                 const auto reference = std::find_if(heapReferences.begin(), heapReferences.end(), [&](const auto& entry) { return entry.first == begin; });
                 Require(reference != heapReferences.end() && reference->second.size() == length, "heap mirror write-back has no reference");
+                const auto compared = comparedRuns(begin, served, declared);
+                if (addressStores) {
+                    auto& tally = AddressStoreTallies();
+                    tally.spanBytes.fetch_add(length, std::memory_order_relaxed);
+                    for (const auto& [first, last] : compared) tally.comparedBytes.fetch_add(last - first, std::memory_order_relaxed);
+                }
+                const auto store = [&](std::uint64_t first, std::span<const std::byte> current) {
+                    const auto original = std::span<const std::byte>(reference->second).subspan(static_cast<std::size_t>(first - begin), current.size());
+                    if (mirror.sparse) storeSparse(mirror, first, current, original, runs);
+                    else storeChanged(first, current, original, runs);
+                };
                 if (mirror.resident == nullptr) {
-                    const auto current = mirror.buffer->Bytes().subspan(offset, length);
-                    if (mirror.sparse) storeSparse(mirror, begin, current, reference->second, runs);
-                    else storeChanged(begin, current, reference->second, runs);
-                    if (runs != nullptr) Recorder::NoteWrittenBack(outside(stored, declared));
-                    continue;
+                    for (const auto& [first, last] : compared) store(first, mirror.buffer->Bytes().subspan(static_cast<std::size_t>(first - mirror.base), static_cast<std::size_t>(last - first)));
+                } else if (!compared.empty()) {
+                    const auto readback = std::find_if(heapReadbacks.begin(), heapReadbacks.end(), [&](const auto& entry) { return entry.first == begin; });
+                    Require(readback == heapReadbacks.end() || readback->second->Bytes().size() == length, "heap mirror readback does not match its write-back");
+                    const auto from = compared.front().first;
+                    std::vector<std::byte> device;
+                    if (readback == heapReadbacks.end()) {
+                        device.resize(static_cast<std::size_t>(compared.back().second - from));
+                        mirror.resident->ReadDevice(from, device);
+                    }
+                    for (const auto& [first, last] : compared) {
+                        std::vector<std::byte> current(static_cast<std::size_t>(last - first));
+                        const auto* source = readback != heapReadbacks.end() ? readback->second->Bytes().data() + (first - begin) : device.data() + (first - from);
+                        std::memcpy(current.data(), source, current.size());
+                        mirror.resident->Store(first, current);
+                        store(first, current);
+                    }
                 }
-                std::vector<std::byte> current(length);
-                if (const auto readback = std::find_if(heapReadbacks.begin(), heapReadbacks.end(), [&](const auto& entry) { return entry.first == begin; }); readback != heapReadbacks.end()) {
-                    Require(readback->second->Bytes().size() == length, "heap mirror readback does not match its write-back");
-                    std::memcpy(current.data(), readback->second->Bytes().data(), length);
-                } else {
-                    mirror.resident->ReadDevice(begin, current);
-                }
-                mirror.resident->Store(begin, current);
-                if (mirror.sparse) storeSparse(mirror, begin, current, reference->second, runs);
-                else storeChanged(begin, current, reference->second, runs);
                 if (runs != nullptr) Recorder::NoteWrittenBack(outside(stored, declared));
                 continue;
             }
@@ -6401,6 +6446,7 @@ void GuestBufferMemory::WriteBack() {
     space.reset();
     heapReferences.clear();
     heapReadbacks.clear();
+    storedPages.reset();
 }
 
 std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferMemory::DirectRegions() const {

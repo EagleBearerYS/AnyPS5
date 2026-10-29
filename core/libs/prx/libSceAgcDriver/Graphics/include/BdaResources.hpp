@@ -19,6 +19,7 @@ public:
     VkDescriptorBufferInfo Table() const;
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> TakeWrittenPages() const;
     struct ImageTableFaults {
         std::uint32_t stage = 0;
         std::uint64_t shader = 0;
@@ -65,6 +66,7 @@ private:
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<SrtGuardFaults> srtGuards;
+    mutable std::vector<std::pair<std::uint64_t, std::uint64_t>> writtenPages;
 };
 
 }

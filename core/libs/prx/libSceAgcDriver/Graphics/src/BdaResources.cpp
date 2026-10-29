@@ -337,6 +337,10 @@ void BdaResources::checkSrtGuard() const {
     throw std::runtime_error(message.str());
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> BdaResources::TakeWrittenPages() const {
+    return std::exchange(writtenPages, {});
+}
+
 void BdaResources::markWrittenPages() const {
     namespace Abi = ShaderRecompiler::BdaAbi;
     auto* words = reinterpret_cast<std::uint32_t*>(fault->Bytes().data());
@@ -353,6 +357,7 @@ void BdaResources::markWrittenPages() const {
             }
         }
         GuestMemory::MarkPossiblyWritten(begin, bytes);
+        writtenPages.emplace_back(begin, end);
     }), "invalid BDA written-page record");
     for (std::uint32_t claim = 0; claim < count; ++claim) {
         const auto slot = words[Abi::WrittenListWord + claim];
