@@ -1,0 +1,5 @@
+BASE=319621ba2e578bd053b0baba2877fe70520e0737
+REPEAT=2
+EXTRA_TESTS='guest_savedata_mount_status'
+NO_BEFORE=1
+VERBOSE=1
