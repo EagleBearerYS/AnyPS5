@@ -1,0 +1,3 @@
+BASE=319621ba2e578bd053b0baba2877fe70520e0737
+REPEAT=10
+EXTRA_TESTS='^guest_savedata|^savedata'
