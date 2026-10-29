@@ -1,3 +1,4 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -23,7 +24,6 @@ using Clock = std::chrono::steady_clock;
 
 static constexpr std::size_t CONTEXT_MEMORY = 0x10000;
 static constexpr std::uint32_t DEFAULT_MAX_PORTS = 16;
-static constexpr std::size_t ADVANCED_GRAINS_MAX = 16;
 // Pushes, polls and advances traced individually before the trace falls back to the per-second summary.
 static constexpr std::uint64_t CALL_TRACE_FULL = 16;
 // Grains the device waits for before it starts playing (and again whenever it ran dry), so the
@@ -93,19 +93,40 @@ static void Drain(AudioOut2Context& context, Clock::time_point now) {
 }
 
 // Grains queued and not yet played, as the title sees them. The caller holds the context lock.
-static std::uint32_t QueueLevel(AudioOut2Context& context, Clock::time_point now) {
-    Drain(context, now);
-    if (context.device == 0) return context.queued;
+static std::uint32_t DeviceQueueLevel(const AudioOut2Context& context) {
     const auto unplayed = UnplayedGrains(context);
     const auto cushion = CushionGrains(context);
     return unplayed > cushion ? std::min(context.queueDepth, unplayed - cushion) : 0;
 }
+
+static std::uint32_t QueueLevel(AudioOut2Context& context, Clock::time_point now) {
+    Drain(context, now);
+    return context.device == 0 ? context.queued : DeviceQueueLevel(context);
+}
+
+static void PublishQueueLevel(AudioOut2Context& context) {
+    const auto level = std::min(context.queueDepth, DeviceQueueLevel(context) + static_cast<std::uint32_t>(context.advancedGrains.size()));
+    context.publishedQueueLevel.store(level, std::memory_order_release);
+}
+
+struct QueueLevelPublisher {
+    AudioOut2Context& context;
+    const std::unique_lock<std::mutex>& lock;
+
+    ~QueueLevelPublisher() {
+        if (lock.owns_lock() && context.device != 0) PublishQueueLevel(context);
+    }
+};
 
 static void DeviceCallback(void* userdata, Uint8* stream, int length);
 
 static void OpenDevice(AudioOut2Context& context) {
     if (InitializeSdlAudio_nid_no_patch() < 0) {
         AUDIOOUT2_TRACE("SDL audio init failed: %s\n", SDL_GetError());
+        return;
+    }
+    if (SdlAudioReportsNoOutputEndpoint(SDL_GetCurrentAudioDriver(), SDL_GetNumAudioDevices(0))) {
+        AUDIOOUT2_TRACE("SDL reports no WASAPI output endpoint\n");
         return;
     }
     SDL_AudioSpec desired{};
@@ -221,7 +242,8 @@ static void Render(AudioOut2Context& context, const AudioOut2Grain& grain) {
 
 static void DeviceCallback(void* userdata, Uint8* stream, int length) {
     auto& context = *static_cast<AudioOut2Context*>(userdata);
-    std::lock_guard lock(context.lock);
+    std::unique_lock lock(context.lock);
+    const QueueLevelPublisher publication{context, lock};
     auto* out = reinterpret_cast<float*>(stream);
     const auto samples = static_cast<std::size_t>(length) / sizeof(float);
     const auto cushionSamples = static_cast<std::size_t>(CushionGrains(context)) * context.grain * AUDIO_OUT2_OUTPUT_CHANNELS;
@@ -262,9 +284,9 @@ int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle ctx) try {
     const AudioOutCall call;
     auto* context = FromHandle(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
-    std::lock_guard lock(context->lock);
+    std::unique_lock lock(context->lock);
+    const QueueLevelPublisher publication{*context, lock};
     if (context->device != 0) {
-        if (context->advancedGrains.size() >= ADVANCED_GRAINS_MAX) throw std::runtime_error("AudioOut2: more than 16 completed grains await a push");
         if (!context->advancedMode) {
             while (!context->pendingGrains.empty()) {
                 Render(*context, context->pendingGrains.front());
@@ -296,6 +318,7 @@ int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam* params, voi
         AudioOut2TraceSeconds(), params->max_ports, params->max_object_ports, params->guarantee_object_ports, params->queue_depth, params->num_grains, params->flags, buffer, buffer_size,
         static_cast<void*>(context), context->grain, 1000.0 * context->grain / AUDIO_OUT2_SAMPLE_RATE, context->queueDepth, AUDIO_OUT2_SAMPLE_RATE);
     OpenDevice(*context);
+    context->deviceBacked = context->device != 0;
     *ctx = reinterpret_cast<AudioOut2ContextHandle>(context);
     return 0;
 }
@@ -322,8 +345,14 @@ int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle ctx) try {
 int APS5_VABI sceAudioOut2ContextGetQueueLevel(AudioOut2ContextHandle ctx, uint32_t* queue_level, uint32_t* available_queue) {
     auto* context = FromHandle(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
+    if (context->deviceBacked && !AudioOut2TraceEnabled()) {
+        const auto level = context->publishedQueueLevel.load(std::memory_order_acquire);
+        if (queue_level) *queue_level = level;
+        if (available_queue) *available_queue = context->queueDepth - level;
+        return 0;
+    }
     std::lock_guard lock(context->lock);
-    const auto level = QueueLevel(*context, Clock::now());
+    const auto level = std::min(context->queueDepth, QueueLevel(*context, Clock::now()) + static_cast<std::uint32_t>(context->advancedGrains.size()));
     if (queue_level) *queue_level = level;
     if (available_queue) *available_queue = context->queueDepth - level;
     context->queueLevelPolls++;
@@ -337,6 +366,7 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
     auto* context = FromHandle(ctx);
     if (!context) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     std::unique_lock lock(context->lock);
+    const QueueLevelPublisher publication{*context, lock};
     auto now = Clock::now();
     const auto waitStart = now;
     while (QueueLevel(*context, now) >= context->queueDepth) {
@@ -375,6 +405,7 @@ int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle ctx, uint32_t block
         while (context->pendingGrains.size() >= 2) {
             const auto readAt = context->pendingSince.front() + READ_DELAY;
             if (Clock::now() < readAt) {
+                PublishQueueLevel(*context);
                 lock.unlock();
                 while (Clock::now() < readAt) std::this_thread::yield();
                 lock.lock();

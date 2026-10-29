@@ -14,7 +14,10 @@ def integer(value, minimum, maximum):
 
 
 def read_report(path):
-    report = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        report = json.loads(path.read_text(encoding="utf-8-sig"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: JSON nested too deeply") from error
     if not isinstance(report, dict):
         raise ValueError(f"{path}: expected a JSON object")
     required = {"schema_version", "assembly_target", "rows", *SETTINGS}
@@ -75,6 +78,13 @@ def compare(before, after):
     return differences
 
 
+def nonnegative_integer(value):
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer")
+    return number
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Compare two hw_oracle.py --json reports bit for bit without a GPU. "
@@ -83,6 +93,8 @@ def main():
                "Assembly targets do not identify the physical GPU or driver.")
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
+    parser.add_argument("--max-differences", type=nonnegative_integer, metavar="N",
+                        help="print at most N differing words (0 prints only counts); all words are still compared")
     args = parser.parse_args()
     try:
         before, after = read_report(args.before), read_report(args.after)
@@ -92,8 +104,11 @@ def main():
     print(f"Assembly targets: {before['assembly_target']} -> {after['assembly_target']}")
     print(f"Compared {len(before['rows'])} rows x {len(before['output_registers'])} registers: "
           f"{len(differences)} differing words")
-    for row, register, old, new in differences:
+    visible = differences if args.max_differences is None else differences[:args.max_differences]
+    for row, register, old, new in visible:
         print(f"row {row}, {register}: 0x{old:08x} -> 0x{new:08x}")
+    if len(visible) < len(differences):
+        print(f"{len(differences) - len(visible)} additional differing words omitted")
     return int(bool(differences))
 
 
