@@ -451,6 +451,7 @@ struct LookupRecord {
     std::uint64_t generation;
     const StorageTexture* source;
     bool depth = false;
+    std::array<std::uint64_t, 4> untracked{};
 };
 
 thread_local std::vector<LookupRecord>* lookupLogSlot = nullptr;
@@ -913,7 +914,10 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             committed = std::move(ranges);
         }
     }
-    const auto untracked = source == nullptr && generation == 0 && !committed.has_value() && *keys == DccKeys::Uncompressed ? untrackedKey(address, bytes) : std::array<std::uint64_t, 4>{};
+    const bool keyed = source == nullptr && generation == 0 && !committed.has_value() && *keys == DccKeys::Uncompressed;
+    const auto forgetStamp = keyed ? GuestMemory::ForgetStamp(address, bytes) : 0;
+    const auto untracked = keyed ? untrackedKey(address, bytes) : std::array<std::uint64_t, 4>{};
+    const auto proofKey = untracked[0] != 0 ? std::array<std::uint64_t, 4>{untracked[0], untracked[1], forgetStamp, untracked[3]} : std::array<std::uint64_t, 4>{};
     auto& cache = Textures();
     const auto key = MakeTextureKey(context.device, words, components, depthCompare);
     std::lock_guard lock(cache.mutex);
@@ -960,7 +964,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 it->committed = std::move(committed);
                 it->untracked = untracked;
                 touchTexture(cache, it);
-                logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr});
+                logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr, false, proofKey});
                 reportTextureCounters();
                 if (profile) LookupOutcomes::Add(LookupOutcomes::SampledHitSnapshot, start);
                 return it->texture;
@@ -1018,11 +1022,12 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         if (entry.bytes.size() > SnapshotCompareBytes && (entry.generation != 0 || entry.untracked[0] != 0)) parkSnapshot(cache, entry.bytes);
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
     }
+    const auto madeKey = entry.untracked[0] != 0 ? proofKey : std::array<std::uint64_t, 4>{};
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
     if (!admitTexture(cache, key, entry.accounted, budget)) {
         noteReleased(texture);
-        logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
+        logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get(), false, madeKey});
         reportCacheCounts(cache, budget);
         reportTextureCounters();
         if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
@@ -1031,7 +1036,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     cache.bytes += entry.accounted;
     entry.present = Recorder::Presents();
     ++cache.counts.inserted;
-    logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
+    logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get(), false, madeKey});
     cache.entries.push_front(std::move(entry));
     cache.index[key] = cache.entries.begin();
     if (source != nullptr) cache.views.emplace(source.get(), cache.entries.begin());
@@ -3046,11 +3051,23 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
 // ValidatedSurface); the last record of an object is the freshest.
 namespace {
 
-std::array<std::uint64_t, 4> untrackedRangeStamp(std::uint64_t address, std::size_t bytes) {
+std::array<std::uint64_t, 4> hintedProof(std::uint64_t address, std::size_t bytes) {
+    const auto hint = GuestMemory::UntrackedHint(address, bytes);
+    if (hint == 0) return {};
+    const auto* recorder = Recorder::Active();
+    return {hint, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+}
+
+std::array<std::uint64_t, 5> untrackedRangeStamp(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 4>& hinted) {
     const auto epoch = GuestMemory::CollectEpoch();
     if (epoch == 0 || bytes == 0 || (GuestMemory::ForgetSerial() & 1u) != 0) return {};
+    if (hinted[0] != 0) return {hinted[0], hinted[1], hinted[2], hinted[3], 1};
     const auto* recorder = Recorder::Active();
-    return {epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+    return {epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0, 0};
+}
+
+std::array<std::uint64_t, 5> currentUntrackedStamp(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 5>& recorded) {
+    return untrackedRangeStamp(address, bytes, recorded[4] != 0 ? hintedProof(address, bytes) : std::array<std::uint64_t, 4>{});
 }
 
 }
@@ -3074,7 +3091,7 @@ void ShaderResources::captureValidation() {
         const auto& found = log[indices[i]];
         validatedTextures[i] = {found.resource, found.bytes, found.keys, found.generation, 0, found.source, found.depth, true};
         auto& surface = validatedTextures[i];
-        if (surface.valid && !surface.depth && GuestMemory::CollectWrites(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes)) == 0) surface.untracked = untrackedRangeStamp(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes));
+        if (surface.valid && !surface.depth && GuestMemory::CollectWrites(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes)) == 0) surface.untracked = untrackedRangeStamp(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes), surface.source != nullptr ? surface.source->HintedComparison(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes)) : found.untracked);
     }
     storageUntracked.assign(storageTextures.size(), {});
     for (std::size_t i = 0; i < storageTextures.size(); ++i) {
@@ -3082,7 +3099,7 @@ void ShaderResources::captureValidation() {
         if (image == nullptr) continue;
         const auto address = image->Descriptor().baseAddress;
         const auto bytes = static_cast<std::size_t>(image->GuestBytes());
-        if (GuestMemory::CollectWrites(address, bytes) == 0) storageUntracked[i] = untrackedRangeStamp(address, bytes);
+        if (GuestMemory::CollectWrites(address, bytes) == 0) storageUntracked[i] = untrackedRangeStamp(address, bytes, image->HintedComparison(address, bytes));
     }
     lookupLog().clear();
     const auto trim = [](auto& scratch) {
@@ -3161,7 +3178,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         surface.collected = GuestMemory::CollectWrites(address, bytes);
         bool untracked = false;
         if (surface.collected == 0) {
-            if (surface.untracked[0] == 0 || untrackedRangeStamp(address, bytes) != surface.untracked) return fail(FastFail::Collect);
+            if (surface.untracked[0] == 0 || currentUntrackedStamp(address, bytes, surface.untracked) != surface.untracked) return fail(FastFail::Collect);
             untracked = true;
         }
         const auto* source = surface.source;
@@ -3221,7 +3238,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         }
         bool untracked = false;
         if (GuestMemory::CollectWrites(address, bytes) == 0) {
-            if (i >= storageUntracked.size() || storageUntracked[i][0] == 0 || untrackedRangeStamp(address, bytes) != storageUntracked[i]) return fail(FastFail::Collect);
+            if (i >= storageUntracked.size() || storageUntracked[i][0] == 0 || currentUntrackedStamp(address, bytes, storageUntracked[i]) != storageUntracked[i]) return fail(FastFail::Collect);
             untracked = true;
         }
         if (own.dccAddress != 0) {
