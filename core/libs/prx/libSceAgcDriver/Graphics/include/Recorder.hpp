@@ -397,6 +397,8 @@ public:
     // before). A write-back over any tracked label dword is counted on the [recorder] line (must
     // stay 0: it would mean a CPU store landed over a label recorded on the GPU).
     static void NoteWrittenBack(std::uint64_t address, std::size_t bytes);
+    static void NoteWrittenBack(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs);
+    static std::uint64_t WriteBacksOverLabels();
 
     // Lock-free readers for the queue workers' packet loops and WAIT_REG_MEM polls (values of the
     // active recorder; a torn-down recorder never publishes):
@@ -844,6 +846,7 @@ private:
     std::multimap<std::uint64_t, std::uint64_t> wideLabels;
     std::uint64_t wideLabelBytes = 0;
     bool wideLabelInLocked(std::uint64_t address, std::size_t bytes) const;
+    bool pendingLabelInLocked(std::uint64_t address, std::size_t bytes) const;
     // labels.size(), readable without the table mutex: a noted write skips the mutex while the
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};

@@ -3438,6 +3438,10 @@ std::size_t Recorder::PendingLabels() const {
 
 bool Recorder::PendingLabelIn(std::uint64_t address, std::size_t bytes) const {
     std::lock_guard tableLock(labelTableMutex);
+    return pendingLabelInLocked(address, bytes);
+}
+
+bool Recorder::pendingLabelInLocked(std::uint64_t address, std::size_t bytes) const {
     if (bytes == 0) return false;
     const auto end = address + bytes;
     if (const auto first = labels.lower_bound(address); first != labels.end() && first->first < end) return true;
@@ -3605,6 +3609,24 @@ void Recorder::NoteWrittenBack(std::uint64_t address, std::size_t bytes) {
     };
     if (recorder->open != nullptr) count(*recorder->open);
     for (auto& batch : recorder->inFlight) count(*batch);
+}
+
+void Recorder::NoteWrittenBack(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs) {
+    Recorder* recorder = activeRecorder;
+    if (recorder == nullptr || runs.empty()) return;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> joined;
+    {
+        std::lock_guard tableLock(labelTableMutex);
+        for (const auto& [begin, end] : runs) {
+            if (!joined.empty() && (begin <= joined.back().second || !recorder->pendingLabelInLocked(joined.back().second, static_cast<std::size_t>(begin - joined.back().second)))) joined.back().second = std::max(joined.back().second, end);
+            else joined.emplace_back(begin, end);
+        }
+    }
+    for (const auto& [begin, end] : joined) NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
+}
+
+std::uint64_t Recorder::WriteBacksOverLabels() {
+    return writeBacksOverLabels.load(std::memory_order_relaxed);
 }
 
 bool Recorder::writtenBackSince(std::uint64_t sequence, std::uint64_t begin, std::uint64_t end) {

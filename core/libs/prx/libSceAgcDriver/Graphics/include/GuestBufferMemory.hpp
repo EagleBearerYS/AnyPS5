@@ -516,6 +516,7 @@ private:
     bool addressStaging = true;
     bool adjustedRegions = false;
     bool addressStores = false;
+    std::size_t declaredWrites = 0;
     GuestAllocations::Lease lease;
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).

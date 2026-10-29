@@ -6181,10 +6181,29 @@ void GuestBufferMemory::MarkDirectWrites() const {
 
 namespace {
 
-void storeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, Pieces* stored) {
+    if (stored != nullptr) GuestMemory::WriteChanged(address, current, original, *stored);
+    else GuestMemory::WriteChanged(address, current, original);
+}
+
+Pieces outside(const Pieces& runs, const Pieces& covered) {
+    Pieces result;
+    auto cover = covered.begin();
+    for (auto [begin, end] : runs) {
+        while (cover != covered.end() && cover->second <= begin) ++cover;
+        for (auto it = cover; it != covered.end() && it->first < end && begin < end; ++it) {
+            if (begin < it->first) result.emplace_back(begin, it->first);
+            begin = std::max(begin, it->second);
+        }
+        if (begin < end) result.emplace_back(begin, end);
+    }
+    return result;
+}
+
+void storeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, Pieces* stored = nullptr) {
     const auto writable = GuestMemory::DescribeCommitted(address, current.size(), true);
     if (writable.whole) {
-        GuestMemory::WriteChanged(address, current, original);
+        writeChanged(address, current, original, stored);
         return;
     }
     const auto unchanged = [&](std::uint64_t from, std::uint64_t to) {
@@ -6199,13 +6218,13 @@ void storeChanged(std::uint64_t address, std::span<const std::byte> current, std
         if (cursor < first) unchanged(cursor, first);
         const auto at = static_cast<std::size_t>(first - address);
         const auto length = static_cast<std::size_t>(last - first);
-        GuestMemory::WriteChanged(first, current.subspan(at, length), original.subspan(at, length));
+        writeChanged(first, current.subspan(at, length), original.subspan(at, length), stored);
         cursor = last;
     }
     if (cursor < address + current.size()) unchanged(cursor, address + current.size());
 }
 
-void storeSparse(ImageMirror& mirror, std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+void storeSparse(ImageMirror& mirror, std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, Pieces* stored = nullptr) {
     constexpr std::uint64_t block = 65536;
     const auto end = address + current.size();
     const auto forget = [&](std::uint64_t from, std::uint64_t to) {
@@ -6218,7 +6237,7 @@ void storeSparse(ImageMirror& mirror, std::uint64_t address, std::span<const std
         forget(cursor, first);
         const auto at = static_cast<std::size_t>(first - address);
         const auto length = static_cast<std::size_t>(last - first);
-        GuestMemory::WriteChanged(first, current.subspan(at, length), original.subspan(at, length));
+        writeChanged(first, current.subspan(at, length), original.subspan(at, length), stored);
         cursor = last;
     }
     forget(cursor, end);
@@ -6238,6 +6257,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> mergeWrites(std::vector<std
 
 void GuestBufferMemory::addAddressStoreSpans() {
     if (!addressStores) return;
+    declaredWrites = writes.size();
     const auto add = [&](const Region& region) {
         if (region.mirror == nullptr || !region.mirror->heap || !region.mirror->writable || !region.writable) return;
         const auto served = servedEnd(region);
@@ -6275,14 +6295,22 @@ void GuestBufferMemory::takeHeapReferences() {
 void GuestBufferMemory::WriteBack() {
     Require(uploaded && !committed, "guest memory cannot be committed twice or before upload");
     const auto merged = mergeWrites(writes);
+    const auto declared = addressStores ? mergeWrites(Pieces(writes.begin(), writes.begin() + static_cast<std::ptrdiff_t>(declaredWrites))) : Pieces{};
     // The CPU keeps running while the GPU works, so storing whole ranges would roll back its writes to
     // bytes the shader never touched. Only runs that differ from the uploaded copy are stored.
     for (const auto& [begin, end] : merged) {
         const auto* found = owner(begin, end);
         Require(found != nullptr, "write-back range has no GPU owner");
         const auto& region = *found;
+        const bool storeRuns = addressStores && region.mirror != nullptr && region.mirror->heap && region.mirror->writable;
+        Pieces stored;
+        Pieces* runs = storeRuns ? &stored : nullptr;
         // Every branch below but the direct, copied-back and staged ones stores from the CPU.
-        if (region.direct == nullptr && !(region.gpuCopy && (region.copiedBack || region.deviceLocal)) && !(region.mirror != nullptr && !region.mirror->writable)) Recorder::NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
+        if (storeRuns) {
+            for (const auto& [first, last] : clipPieces(declared, begin, end)) Recorder::NoteWrittenBack(first, static_cast<std::size_t>(last - first));
+        } else if (region.direct == nullptr && !(region.gpuCopy && (region.copiedBack || region.deviceLocal)) && !(region.mirror != nullptr && !region.mirror->writable)) {
+            Recorder::NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
+        }
         if (region.direct != nullptr) {
             // The GPU wrote imported guest memory directly; page write watching did not see it.
             StorageTexture::StampKeepingNewerResults(begin, static_cast<std::size_t>(end - begin), directWritesGeneration, [&] { return GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin)); });
@@ -6303,8 +6331,9 @@ void GuestBufferMemory::WriteBack() {
                 Require(reference != heapReferences.end() && reference->second.size() == length, "heap mirror write-back has no reference");
                 if (mirror.resident == nullptr) {
                     const auto current = mirror.buffer->Bytes().subspan(offset, length);
-                    if (mirror.sparse) storeSparse(mirror, begin, current, reference->second);
-                    else storeChanged(begin, current, reference->second);
+                    if (mirror.sparse) storeSparse(mirror, begin, current, reference->second, runs);
+                    else storeChanged(begin, current, reference->second, runs);
+                    if (runs != nullptr) Recorder::NoteWrittenBack(outside(stored, declared));
                     continue;
                 }
                 std::vector<std::byte> current(length);
@@ -6315,8 +6344,9 @@ void GuestBufferMemory::WriteBack() {
                     mirror.resident->ReadDevice(begin, current);
                 }
                 mirror.resident->Store(begin, current);
-                if (mirror.sparse) storeSparse(mirror, begin, current, reference->second);
-                else storeChanged(begin, current, reference->second);
+                if (mirror.sparse) storeSparse(mirror, begin, current, reference->second, runs);
+                else storeChanged(begin, current, reference->second, runs);
+                if (runs != nullptr) Recorder::NoteWrittenBack(outside(stored, declared));
                 continue;
             }
             const auto current = mirror.buffer->Bytes().subspan(offset, length);

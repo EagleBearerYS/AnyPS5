@@ -1,5 +1,7 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -23,6 +25,7 @@
 #include <cstring>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -39,6 +42,8 @@ constexpr std::uint64_t StoreOffset = 5 * Block + 0x200;
 constexpr std::uint64_t Neighbor = StoreOffset + Threads * sizeof(std::uint32_t);
 constexpr std::uint32_t Marker = 0x5a000000u;
 constexpr std::uint64_t LastRun = 12 * Block;
+constexpr std::uint64_t LabelOffset = 9 * Block + 0x40;
+constexpr std::uint32_t Reused = 0x99999999u;
 constexpr std::array<std::pair<std::uint64_t, std::uint64_t>, 3> SparseRuns{{{0, 2 * Block}, {4 * Block, 8 * Block}, {LastRun, LastRun + 2 * Block}}};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> StoreCode{0x34020082, 0x380402ff, Marker, 0xdc708000, 0x00000201, 0xbf810000};
@@ -295,6 +300,56 @@ void SparseTests(AgcDriver::VulkanDevice& device) {
     Require(heap.Load(LastRun + sizeof(std::uint32_t)) == 0x77777777u, "BDA store heap mirror: a later sparse write-back rolled back the CPU's bytes");
 }
 
+struct LabelOutcome {
+    std::string log;
+    std::uint64_t overLabels = 0;
+    std::uint64_t countedLabels = 0;
+    std::uint32_t value = 0;
+};
+
+LabelOutcome StoreBesideLabel(AgcDriver::VulkanDevice& device, const GuestHeap& heap, std::uint64_t labelOffset) {
+    constexpr std::array<std::byte, 4> label{std::byte{0x01}, std::byte{0x00}, std::byte{0x00}, std::byte{0x00}};
+    using AgcDriver::Graphics::Recorder;
+    LabelOutcome outcome;
+    const auto overBefore = Recorder::WriteBacksOverLabels();
+    outcome.log = Store(device, heap.Address() + StoreOffset, [&] {
+        auto* recorder = Recorder::Active();
+        Require(recorder != nullptr, "BDA store heap mirror: no active recorder");
+        heap.Store(labelOffset, Reused);
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        const auto counted = Recorder::PendingCompletionLabels();
+        recorder->AfterCompletions(heap.Address() + labelOffset, label, 1, 0, true);
+        outcome.countedLabels = Recorder::PendingCompletionLabels() - counted;
+    });
+    outcome.overLabels = Recorder::WriteBacksOverLabels() - overBefore;
+    outcome.value = heap.Load(labelOffset);
+    return outcome;
+}
+
+void LabelTests(AgcDriver::VulkanDevice& device) {
+    {
+        GuestHeap heap(true);
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        const auto outcome = StoreBesideLabel(device, heap, LabelOffset);
+        Require(outcome.log.find("BDA access failed") == std::string::npos && outcome.log.find("write-back failed") == std::string::npos, "BDA store heap mirror: a store beside a completion label failed:\n" + outcome.log);
+        Require(outcome.countedLabels == 0, "BDA store heap mirror: a GPU-stored completion label counted as pending at its registration");
+        for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+            Require(heap.Load(StoreOffset + thread * sizeof(std::uint32_t)) == Stored(thread), "BDA store heap mirror: the GLOBAL store of thread " + std::to_string(thread) + " beside a completion label was lost");
+        }
+        Require(outcome.overLabels == 0, "BDA store heap mirror: the heap span's write-back was noted over a completion label no thread stored to (" + std::to_string(outcome.overLabels) + " write-backs over a tracked label)");
+        Require(outcome.value == Reused, "BDA store heap mirror: the completion store of a label no thread stored to was forced by the heap span's write-back and left " + Hex(outcome.value) + " over the CPU's " + Hex(Reused));
+    }
+    {
+        GuestHeap heap(true);
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        const auto outcome = StoreBesideLabel(device, heap, StoreOffset + 8 * sizeof(std::uint32_t));
+        Require(outcome.log.find("BDA access failed") == std::string::npos && outcome.log.find("write-back failed") == std::string::npos, "BDA store heap mirror: a store over a completion label failed:\n" + outcome.log);
+        Require(outcome.overLabels >= 1, "BDA store heap mirror: the write-back of a thread's store over a completion label was not noted over the label");
+        Require(outcome.value == 1u, "BDA store heap mirror: the completion store of a label a thread stored over did not run after the write-back (the label holds " + Hex(outcome.value) + ")");
+        Require(heap.Load(StoreOffset + 7 * sizeof(std::uint32_t)) == Stored(7) && heap.Load(StoreOffset + 9 * sizeof(std::uint32_t)) == Stored(9), "BDA store heap mirror: the stores next to a completion label were lost");
+    }
+}
+
 void ReadOnlyTests(AgcDriver::VulkanDevice& device) {
     GuestHeap heap(false);
     heap.Store(StoreOffset, 0x33333333u);
@@ -322,6 +377,7 @@ int main() {
         WritableTests(*device);
         MixedTests(*device);
         SparseTests(*device);
+        LabelTests(*device);
         ReadOnlyTests(*device);
         std::puts("BDA store heap mirror tests passed");
         return 0;
