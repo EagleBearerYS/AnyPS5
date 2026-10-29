@@ -44,15 +44,22 @@ bool DrawCacheBypass::Skip() {
     return false;
 }
 
-void DrawCacheBypass::Note(bool hit) {
+void DrawCacheBypass::Note(bool useful) {
     if (minimumHits == 0) return;
     auto current = window.load(std::memory_order_relaxed);
-    std::uint32_t lookups = 0, hits = 0;
+    std::uint32_t lookups = 0, usefulLookups = 0;
     do {
         lookups = static_cast<std::uint32_t>(current) + 1u;
-        hits = static_cast<std::uint32_t>(current >> 32u) + (hit ? 1u : 0u);
-    } while (!window.compare_exchange_weak(current, lookups < Window ? (std::uint64_t{hits} << 32u) | lookups : 0u, std::memory_order_relaxed));
-    if (lookups == Window && hits < minimumHits) left.store(BypassDraws, std::memory_order_relaxed);
+        usefulLookups = static_cast<std::uint32_t>(current >> 32u) + (useful ? 1u : 0u);
+    } while (!window.compare_exchange_weak(current, lookups < Window ? (std::uint64_t{usefulLookups} << 32u) | lookups : 0u, std::memory_order_relaxed));
+    if (lookups != Window) return;
+    if (usefulLookups >= minimumHits) {
+        lowWindows.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const auto low = std::min(lowWindows.load(std::memory_order_relaxed) + 1u, LowWindowsToBypass + 3u);
+    lowWindows.store(low, std::memory_order_relaxed);
+    if (low >= LowWindowsToBypass) left.store(std::min(BypassDraws, FirstBypassDraws << (low - LowWindowsToBypass)), std::memory_order_relaxed);
 }
 
 bool Driver::drawDataHits() {
@@ -122,18 +129,33 @@ DrawKeySightings::DrawKeySightings(std::size_t keyCount) {
     bucketMask = buckets - 1;
 }
 
-bool DrawKeySightings::SeenBefore(std::uint64_t key) {
+std::size_t DrawKeySightings::bucketOf(std::uint64_t key) const {
     auto mixed = key;
     mixed = (mixed ^ (mixed >> 30u)) * 0xbf58476d1ce4e5b9ull;
     mixed = (mixed ^ (mixed >> 27u)) * 0x94d049bb133111ebull;
     mixed ^= mixed >> 31u;
-    const auto bucket = static_cast<std::size_t>(mixed) & bucketMask;
+    return static_cast<std::size_t>(mixed) & bucketMask;
+}
+
+bool DrawKeySightings::SeenBefore(std::uint64_t key) {
+    const auto bucket = bucketOf(key);
     auto* ways = keys.data() + bucket * Ways;
     if (std::find(ways, ways + filled[bucket], key) != ways + filled[bucket]) return true;
     ways[next[bucket]] = key;
     next[bucket] = static_cast<std::uint8_t>((next[bucket] + 1u) % Ways);
     if (filled[bucket] < Ways) ++filled[bucket];
     return false;
+}
+
+bool DrawKeySightings::Holds(std::uint64_t key) const {
+    const auto bucket = bucketOf(key);
+    const auto* ways = keys.data() + bucket * Ways;
+    return std::find(ways, ways + filled[bucket], key) != ways + filled[bucket];
+}
+
+bool Driver::drawKeySeen(std::uint64_t key) {
+    std::lock_guard cacheLock(drawCacheMutex);
+    return drawKeySightings && drawKeySightings->Holds(key);
 }
 
 bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
