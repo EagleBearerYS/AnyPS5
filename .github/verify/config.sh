@@ -1,0 +1,4 @@
+BASE=102b7a5cf0ed98dd94d9da76862eb1ee7865a932
+REPEAT=20
+EXTRA_TESTS='guest_raise_in_host_code'
+NO_BEFORE=1
