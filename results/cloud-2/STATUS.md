@@ -1,2 +1,5 @@
-READY 2026-10-29T08:54:36Z: BF-269 done, results/cloud-2/BF-269.md (red on main 10/10, reporter's fix does not clear it and hides a CPU store; fix on fork fix/agc-pending-layer-generation 87b51a63b9, ^agc 1045 passed 73 skipped 0 failed)
-machine: cloud-2 Linux, lavapipe llvmpipe LLVM 20.1.2, gcc, CI flags
+BUSY BF-272
+since: 2026-10-29T09:20:35Z
+claimed: 2026-10-29T09:20:29Z
+step: fetching #12578 and BF-267's 91c862b588, restacking on fix branch feat/libressl3-sourced-b267-1-on-12578
+previous: BF-269 done, results/cloud-2/BF-269.md
