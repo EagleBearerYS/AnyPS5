@@ -2,6 +2,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <deque>
 #include <fstream>
@@ -18,6 +19,12 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <system_error>
+#include <utility>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
@@ -332,6 +339,106 @@ static bool isMountedDirectory(const std::string& path) {
 static constexpr char BACKUP_DIR[] = "_sd_backup";
 static constexpr char BACKUP_STAGING_DIR[] = "_sd_backup_tmp";
 static constexpr char BACKUP_OLD_DIR[] = "_sd_backup_old";
+static constexpr char RESTORE_STAGING_DIR[] = "_sd_restore_tmp";
+static constexpr char RESTORE_OLD_DIR[] = "_sd_restore_old";
+
+static std::atomic<bool (*)(const char*, const char*)> g_file_step_hook{nullptr};
+
+void SaveDataSetFileStepHook_nid_no_patch(bool (*hook)(const char* step, const char* path)) {
+    g_file_step_hook.store(hook, std::memory_order_release);
+}
+
+static void file_step(const char* step, const std::string& path) {
+    const auto hook = g_file_step_hook.load(std::memory_order_acquire);
+    if (hook != nullptr && !hook(step, path.c_str())) {
+        throw std::filesystem::filesystem_error(std::string("SaveData: ") + step + " failed", path, std::make_error_code(std::errc::io_error));
+    }
+}
+
+static void copy_file_step(const char* step, const std::string& from, const std::string& to) {
+    file_step(step, to);
+    std::filesystem::copy_file(from, to);
+}
+
+static void copy_tree(const char* step, const std::string& from, const std::string& to) {
+    file_step(step, to);
+    std::filesystem::create_directory(to);
+    for (const auto& entry : std::filesystem::directory_iterator(from)) {
+        const std::string target = to + "/" + entry.path().filename().string();
+        if (entry.is_directory()) {
+            copy_tree(step, entry.path().string(), target);
+        } else {
+            copy_file_step(step, entry.path().string(), target);
+        }
+    }
+}
+
+static std::map<std::string, std::uintmax_t> tree_sizes(const std::string& root) {
+    std::map<std::string, std::uintmax_t> sizes;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        sizes[entry.path().lexically_relative(root).generic_string()] = entry.is_directory() ? std::numeric_limits<std::uintmax_t>::max() : entry.file_size();
+    }
+    return sizes;
+}
+
+static void flush_path(const std::string& path, bool directory) {
+#ifdef _WIN32
+    if (directory) {
+        return;
+    }
+    const HANDLE handle = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        throw std::filesystem::filesystem_error("SaveData: cannot open to flush", path, std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+    }
+    const bool flushed = FlushFileBuffers(handle) != 0;
+    const DWORD error = GetLastError();
+    CloseHandle(handle);
+    if (!flushed) {
+        throw std::filesystem::filesystem_error("SaveData: cannot flush", path, std::error_code(static_cast<int>(error), std::system_category()));
+    }
+#else
+    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+    if (descriptor < 0) {
+        throw std::filesystem::filesystem_error("SaveData: cannot open to flush", path, std::error_code(errno, std::generic_category()));
+    }
+    const int result = ::fsync(descriptor);
+    const int error = errno;
+    ::close(descriptor);
+    if (result != 0 && error != EINVAL) {
+        throw std::filesystem::filesystem_error("SaveData: cannot flush", path, std::error_code(error, std::generic_category()));
+    }
+#endif
+}
+
+static void flush_tree(const std::string& root) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        flush_path(entry.path().string(), entry.is_directory());
+    }
+    flush_path(root, true);
+}
+
+struct FileSwap {
+    std::vector<std::pair<std::string, std::string>> moved;
+
+    void move(const char* step, const std::string& from, const std::string& to) {
+        file_step(step, to);
+        std::filesystem::rename(from, to);
+        moved.emplace_back(from, to);
+        flush_path(std::filesystem::path(from).parent_path().string(), true);
+        flush_path(std::filesystem::path(to).parent_path().string(), true);
+    }
+
+    void undo(const char* step) {
+        while (!moved.empty()) {
+            const auto [from, to] = moved.back();
+            file_step(step, from);
+            std::filesystem::rename(to, from);
+            moved.pop_back();
+            flush_path(std::filesystem::path(from).parent_path().string(), true);
+            flush_path(std::filesystem::path(to).parent_path().string(), true);
+        }
+    }
+};
 
 static std::string backup_entry(const char* root, const std::string& dirName) {
     return std::string(root) + "/" + dirName;
@@ -382,41 +489,73 @@ static void backupSave(const std::string& dirName) {
     const std::string old = backup_entry(BACKUP_OLD_DIR, dirName);
     RemoveTree(staged);
     RemoveTree(old);
-    std::filesystem::create_directories(entry_save(staged));
-    std::filesystem::copy(source, entry_save(staged), std::filesystem::copy_options::recursive);
+    std::filesystem::create_directories(staged);
+    copy_tree("backup.copy", source, entry_save(staged));
+    file_step("backup.copy", param_path(entry_save(staged)));
     if (!store_param(entry_save(staged), load_param(source))) {
         throw std::runtime_error("SaveData: cannot write the backup's param file for " + source);
     }
     if (std::filesystem::exists(blocks_path(source))) {
-        std::filesystem::copy_file(blocks_path(source), blocks_path(entry_save(staged)));
+        copy_file_step("backup.copy", blocks_path(source), blocks_path(entry_save(staged)));
     }
     std::filesystem::create_directories(BACKUP_DIR);
     const bool replace = std::filesystem::exists(entry);
     if (replace) {
         std::filesystem::create_directories(BACKUP_OLD_DIR);
+        file_step("backup.aside", old);
         std::filesystem::rename(entry, old);
     }
+    file_step("backup.place", entry);
     std::filesystem::rename(staged, entry);
     if (replace) {
         RemoveTree(old);
     }
 }
 
-static void restoreSave(const std::string& target, const std::string& backup) {
-    std::vector<std::filesystem::path> current;
-    for (const auto& file : std::filesystem::directory_iterator(target)) {
-        current.push_back(file.path());
+static void restoreSave(const std::string& dirName) {
+    const std::string live = save_root() + "/" + dirName;
+    const std::string backupEntry = backup_entry(BACKUP_DIR, dirName);
+    const std::string backup = entry_save(backupEntry);
+    const std::string stagedEntry = backup_entry(RESTORE_STAGING_DIR, dirName);
+    const std::string oldEntry = backup_entry(RESTORE_OLD_DIR, dirName);
+    const std::string staged = entry_save(stagedEntry);
+    const std::string old = entry_save(oldEntry);
+    RemoveTree(stagedEntry);
+    RemoveTree(oldEntry);
+    std::filesystem::create_directories(stagedEntry);
+    std::filesystem::create_directories(oldEntry);
+    FileSwap swap;
+    try {
+        copy_tree("restore.copy", backup, staged);
+        copy_file_step("restore.copy", param_path(backup), param_path(staged));
+        if (std::filesystem::exists(blocks_path(backup))) {
+            copy_file_step("restore.copy", blocks_path(backup), blocks_path(staged));
+        }
+        if (tree_sizes(stagedEntry) != tree_sizes(backupEntry)) {
+            throw std::filesystem::filesystem_error("SaveData: the staged copy of the backup is incomplete", stagedEntry, std::make_error_code(std::errc::io_error));
+        }
+        flush_tree(stagedEntry);
+        swap.move("restore.aside", live, old);
+        for (const auto& [from, to] : {std::pair{param_path(live), param_path(old)}, std::pair{blocks_path(live), blocks_path(old)}}) {
+            if (std::filesystem::exists(from)) {
+                swap.move("restore.aside", from, to);
+            }
+        }
+        swap.move("restore.place", staged, live);
+        swap.move("restore.place", param_path(staged), param_path(live));
+        if (std::filesystem::exists(blocks_path(staged))) {
+            swap.move("restore.place", blocks_path(staged), blocks_path(live));
+        }
+    } catch (...) {
+        swap.undo("restore.rollback");
+        std::error_code ignored;
+        RemoveTree(stagedEntry, ignored);
+        RemoveTree(oldEntry, ignored);
+        throw;
     }
-    for (const auto& file : current) {
-        RemoveTree(file);
-    }
-    std::filesystem::copy(backup, target, std::filesystem::copy_options::recursive);
-    std::filesystem::copy_file(param_path(backup), param_path(target), std::filesystem::copy_options::overwrite_existing);
-    if (std::filesystem::exists(blocks_path(backup))) {
-        std::filesystem::copy_file(blocks_path(backup), blocks_path(target), std::filesystem::copy_options::overwrite_existing);
-    } else {
-        std::filesystem::remove(blocks_path(target));
-    }
+    std::error_code ignored;
+    RemoveTree(oldEntry, ignored);
+    RemoveTree(stagedEntry, ignored);
 }
 
 static int deleteSave(const SaveDataDelete* del) {
@@ -1435,7 +1574,7 @@ static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
         return SAVE_DATA_ERROR_INTERNAL;
     }
     try {
-        restoreSave(target, entry_save(backup_entry(BACKUP_DIR, dirName)));
+        restoreSave(dirName);
     } catch (const std::filesystem::filesystem_error&) {
         return SAVE_DATA_ERROR_INTERNAL;
     }

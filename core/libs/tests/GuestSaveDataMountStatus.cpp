@@ -373,6 +373,39 @@ void CheckBackups() {
     Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "deleting a save deletes its backup");
 }
 
+const char* failingStep = nullptr;
+int failingCall = 0;
+int stepCalls = 0;
+
+bool FailingStep(const char* step, const char*) {
+    if (failingStep == nullptr || std::strcmp(step, failingStep) != 0) return true;
+    return ++stepCalls != failingCall;
+}
+
+void FailStep(const char* step, int call) {
+    failingStep = step;
+    failingCall = call;
+    stepCalls = 0;
+    SaveDataSetFileStepHook_nid_no_patch(FailingStep);
+}
+
+void ClearFailingStep() {
+    SaveDataSetFileStepHook_nid_no_patch(nullptr);
+    failingStep = nullptr;
+}
+
+struct FailedStep {
+    const char* step;
+    int call;
+};
+
+bool LeavesCopies(const std::string& name) {
+    for (const char* root : {"_sd_backup_tmp", "_sd_backup_old", "_sd_restore_tmp", "_sd_restore_old"}) {
+        if (std::filesystem::exists(std::filesystem::path(root) / name)) return true;
+    }
+    return false;
+}
+
 template <typename Damage>
 void CheckCorruptBackup(const std::string& label, Damage damage) {
     SceSaveDataDirName name{};
@@ -410,6 +443,40 @@ void CheckCorruptBackups() {
     CheckCorruptBackup("a backup with a long .param", [](const std::filesystem::path& entry) { WriteText(entry / "save.param", ReadText(entry / "save.param") + "x"); });
 }
 
+void CheckStagedRestore() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "staged", sizeof("staged"));
+    const auto live = std::filesystem::path("_sd") / "staged";
+    std::filesystem::create_directories(live / "sub");
+    WriteText(live / "sub" / "deep.bin", "deep");
+    WriteText(std::filesystem::path("_sd") / "staged.blocks", "96");
+    Check(BackUp(&name, "backed up", "Staged") == 0, "the staged save is backed up");
+    const auto backup = Snapshot(std::filesystem::path("_sd_backup") / "staged" / "save");
+    WriteText(live / "data.bin", "live");
+    WriteText(live / "added.bin", "added");
+    WriteText(std::filesystem::path("_sd") / "staged.blocks", "128");
+    const auto before = Snapshot(live);
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    const FailedStep failures[] = {{"restore.copy", 1}, {"restore.copy", 3}, {"restore.copy", 6}, {"restore.aside", 1}, {"restore.aside", 2}, {"restore.place", 1}, {"restore.place", 3}};
+    for (const FailedStep& failure : failures) {
+        const std::string what = std::string("a restore whose ") + failure.step + " step " + std::to_string(failure.call) + " fails";
+        FailStep(failure.step, failure.call);
+        Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorInternal, what + " is INTERNAL");
+        ClearFailingStep();
+        Check(Snapshot(live) == before, what + " leaves the save as it was");
+        Check(!LeavesCopies("staged"), what + " leaves no staged or old copy");
+    }
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "a restore with no failing step succeeds");
+    Check(Snapshot(live) == backup, "the restored save matches its backup byte for byte");
+    Check(!LeavesCopies("staged"), "a restore leaves no staged or old copy");
+    std::filesystem::remove_all(live);
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorInternal, "a restore into a missing save directory is INTERNAL");
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    Check(sceSaveDataCheckBackupData(&check) == 0, "the backup outlives a restore into a missing save directory");
+}
+
 }
 
 int main() {
@@ -429,6 +496,7 @@ int main() {
     CheckInvalidNamesAreRejected();
     CheckBackups();
     CheckCorruptBackups();
+    CheckStagedRestore();
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);
