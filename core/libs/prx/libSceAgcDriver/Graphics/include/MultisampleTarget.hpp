@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -70,6 +71,7 @@ struct MultisampleColorAlias {
 };
 
 std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t address, std::size_t bytes);
+void WithMultisampleTargetsLockForTest(const std::function<void()>& inside);
 
 std::uint64_t MultisampledColorBytes(const ColorTarget& target);
 std::size_t MultisampledDccBytes(const ColorTarget& target);

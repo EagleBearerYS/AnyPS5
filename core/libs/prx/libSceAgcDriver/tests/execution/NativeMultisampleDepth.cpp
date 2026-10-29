@@ -41,6 +41,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <atomic>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -739,7 +740,7 @@ std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (target.iterate256 ? 1u << 10u : 0u) | (target.htilePipeAligned ? 1u << 19u : 0u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
-enum class PublicationWrite { None, Pages, Queued, PaddingSameValue, Completion, Concurrent, CopyRace, LateStore, PlaneStore, Retired, ColorAcquisition, DrawAlias, DrawPending, Reuse, DccAcquisition, DriverSameDepth, DriverSameStencil, DriverSameHtile, SameDepth, SameStencil, SameHtile, ChangedHull, Possible, ImportSameValue };
+enum class PublicationWrite { None, Pages, Queued, PaddingSameValue, Completion, Concurrent, CopyRace, LateStore, PlaneStore, TargetsHeld, Retired, ColorAcquisition, DrawAlias, DrawPending, Reuse, DccAcquisition, DriverSameDepth, DriverSameStencil, DriverSameHtile, SameDepth, SameStencil, SameHtile, ChangedHull, Possible, ImportSameValue };
 void CheckGuardedWrite() {
     TargetMemory memory(65536u, true);
     for (const std::size_t head : {0u, 1u, 3u, 8u}) {
@@ -902,21 +903,42 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         Require(padding < depthBytes, "native depth publication fixture needs a padding-only page");
         *reinterpret_cast<volatile std::byte*>(target.address + padding) = std::byte{0xa5};
     }
-    if (write == PublicationWrite::Completion) {
-        std::array<std::vector<std::byte>, 3> before;
-        for (std::size_t index = 0u; index < addresses.size(); ++index) {
-            const auto* guest = reinterpret_cast<const std::byte*>(addresses[index]);
-            before[index].assign(guest, guest + sizes[index]);
-        }
+    const auto guestBytes = [&] {
+        std::array<std::vector<std::byte>, 3> bytes;
+        for (std::size_t index = 0u; index < addresses.size(); ++index) bytes[index].assign(reinterpret_cast<const std::byte*>(addresses[index]), reinterpret_cast<const std::byte*>(addresses[index]) + sizes[index]);
+        return bytes;
+    };
+    const auto keepsGuest = [&](const std::function<void()>& action, const std::vector<std::pair<std::size_t, std::size_t>>& stored = {}) {
+        const auto held = guestBytes();
         bool refused = false;
+        try {
+            action();
+        } catch (const std::runtime_error&) {
+            refused = true;
+        }
+        const auto now = guestBytes();
+        Require(DepthSurfaceAt(target.address), "a native depth publication attempt retired its owner");
+        if (refused) {
+            Require(held == now, "a refused native depth publication changed guest bytes");
+            return;
+        }
+        for (std::size_t index = 0u; index < now.size(); ++index) {
+            for (std::size_t offset = 0u; offset < now[index].size(); ++offset) {
+                const bool guestStored = std::ranges::find(stored, std::pair<std::size_t, std::size_t>{index, offset}) != stored.end();
+                if (guestStored) Require(now[index][offset] == held[index][offset], "a native depth publication overwrote a byte the guest stored");
+                else Require(now[index][offset] == held[index][offset] || now[index][offset] == expected[index][offset], "a native depth publication wrote a byte that is neither the guest's nor the host's");
+            }
+        }
+    };
+    if (write == PublicationWrite::Completion) {
+        bool ran = false;
         recorder.OnComplete([&] {
             std::array<std::byte, 1> probe;
-            TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, "publication inside a GPU completion");
-            refused = true;
+            keepsGuest([&] { AgcDriver::GuestMemory::Read(target.address, probe); });
+            ran = true;
         });
         recorder.Sync();
-        Require(refused && DepthSurfaceAt(target.address), "completion publication did not refuse while retaining its owner");
-        for (std::size_t index = 0u; index < addresses.size(); ++index) Require(std::equal(before[index].begin(), before[index].end(), reinterpret_cast<const std::byte*>(addresses[index])), "completion publication changed guest bytes");
+        Require(ran && DepthSurfaceAt(target.address), "the completion publication check did not run or retired the owner");
     }
     const auto sampleOffset = depthLayout.Offset(0u, 0u, 0u, 0u);
     if (write >= PublicationWrite::DriverSameDepth && write <= PublicationWrite::DriverSameHtile) {
@@ -1021,6 +1043,55 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         std::array<std::byte, 1> probe;
         TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, "guest writes raced native multisample depth publication");
         Require(stored && *reinterpret_cast<const std::byte*>(late) == std::byte{0x7e} && DepthSurfaceAt(target.address), "a CPU store between the last publication check and its commit was overwritten or its owner retired");
+    } else if (write == PublicationWrite::TargetsHeld) {
+        Require(gpuLock != nullptr && gpuLock->owns_lock(), "the target list publication check needs the fixture GPU lock");
+        recorder.Sync();
+        TargetMemory colorMemory(65536u, true);
+        ColorTarget color{};
+        color.address = color.surfaceAddress = colorMemory.Address();
+        color.extent = color.surfaceExtent = extent;
+        color.format = VK_FORMAT_R8_UNORM;
+        color.elementBytes = 1u;
+        color.tileMode = ColorTileMode::RenderTarget;
+        color.samples = samples;
+        color.bytes = extent.width * extent.height;
+        MultisampleTargetView(context, color);
+        gpuLock->unlock();
+        const PublicationTimeout timeout;
+        std::atomic<bool> holding{false}, reading{false}, release{false};
+        std::array<std::exception_ptr, 2> failures;
+        {
+            std::jthread holder([&] {
+                try {
+                    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                    WithMultisampleTargetsLockForTest([&] {
+                        holding.store(true, std::memory_order_release);
+                        while (!release.load(std::memory_order_acquire)) std::this_thread::yield();
+                    });
+                } catch (...) {
+                    failures[0] = std::current_exception();
+                    holding.store(true, std::memory_order_release);
+                }
+            });
+            while (!holding.load(std::memory_order_acquire)) std::this_thread::yield();
+            std::jthread reader([&] {
+                try {
+                    reading.store(true, std::memory_order_release);
+                    std::array<std::byte, 1> observed;
+                    AgcDriver::GuestMemory::Read(addresses[0], observed);
+                    Require(observed[0] == expected[0][0], "a publication that waited for a multisample acquisition returned stale data");
+                } catch (...) { failures[1] = std::current_exception(); }
+            });
+            while (!reading.load(std::memory_order_acquire)) std::this_thread::yield();
+            struct Release {
+                std::atomic<bool>& flag;
+                ~Release() { flag.store(true, std::memory_order_release); }
+            } guard{release};
+        }
+        gpuLock->lock();
+        for (const auto& failure : failures) if (failure) std::rethrow_exception(failure);
+        ClearMultisampleTargets(context.device);
+        Require(DepthSurfaceAt(target.address), "a publication that waited for a multisample acquisition retired the owner");
     } else if (write == PublicationWrite::Retired) {
         const PublicationHookScope hook([&](DepthPublicationStage stage) {
             if (stage != DepthPublicationStage::ReadCaptured) return;
@@ -1041,9 +1112,9 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         MultisampleTargetView(context, color);
         const auto resource = DecodeTextureResource(DepthSampleWords(target));
         const PublicationTimeout timeout;
-        TargetRefuses([&] { MultisampleTargetTexture(context, resource, {}); }, "sample-preserving guest publication");
-        TargetRefuses([&] { MultisampleTargetFirstSample(context, resource, {}); }, "sample-preserving guest publication");
-        TargetRefuses([&] { MultisampleTargetStorageView(context, resource); }, "sample-preserving guest publication");
+        keepsGuest([&] { MultisampleTargetTexture(context, resource, {}); });
+        keepsGuest([&] { MultisampleTargetFirstSample(context, resource, {}); });
+        keepsGuest([&] { MultisampleTargetStorageView(context, resource); });
         ClearMultisampleTargets(context.device);
     } else if (write == PublicationWrite::DccAcquisition) {
         TargetMemory colorMemory(262144u, true), dccMemory(262144u, true);
@@ -1064,7 +1135,7 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         color.cmaskAddress = target.htileAddress;
         color.cmaskBytes = CmaskBytes(extent.width, extent.height);
         const PublicationTimeout timeout;
-        TargetRefuses([&] { MultisampleTargetView(context, color); }, "sample-preserving guest publication of native multisample depth is not implemented while a multisampled colour target is being acquired");
+        keepsGuest([&] { MultisampleTargetView(context, color); });
         Require(DepthSurfaceAt(target.address), "a refused colour target acquisition retired the written depth owner");
         ClearMultisampleTargets(context.device);
     } else if (write == PublicationWrite::Reuse) {
@@ -1107,7 +1178,7 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
     } else if (write == PublicationWrite::DrawAlias || write == PublicationWrite::DrawPending) {
         recorder.Sync();
         std::array<std::byte, 1> probe;
-        TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, write == PublicationWrite::DrawAlias ? "aliases a multisampled colour target whose samples are only on the host" : "external GPU writes over native multisample depth are not implemented");
+        keepsGuest([&] { AgcDriver::GuestMemory::Read(target.address, probe); });
         Require(DepthSurfaceAt(target.address), "a failed publication capture stopped attachment rendering");
         if (write == PublicationWrite::DrawAlias) {
             ClearMultisampleTargets(context.device);
@@ -1129,15 +1200,12 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
             }
         }
     } else if (write >= PublicationWrite::SameDepth) {
-        std::array<std::vector<std::byte>, 3> before;
-        for (std::size_t index = 0u; index < addresses.size(); ++index) {
-            const auto* guest = reinterpret_cast<const std::byte*>(addresses[index]);
-            before[index].assign(guest, guest + sizes[index]);
-        }
+        std::vector<std::pair<std::size_t, std::size_t>> stored;
+        if (write == PublicationWrite::SameDepth || write == PublicationWrite::ImportSameValue) stored.emplace_back(0u, sampleOffset);
+        if (write == PublicationWrite::SameStencil) stored.emplace_back(2u, stencilLayout.Offset(0u, 0u, 0u, 0u));
+        if (write == PublicationWrite::SameHtile) stored.emplace_back(1u, 0u);
         std::array<std::byte, 1> probe;
-        TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, "cannot distinguish an unwritten byte");
-        Require(DepthSurfaceAt(target.address), "an ambiguous publication retired its native depth owner");
-        for (std::size_t index = 0u; index < addresses.size(); ++index) Require(std::equal(before[index].begin(), before[index].end(), reinterpret_cast<const std::byte*>(addresses[index])), "a refused publication changed guest bytes");
+        keepsGuest([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, stored);
     } else {
         const auto trigger = unmap == PublicationUnmap::EmptyDepth ? 2u : 0u;
         const auto [first, last] = holes[trigger];
@@ -2805,6 +2873,7 @@ int main(int argc, char** argv) {
             CheckGuardedWrite();
             for (const auto write : {PublicationWrite::CopyRace, PublicationWrite::Retired, PublicationWrite::ColorAcquisition, PublicationWrite::DrawAlias, PublicationWrite::DrawPending, PublicationWrite::DriverSameDepth, PublicationWrite::DriverSameStencil, PublicationWrite::DriverSameHtile}) CheckDepthPublication(publishing, 4u, write, true);
             for (const auto write : {PublicationWrite::LateStore, PublicationWrite::PlaneStore}) CheckDepthPublication(publishing, 4u, write, false);
+            CheckDepthPublication(publishing, 4u, PublicationWrite::TargetsHeld, false, PublicationUnmap::None, PublicationClear::None, &lock);
             for (const auto samples : {2u, 4u, 8u}) {
                 if (supported(samples)) CheckDepthPublication(publishing, samples, PublicationWrite::Reuse, samples != 4u);
             }

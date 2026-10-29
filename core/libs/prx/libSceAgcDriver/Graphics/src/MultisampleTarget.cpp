@@ -1591,4 +1591,9 @@ std::optional<MultisampleColorAlias> MultisampleColorTargetOver(std::uint64_t ad
     return std::nullopt;
 }
 
+void WithMultisampleTargetsLockForTest(const std::function<void()>& inside) {
+    TargetsLock lock;
+    inside();
+}
+
 }
