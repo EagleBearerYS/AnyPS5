@@ -95,6 +95,7 @@ struct DrawEntryCounters {
     std::array<std::uint64_t, static_cast<std::size_t>(DrawMiss::Count)> misses{};
     std::array<std::uint64_t, MaxDispatchVariants> variantHitsByRank{};
     double validateUs = 0;
+    std::uint64_t bypassed = 0;
 
     std::uint64_t registerKeyLookups = 0, registerKeyHits = 0, decodeSkipped = 0, decodePartial = 0, facadeMismatches = 0, verifyDecodes = 0, verifyDecodeMismatches = 0;
     double keyUs = 0;
@@ -159,6 +160,20 @@ struct DrawRelocationTrial {
 
 struct DrawRelocationCounters {
     std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0;
+};
+
+class DrawCacheBypass {
+public:
+    static constexpr std::uint32_t Window = 2048, BypassDraws = 16384;
+    explicit DrawCacheBypass(std::uint32_t percent);
+    std::uint32_t Percent() const { return percent; }
+    bool Skip();
+    void Note(bool hit);
+
+private:
+    std::uint32_t percent, minimumHits;
+    std::atomic<std::uint64_t> window{0};
+    std::atomic<std::uint32_t> left{0};
 };
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);

@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -241,9 +242,107 @@ void SightingsKeepCollidingKeys() {
     Require(sightings.SeenBefore(12) && sightings.SeenBefore(13) && sightings.SeenBefore(14), "a full bucket lost a key newer than the one it replaced");
 }
 
+std::vector<std::uint32_t> ScaledDraws(const std::vector<float>& scales) {
+    auto commands = Draws(32.0f, VertexCode.data(), 1, PixelCode.data(), 1, {});
+    Append(commands, 0x76, {0x00c, std::bit_cast<std::uint32_t>(1.0f)});
+    for (const auto scale : scales) {
+        Append(commands, 0x69, {0x10f, std::bit_cast<std::uint32_t>(scale)});
+        Append(commands, 0x69, {0x110, std::bit_cast<std::uint32_t>(scale)});
+        Append(commands, 0x2d, {3, 2});
+    }
+    return commands;
 }
 
-int main() {
+std::vector<float> HitWindow(std::size_t draws, float repeated, std::size_t repeats, float& distinct) {
+    std::vector<float> scales(repeats, repeated);
+    while (scales.size() < draws) scales.push_back(distinct += 1.0f);
+    return scales;
+}
+
+void LowHitRateBypassesTheCache() {
+    constexpr std::size_t Window = 2048, BypassDraws = 16384;
+    const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
+    const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
+    const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    Registered(TriangleVertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
+    Registered(ConstantPixelHeader, ConstantPixelCode.data(), sizeof(ConstantPixelCode), 1);
+    ColorMemory.fill(std::byte{0});
+    PixelConstant[0] = 0.25f;
+    const auto cached = SubmitConstantDraws(3);
+    Require(cached.lookups == 3 && cached.hits == 1, mode + ": three constant draws did not miss twice and hit once");
+    const auto cachedColor = BrightestColorByte();
+    Require(cachedColor == 64, mode + ": the cached draws of constant 0.25 wrote " + std::to_string(cachedColor) + ", expected 64");
+    float distinct = 1000.0f;
+    const auto even = Submit(ScaledDraws(HitWindow(Window - 3, 32.0f, 104, distinct)));
+    Require(even.lookups == Window && even.hits == 103, mode + ": the first window made " + std::to_string(even.lookups) + " lookups with " + std::to_string(even.hits) + " hits, expected 2048 with 103");
+    const auto armed = Submit(ScaledDraws(HitWindow(Window, 16.0f, 104, distinct)));
+    Require(armed.lookups == 2 * Window && armed.hits == 205, mode + ": a window of 103 hits in 2048 lookups bypassed the draw cache, which needs fewer than 5%");
+    ColorMemory.fill(std::byte{0});
+    const auto bypassed = SubmitConstantDraws(1);
+    const auto bypassedColor = BrightestColorByte();
+    PixelConstant[0] = 1.0f;
+    ColorMemory.fill(std::byte{0});
+    const auto refreshed = SubmitConstantDraws(1);
+    Require(bypassedColor == cachedColor && BrightestColorByte() == 255, mode + ": draws after a window of 102 hits wrote " + std::to_string(bypassedColor) + " and " + std::to_string(BrightestColorByte()) + ", expected the cached " + std::to_string(cachedColor) + " and 255");
+    if (!bypass) {
+        Require(refreshed.lookups == armed.lookups + 2, mode + ": draws after a window of 102 hits were not looked up");
+        return;
+    }
+    Require(bypassed.lookups == armed.lookups && refreshed.lookups == armed.lookups && refreshed.inserts == armed.inserts, mode + ": draws after a window of 102 hits in 2048 lookups were still looked up or inserted");
+    const auto rest = Submit(ScaledDraws(std::vector<float>(BypassDraws - 2, 32.0f)));
+    Require(rest.lookups == armed.lookups && rest.inserts == armed.inserts, mode + ": the bypass ended before 16384 draws");
+    const auto resumed = Submit(ScaledDraws({32.0f}));
+    Require(resumed.lookups == armed.lookups + 1 && resumed.hits == armed.hits + 1, mode + ": the draw after 16384 bypassed draws did not look up the cached draw again");
+    const auto recovered = Submit(ScaledDraws(std::vector<float>(Window - 1, 32.0f)));
+    Require(recovered.hits - resumed.hits == Window - 1, mode + ": a window of repeated draws did not hit the cache");
+    const auto kept = Submit(ScaledDraws(std::vector<float>(10, 32.0f)));
+    Require(kept.lookups == recovered.lookups + 10, mode + ": a window of 2048 hits bypassed the draw cache");
+}
+
+void StageHitsKeepTheCacheLookedUp() {
+    constexpr std::size_t Window = 2048;
+    const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
+    const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
+    const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    const auto start = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    const auto rest = Window - static_cast<std::size_t>(start.lookups % Window);
+    const auto closed = Submit(ScaledDraws(std::vector<float>(rest, 32.0f)));
+    Require(closed.lookups - start.lookups == rest && closed.hits - start.hits == rest, mode + ": the draws closing the current window did not all hit the cached draw");
+    std::vector<std::vector<std::uint32_t>> words;
+    for (std::size_t i = 0; i < Window; ++i) words.push_back({std::bit_cast<std::uint32_t>(5000.0f + static_cast<float>(i))});
+    const auto shapes = Submit(Draws(32.0f, VertexCode.data(), 1, PixelCode.data(), 1, words));
+    Require(shapes.lookups - closed.lookups == Window && shapes.hits == closed.hits && shapes.inserts == closed.inserts, mode + ": " + std::to_string(shapes.lookups - closed.lookups) + " lookups and " + std::to_string(shapes.hits - closed.hits) + " whole-draw hits for 2048 draws of new user words, expected 2048 misses");
+    Require(shapes.dataHits - closed.dataHits == Window && shapes.dataStagesReused - closed.dataStagesReused == Window, mode + ": 2048 draws of new user words reused " + std::to_string(shapes.dataStagesReused - closed.dataStagesReused) + " vertex stages from the cached draw of their shape, expected 2048");
+    const auto next = Submit(ScaledDraws({32.0f}));
+    Require(next.lookups == shapes.lookups + 1 && next.hits == shapes.hits + 1, mode + ": the draw after a window of 2048 draws whose keys missed but whose stages were reused from the cache was not looked up");
+    std::cout << mode << ": a window of 2048 draws whose keys missed but whose vertex stages were reused kept the draw cache looked up\n";
+}
+
+void ConcurrentNotesCloseEachWindowOnce() {
+    using AgcDriver::DriverDetail::DrawCacheBypass;
+    DrawCacheBypass bypass(100);
+    constexpr std::size_t Threads = 4, Windows = 64;
+    std::vector<std::thread> threads;
+    for (std::size_t t = 0; t < Threads; ++t) {
+        threads.emplace_back([&bypass] {
+            for (std::size_t n = 0; n < Windows * DrawCacheBypass::Window; ++n) bypass.Note(true);
+        });
+    }
+    for (auto& thread : threads) thread.join();
+    Require(!bypass.Skip(), "four threads noting only hits closed a window with fewer than its 2048 hits");
+    for (std::size_t n = 0; n < DrawCacheBypass::Window; ++n) bypass.Note(false);
+    std::size_t skipped = 0;
+    while (bypass.Skip()) ++skipped;
+    Require(skipped == DrawCacheBypass::BypassDraws, "2048 misses after 256 windows noted by four threads bypassed " + std::to_string(skipped) + " draws, expected one window closed and 16384 draws bypassed");
+}
+
+}
+
+int main(int argc, char** argv) {
     try {
         SightingsKeepCollidingKeys();
         bool libraries = false;
@@ -253,7 +352,11 @@ int main() {
             libraries = device->GraphicsPipelineLibraries();
         }
         if (!libraries && std::getenv("APS5_NO_GPL") == nullptr) return VulkanTestSkipped;
-        if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
+        if (argc > 1 && std::string(argv[1]) == "--low-hit-bypass") {
+            LowHitRateBypassesTheCache();
+            StageHitsKeepTheCacheLookedUp();
+            ConcurrentNotesCloseEachWindowOnce();
+        } else if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
             RefreshedStageDataVerifies();
         } else {
             ThirdDrawHitsTheCache(libraries);
