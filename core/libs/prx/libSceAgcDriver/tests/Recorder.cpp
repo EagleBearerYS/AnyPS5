@@ -3374,7 +3374,7 @@ void unitShadowTests(const Device& device, Recorder& recorder) {
     Require(words[127 * unit] == 0x66 && words[128 * unit] == 0x77, "the retire did not publish the second slab's units covered by the old registration");
 }
 
-void untrackedForgetTests(const Device& device) {
+void untrackedForgetTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: untracked comparison memo not tested\n";
@@ -3424,6 +3424,10 @@ void untrackedForgetTests(const Device& device) {
         return;
     }
     TextureDetiler detiler(base);
+    struct Finish {
+        Recorder& recorder;
+        ~Finish() { recorder.Sync(); }
+    } finish{recorder};
     auto context = base;
     context.detiler = &detiler;
     GuestTextureResource resource{};
@@ -8294,7 +8298,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
-            untrackedForgetTests(device);
+            untrackedForgetTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
