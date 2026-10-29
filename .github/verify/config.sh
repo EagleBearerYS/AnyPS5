@@ -1,0 +1,4 @@
+BASE=edf6804cf52c62eacafc592dd6142cb4efe5bd05
+REPEAT=1
+EXTRA_TESTS='agc_driver_present_upscale|agc_driver_presentation_fsr|agc_driver_presentation_pass|agc_performance_overlay|agc_performance_overlay_device_selection|agc_performance_overlay_device_selection_cpu|video_out_hdr_present|^video_out_flip_'
+VALIDATION=1
