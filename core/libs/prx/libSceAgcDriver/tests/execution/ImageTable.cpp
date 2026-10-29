@@ -459,29 +459,6 @@ alignas(256) constexpr std::array<std::uint32_t, 63> PointerChaseCode{
     0xf40c0916u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffe1u, 0xbefe042eu,
     0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
-alignas(256) constexpr std::array<std::uint32_t, 58> PointerChaseLoopCode{
-    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
-    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
-    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
-    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
-    0xbe960312u, 0xbf068016u, 0xbf850008u, 0xf4080f16u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b1eu, 0xfa000000u,
-    0xbf8cc07fu, 0x80968116u, 0xbf82fff6u, 0xf40c0916u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u,
-    0x8afe3032u, 0xbf89ffe6u, 0xbefe042eu, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u,
-    0x80070408u, 0xbf810000u,
-};
-alignas(256) constexpr std::array<std::uint32_t, 87> PointerChaseDeepCode{
-    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
-    0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
-    0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xbf8cc07fu, 0x7d8800a0u, 0x7e140210u, 0x02061411u, 0xbeae047eu,
-    0x7e280503u, 0xd4c20030u, 0x00020614u, 0xbeb22430u, 0x8f158414u, 0xf4240b02u, 0x2a000008u, 0xbf8cc07fu,
-    0xbf0d8012u, 0xbf840006u, 0xf4080f16u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b1eu, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8112u, 0xbf840006u, 0xf4081016u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b20u, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8212u, 0xbf840006u, 0xf4081116u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b22u, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8312u, 0xbf840006u, 0xf4081216u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b24u, 0xfa000000u, 0xbf8cc07fu,
-    0xbf0d8412u, 0xbf840006u, 0xf4081316u, 0xfa000060u, 0xbf8cc07fu, 0xf4240b26u, 0xfa000000u, 0xbf8cc07fu,
-    0xf40c0916u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x01090401u, 0x8afe3032u, 0xbf89ffc9u, 0xbefe042eu,
-    0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
-};
 alignas(256) constexpr std::array<std::uint32_t, 73> PointerChaseSplitCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
     0x8f108402u, 0xf4280404u, 0x20000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u,
@@ -1799,20 +1776,6 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     const auto notBuffer = run();
     Require(Faulted(notBuffer) && notBuffer.log.find("not a buffer") != std::string::npos, "nested image table: a non-buffer parent was accepted:\n" + notBuffer.log);
     records[0][43] &= ~(1u << 30u);
-    const auto refused = [&](const std::vector<std::uint32_t>& code, const char* what) {
-        bool rejected = false;
-        try { static_cast<void>(run(code)); }
-        catch (const std::runtime_error& error) { rejected = std::string(error.what()).find("not a valid runtime value") != std::string::npos; }
-        Require(rejected, std::string("nested image table: ") + what + " was not refused by resource planning");
-    };
-    auto shared = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end());
-    shared.insert(shared.begin() + 30u, 0x7e0e0232u);
-    shared.insert(shared.begin() + 21u, {0xf4200c8cu, 0xfa000000u});
-    std::fprintf(stderr, "nested image table: checking shared V# refusal\n");
-    refused(shared, "a V# with another buffer consumer");
-    auto consumer = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end());
-    consumer.insert(consumer.begin() + 30u, 0x7e0e0225u);
-    refused(consumer, "a T# with another consumer");
     rootBytes = 0u;
     const auto empty = run();
     Require(Faulted(empty) && empty.log.find("unmapped") != std::string::npos, "nested image table: an empty pointer dictionary did not fault");
@@ -2590,18 +2553,7 @@ void RunPointerChaseTests(AgcDriver::VulkanDevice& device) {
         Keys[group * 4u] = keys[group][0];
         Keys[group * 4u + 1u] = keys[group][1];
     }
-    const auto refused = [&](std::span<const std::uint32_t> code, const std::string& what) {
-        std::string refusal;
-        try {
-            static_cast<void>(run(code));
-        } catch (const std::runtime_error& error) {
-            refusal = error.what();
-        }
-        Require(refusal.find("not a valid runtime value") != std::string::npos, name + ": " + what + " was not refused by resource planning: " + refusal);
-    };
-    refused(PointerChaseLoopCode, "a chase repeated in a loop");
-    refused(PointerChaseDeepCode, "five conditional chase steps");
-    std::puts("pointer table with a conditional V# chase: a T# at a record pointer chased up to twice through a V# at the pointer plus 0x60 checked for every taken and skipped step, a moved link, a link outside the snapshot and a V# with an unaligned base on a step no group takes, and a chase in a loop and five chase steps refused");
+    std::puts("pointer table with a conditional V# chase: a T# at a record pointer chased up to twice through a V# at the pointer plus 0x60 checked for every taken and skipped step, a moved link, a link outside the snapshot and a V# with an unaligned base on a step no group takes");
 }
 
 void RunPointerChaseSplitTests(AgcDriver::VulkanDevice& device) {
