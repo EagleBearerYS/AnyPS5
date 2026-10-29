@@ -2151,11 +2151,15 @@ void DepthSurface::PublishToGuest() {
     Require(GuestMemory::UnchangedSinceAll(observed), "guest writes raced native multisample depth publication");
     Require(active->load(std::memory_order_acquire) && !clearPending && clearGeneration == 0u && stencilClearGeneration == 0u && pendingClear == 0u, "native multisample depth ownership changed during publication");
     publicationFailed = true;
+    if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::BeforeCommit);
+    auto seen = observed.begin();
     for (std::size_t index = 0u; index < publication.size(); ++index) {
         for (const auto& part : live[index]) {
             const auto offset = static_cast<std::size_t>(part.address - publication[index].range.address);
-            GuestMemory::WriteChanged(part.address, std::span<const std::byte>(result[index]).subspan(offset, part.bytes), std::span<const std::byte>(current[index]).subspan(offset, part.bytes));
+            const auto lost = GuestMemory::WriteChangedIfHeld(part.address, std::span<const std::byte>(result[index]).subspan(offset, part.bytes), std::span<const std::byte>(current[index]).subspan(offset, part.bytes), (seen++)->generation);
+            Require(lost == 0u, "guest writes raced native multisample depth publication");
         }
+        if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::PlaneCommitted);
     }
     publicationFailed = false;
     for (std::size_t index = 0u; index < publication.size(); ++index) {

@@ -739,7 +739,37 @@ std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (target.iterate256 ? 1u << 10u : 0u) | (target.htilePipeAligned ? 1u << 19u : 0u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
-enum class PublicationWrite { None, Pages, Queued, PaddingSameValue, Completion, Concurrent, CopyRace, Retired, ColorAcquisition, DrawAlias, DrawPending, Reuse, DccAcquisition, DriverSameDepth, DriverSameStencil, DriverSameHtile, SameDepth, SameStencil, SameHtile, ChangedHull, Possible, ImportSameValue };
+enum class PublicationWrite { None, Pages, Queued, PaddingSameValue, Completion, Concurrent, CopyRace, LateStore, PlaneStore, Retired, ColorAcquisition, DrawAlias, DrawPending, Reuse, DccAcquisition, DriverSameDepth, DriverSameStencil, DriverSameHtile, SameDepth, SameStencil, SameHtile, ChangedHull, Possible, ImportSameValue };
+void CheckGuardedWrite() {
+    TargetMemory memory(65536u, true);
+    for (const std::size_t head : {0u, 1u, 3u, 8u}) {
+        for (const std::size_t size : {32u, 29u, 16u, 5u, 1u}) {
+            for (const auto scenario : {0u, 1u, 2u}) {
+                std::vector<std::byte> snapshot(size), host(size);
+                for (std::size_t index = 0u; index < size; ++index) snapshot[index] = static_cast<std::byte>(0x11u + index);
+                host = snapshot;
+                const std::array<std::size_t, 3> changed{0u, size / 2u, size - 1u};
+                for (const auto index : changed) host[index] = static_cast<std::byte>(0x22u + index);
+                auto* destination = memory.Data() + head;
+                std::memcpy(destination, snapshot.data(), size);
+                const std::size_t late = scenario == 1u ? changed[1] : size > 3u ? 1u : 0u;
+                const bool lateChanged = std::ranges::find(changed, late) != changed.end();
+                if (scenario != 0u) destination[late] = std::byte{0x7e};
+                const auto lost = AgcDriver::GuestMemory::WriteChangedIfHeld(reinterpret_cast<std::uint64_t>(destination), host, snapshot, 0u);
+                if (scenario == 0u) {
+                    Require(lost == 0u && std::equal(host.begin(), host.end(), destination), "a guarded publication store of untouched bytes was refused or incomplete");
+                } else {
+                    Require(destination[late] == std::byte{0x7e}, "a guarded publication store overwrote a guest byte stored after the snapshot");
+                    Require(lateChanged ? lost != 0u : lost == 0u, "a guarded publication store miscounted a guest byte stored after the snapshot");
+                    if (!lateChanged) {
+                        for (std::size_t index = 0u; index < size; ++index) Require(destination[index] == (index == late ? std::byte{0x7e} : host[index]), "a guarded publication store missed a byte next to a guest byte it kept");
+                    }
+                }
+            }
+        }
+    }
+}
+
 enum class PublicationUnmap { None, Middle, Head, Tail, EmptyDepth, EmptyStencil, EmptyHtile, Remap, Inaccessible };
 enum class PublicationClear { None, Clear, Redraw, Different, Stencil, StencilRedraw, StencilSameRedraw, QueuedStencilRedraw };
 std::barrier<>* publicationReadBarrier = nullptr;
@@ -905,7 +935,7 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         std::vector<std::byte> original(4096u, std::byte{0xa5}), changed = original;
         changed.front() ^= std::byte{1};
         changed.back() ^= std::byte{1};
-        AgcDriver::GuestMemory::WriteChanged(page, changed, original);
+        Require(AgcDriver::GuestMemory::WriteChangedIfHeld(page, changed, original, 0u) == 0u, "the changed-hull fixture store was refused");
     }
     if (write == PublicationWrite::Possible) AgcDriver::GuestMemory::MarkPossiblyWritten(target.address, depthBytes);
     if (write == PublicationWrite::ImportSameValue) {
@@ -979,6 +1009,18 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         std::array<std::byte, 1> probe;
         TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, "guest writes raced native multisample depth publication");
         Require(*reinterpret_cast<const std::byte*>(target.address + sampleOffset) == std::byte{0x7e} && DepthSurfaceAt(target.address), "a CPU store during publication was overwritten or its owner retired");
+    } else if (write == PublicationWrite::LateStore || write == PublicationWrite::PlaneStore) {
+        const bool betweenPlanes = write == PublicationWrite::PlaneStore;
+        const auto late = betweenPlanes ? target.stencilAddress + stencilLayout.Offset(0u, 0u, 0u, 0u) : target.address + sampleOffset;
+        bool stored = false;
+        const PublicationHookScope hook([&](DepthPublicationStage stage) {
+            if (stage != (betweenPlanes ? DepthPublicationStage::PlaneCommitted : DepthPublicationStage::BeforeCommit) || stored) return;
+            stored = true;
+            *reinterpret_cast<volatile std::byte*>(late) = std::byte{0x7e};
+        });
+        std::array<std::byte, 1> probe;
+        TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, "guest writes raced native multisample depth publication");
+        Require(stored && *reinterpret_cast<const std::byte*>(late) == std::byte{0x7e} && DepthSurfaceAt(target.address), "a CPU store between the last publication check and its commit was overwritten or its owner retired");
     } else if (write == PublicationWrite::Retired) {
         const PublicationHookScope hook([&](DepthPublicationStage stage) {
             if (stage != DepthPublicationStage::ReadCaptured) return;
@@ -2760,7 +2802,9 @@ int main(int argc, char** argv) {
                 CheckDepthPublication(publishing, samples, PublicationWrite::None, true, PublicationUnmap::None, PublicationClear::StencilRedraw);
             }
             for (const auto clear : {PublicationClear::Stencil, PublicationClear::StencilSameRedraw, PublicationClear::QueuedStencilRedraw}) CheckDepthPublication(publishing, 4u, PublicationWrite::None, true, PublicationUnmap::None, clear);
+            CheckGuardedWrite();
             for (const auto write : {PublicationWrite::CopyRace, PublicationWrite::Retired, PublicationWrite::ColorAcquisition, PublicationWrite::DrawAlias, PublicationWrite::DrawPending, PublicationWrite::DriverSameDepth, PublicationWrite::DriverSameStencil, PublicationWrite::DriverSameHtile}) CheckDepthPublication(publishing, 4u, write, true);
+            for (const auto write : {PublicationWrite::LateStore, PublicationWrite::PlaneStore}) CheckDepthPublication(publishing, 4u, write, false);
             for (const auto samples : {2u, 4u, 8u}) {
                 if (supported(samples)) CheckDepthPublication(publishing, samples, PublicationWrite::Reuse, samples != 4u);
             }
