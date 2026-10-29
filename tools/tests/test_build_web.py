@@ -183,6 +183,31 @@ class LibraryPublicationTests(unittest.TestCase):
         self.assertFalse(any(file.suffix == ".download" for file in self.libraries.iterdir()))
 
 
+    def test_browser_incompatible_compression_and_special_files_preserve_old_release(self):
+        valid = library_zip([("libs/libc.prx", b"valid")])
+        for compression in (zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA):
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, "w", compression=compression) as archive:
+                archive.writestr("libs/libc.prx", b"content")
+            with self.subTest(compression=compression), self.assertRaisesRegex(ValueError, "compression"):
+                self.publish(data.getvalue(), valid)
+            self.assertEqual(self.manifest.read_bytes(), self.previous)
+            self.assertEqual(list(self.libraries.iterdir()), [self.existing])
+        for mode in (0o010644, 0o020644, 0o060644, 0o120777, 0o140644):
+            entry = zipfile.ZipInfo("libs/special")
+            entry.create_system = 3
+            entry.external_attr = mode << 16
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "special files"):
+                self.publish(library_zip([(entry, b"content")]), valid)
+            self.assertEqual(self.manifest.read_bytes(), self.previous)
+        for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            data = io.BytesIO()
+            with zipfile.ZipFile(data, "w", compression=compression) as archive:
+                archive.writestr("libs/libc.prx", b"valid")
+            self.publish(data.getvalue(), data.getvalue())
+            self.assertEqual(json.loads(self.manifest.read_text(encoding="utf-8"))["tag"], "v1")
+
+
 class BuildWebCliTests(unittest.TestCase):
     def test_missing_relinker_wasm_reports_error_without_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
