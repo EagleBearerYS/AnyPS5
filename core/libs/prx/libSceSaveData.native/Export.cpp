@@ -355,7 +355,53 @@ static void file_step(const char* step, const std::string& path) {
     }
 }
 
+static bool is_link(const std::filesystem::path& path, const std::filesystem::file_status& status) {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        return true;
+    }
+#endif
+    return std::filesystem::is_symlink(status);
+}
+
+static std::filesystem::file_type plain_type(const std::string& path) {
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (status.type() == std::filesystem::file_type::not_found) {
+        return std::filesystem::file_type::not_found;
+    }
+    if (error) {
+        throw std::filesystem::filesystem_error("SaveData: cannot read the type of", path, error);
+    }
+    if (is_link(path, status) || (status.type() != std::filesystem::file_type::regular && status.type() != std::filesystem::file_type::directory)) {
+        throw std::filesystem::filesystem_error("SaveData: not a plain file or directory", path, std::make_error_code(std::errc::operation_not_permitted));
+    }
+    return status.type();
+}
+
+static void require_plain_tree(const std::string& path) {
+    if (plain_type(path) != std::filesystem::file_type::directory) {
+        return;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(path)) {
+        require_plain_tree(entry.path().string());
+    }
+}
+
+static void require_inside(const std::string& root, const std::string& path) {
+    const auto base = std::filesystem::weakly_canonical(std::filesystem::absolute(root));
+    const auto target = std::filesystem::weakly_canonical(std::filesystem::absolute(path));
+    const auto [inBase, inTarget] = std::mismatch(base.begin(), base.end(), target.begin(), target.end());
+    if (inBase != base.end() || inTarget == target.end()) {
+        throw std::filesystem::filesystem_error("SaveData: a save path leaves its root", path, root, std::make_error_code(std::errc::operation_not_permitted));
+    }
+}
+
 static void copy_file_step(const char* step, const std::string& from, const std::string& to) {
+    if (plain_type(from) != std::filesystem::file_type::regular) {
+        throw std::filesystem::filesystem_error("SaveData: not a plain file", from, std::make_error_code(std::errc::operation_not_permitted));
+    }
     file_step(step, to);
     std::filesystem::copy_file(from, to);
 }
@@ -364,11 +410,12 @@ static void copy_tree(const char* step, const std::string& from, const std::stri
     file_step(step, to);
     std::filesystem::create_directory(to);
     for (const auto& entry : std::filesystem::directory_iterator(from)) {
+        const std::string source = entry.path().string();
         const std::string target = to + "/" + entry.path().filename().string();
-        if (entry.is_directory()) {
-            copy_tree(step, entry.path().string(), target);
+        if (plain_type(source) == std::filesystem::file_type::directory) {
+            copy_tree(step, source, target);
         } else {
-            copy_file_step(step, entry.path().string(), target);
+            copy_file_step(step, source, target);
         }
     }
 }
@@ -448,6 +495,19 @@ static std::string entry_save(const std::string& entry) {
     return entry + "/save";
 }
 
+static void require_plain_paths(const std::string& dirName, std::initializer_list<const char*> roots) {
+    for (const char* root : roots) {
+        if (plain_type(root) == std::filesystem::file_type::regular) {
+            throw std::filesystem::filesystem_error("SaveData: a save root is not a directory", root, std::make_error_code(std::errc::not_a_directory));
+        }
+        const std::string entry = backup_entry(root, dirName);
+        for (const std::string& path : {entry, param_path(entry), blocks_path(entry)}) {
+            require_inside(root, path);
+            require_plain_tree(path);
+        }
+    }
+}
+
 static bool parse_dir_name(const SceSaveDataDirName* name, std::string* dirName) {
     const auto* nameEnd = static_cast<const char*>(std::memchr(name->data, '\0', sizeof(name->data)));
     if (nameEnd == nullptr) {
@@ -487,6 +547,7 @@ static void backupSave(const std::string& dirName) {
     const std::string entry = backup_entry(BACKUP_DIR, dirName);
     const std::string staged = backup_entry(BACKUP_STAGING_DIR, dirName);
     const std::string old = backup_entry(BACKUP_OLD_DIR, dirName);
+    require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
     RemoveTree(staged);
     RemoveTree(old);
     std::filesystem::create_directories(staged);
@@ -525,6 +586,7 @@ static void restoreSave(const std::string& dirName) {
     const std::string oldEntry = backup_entry(RESTORE_OLD_DIR, dirName);
     const std::string staged = entry_save(stagedEntry);
     const std::string old = entry_save(oldEntry);
+    require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, RESTORE_STAGING_DIR, RESTORE_OLD_DIR});
     RemoveTree(stagedEntry);
     RemoveTree(oldEntry);
     std::filesystem::create_directories(stagedEntry);
@@ -1307,6 +1369,11 @@ static int checkBackupData(const SaveDataCheckBackupData* check) {
     std::lock_guard lock(g_slots_mutex);
     if (isMountedDirectory(save_root() + "/" + dirName)) {
         return SAVE_DATA_ERROR_BUSY;
+    }
+    try {
+        require_plain_paths(dirName, {BACKUP_DIR});
+    } catch (const std::filesystem::filesystem_error&) {
+        return SAVE_DATA_ERROR_INTERNAL;
     }
     return read_backup(dirName, check->param);
 }

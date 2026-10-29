@@ -14,6 +14,7 @@
 #include <system_error>
 #ifdef _WIN32
 #include <windows.h>
+#include <winioctl.h>
 #endif
 
 namespace {
@@ -289,6 +290,13 @@ std::map<std::string, std::string> Snapshot(const std::filesystem::path& save) {
     return files;
 }
 
+int UmountWithBackup(const std::string& name, const SaveDataMountPoint* point) {
+    Check(sceSaveDataUmountWithBackup(point) == 0, name + " unmounts with a backup");
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, name + "'s backup posts an event");
+    return event.error_code;
+}
+
 int BackUp(SceSaveDataDirName* dirName, const std::string& data, const char* title) {
     const std::string name = dirName->data;
     SaveDataMountResult mounted{};
@@ -298,10 +306,17 @@ int BackUp(SceSaveDataDirName* dirName, const std::string& data, const char* tit
     }
     WriteText(std::filesystem::path("_sd") / name / "data.bin", data);
     Check(sceSaveDataSetParam(&mounted.mount_point, 1, title, std::strlen(title) + 1) == 0, name + " takes the title " + title);
-    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, name + " unmounts with a backup");
-    SaveDataEvent event{};
-    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, name + "'s backup posts an event");
-    return event.error_code;
+    return UmountWithBackup(name, &mounted.mount_point);
+}
+
+int RemountWithBackup(SceSaveDataDirName* dirName) {
+    const std::string name = dirName->data;
+    SaveDataMountResult mounted{};
+    if (!MountSave(dirName, MountReadWrite, &mounted)) {
+        Check(false, name + " mounts to be backed up again");
+        return SaveDataErrorNotMounted;
+    }
+    return UmountWithBackup(name, &mounted.mount_point);
 }
 
 void CheckBackups() {
@@ -513,6 +528,143 @@ void CheckBackupSwap() {
     Check(ReadText(std::filesystem::path("_sd") / "rotated" / "data.bin") == "rotation 3", "the restore puts back the third backup");
 }
 
+#ifdef _WIN32
+bool Junction(const std::filesystem::path& link, const std::filesystem::path& target) {
+    std::error_code error;
+    if (!std::filesystem::create_directory(link, error)) return false;
+    const auto printName = std::filesystem::absolute(target).make_preferred().wstring();
+    const auto substituteName = L"\\??\\" + printName;
+    struct MountPoint {
+        ULONG tag;
+        USHORT dataLength;
+        USHORT reserved;
+        USHORT substituteOffset;
+        USHORT substituteLength;
+        USHORT printOffset;
+        USHORT printLength;
+        wchar_t names[2048];
+    } data{};
+    if (substituteName.size() + printName.size() + 2 > std::size(data.names)) return false;
+    data.tag = IO_REPARSE_TAG_MOUNT_POINT;
+    data.substituteLength = static_cast<USHORT>(substituteName.size() * sizeof(wchar_t));
+    data.printOffset = static_cast<USHORT>((substituteName.size() + 1) * sizeof(wchar_t));
+    data.printLength = static_cast<USHORT>(printName.size() * sizeof(wchar_t));
+    data.dataLength = static_cast<USHORT>(8 + data.printOffset + data.printLength + sizeof(wchar_t));
+    std::memcpy(data.names, substituteName.c_str(), data.substituteLength + sizeof(wchar_t));
+    std::memcpy(reinterpret_cast<char*>(data.names) + data.printOffset, printName.c_str(), data.printLength + sizeof(wchar_t));
+    const HANDLE handle = CreateFileW(link.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    bool set = false;
+    if (handle != INVALID_HANDLE_VALUE) {
+        DWORD returned = 0;
+        set = DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, &data, 8 + data.dataLength, nullptr, 0, &returned, nullptr) != 0;
+        CloseHandle(handle);
+    }
+    if (!set) RemoveDirectoryW(link.c_str());
+    return set;
+}
+#endif
+
+bool LinkDirectory(const std::filesystem::path& link, const std::filesystem::path& target) {
+#ifdef _WIN32
+    return Junction(link, target);
+#else
+    std::error_code error;
+    std::filesystem::create_directory_symlink(std::filesystem::absolute(target), link, error);
+    return !error;
+#endif
+}
+
+bool LinkFile(const std::filesystem::path& link, const std::filesystem::path& target) {
+#ifdef _WIN32
+    return CreateSymbolicLinkW(link.c_str(), std::filesystem::absolute(target).c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+#else
+    std::error_code error;
+    std::filesystem::create_symlink(std::filesystem::absolute(target), link, error);
+    return !error;
+#endif
+}
+
+void Unlink(const std::filesystem::path& link) {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(link.c_str());
+    const bool removed = attributes != INVALID_FILE_ATTRIBUTES && ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? RemoveDirectoryW(link.c_str()) != 0 : DeleteFileW(link.c_str()) != 0);
+#else
+    std::error_code error;
+    const bool removed = std::filesystem::remove(link, error);
+#endif
+    Check(removed, "the link " + link.string() + " is removed");
+}
+
+void CheckLinkedPaths() {
+    const auto outside = std::filesystem::absolute("outside");
+    std::filesystem::create_directories(outside / "sentinel");
+    WriteText(outside / "sentinel" / "keep.bin", "sentinel");
+    std::filesystem::create_directories(outside / "old" / "escape");
+    WriteText(outside / "old" / "escape" / "keep.bin", "sentinel");
+    const auto sentinel = Snapshot(outside / "sentinel");
+    const auto oldSentinel = Snapshot(outside / "old" / "escape");
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "escape", sizeof("escape"));
+    Check(BackUp(&name, "inside", "Inside") == 0, "the escape save is backed up");
+    const auto backup = std::filesystem::path("_sd_backup") / "escape" / "save";
+    const auto kept = Snapshot(backup);
+    const auto live = std::filesystem::path("_sd") / "escape";
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    const auto survives = [&](const std::string& what) {
+        Check(Snapshot(outside / "sentinel") == sentinel && Snapshot(outside / "old" / "escape") == oldSentinel, what + ": the outside directory and its files survive");
+        Check(Snapshot(backup) == kept, what + ": the backup is kept");
+    };
+    const auto restoreRefused = [&](const std::string& what) {
+        Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorInternal, what + ": restoreBackupData is INTERNAL");
+        survives(what);
+    };
+    const auto backupRefused = [&](const std::string& what) {
+        Check(RemountWithBackup(&name) == SaveDataErrorInternal, what + ": the backup gives the event error INTERNAL");
+        survives(what);
+    };
+
+    std::filesystem::remove_all(live);
+    if (LinkDirectory(live, outside / "sentinel")) {
+        restoreRefused("a save directory that links outside");
+        backupRefused("a save directory that links outside");
+        Unlink(live);
+    } else {
+        std::fprintf(stderr, "skipped the linked save directory: the link could not be created\n");
+    }
+    std::filesystem::create_directories(live);
+    WriteText(live / "data.bin", "inside");
+
+    if (LinkFile(live / "link.bin", outside / "sentinel" / "keep.bin")) {
+        restoreRefused("a save with a file that links outside");
+        backupRefused("a save with a file that links outside");
+        Unlink(live / "link.bin");
+    } else {
+        std::fprintf(stderr, "skipped the linked file in a save: the link could not be created\n");
+    }
+    const auto inside = Snapshot(live);
+
+    for (const char* root : {"_sd_backup_old", "_sd_restore_old"}) {
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+        const std::string what = std::string("a ") + root + " root that links outside";
+        if (!LinkDirectory(root, outside / "old")) {
+            std::fprintf(stderr, "skipped %s: the link could not be created\n", what.c_str());
+            continue;
+        }
+        if (std::strcmp(root, "_sd_backup_old") == 0) {
+            backupRefused(what);
+        } else {
+            restoreRefused(what);
+        }
+        Unlink(root);
+    }
+
+    Check(Snapshot(live) == inside, "the refused calls leave the save as it was");
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "the save restores once its paths are plain again");
+    Check(ReadText(live / "data.bin") == "inside", "the restore puts back the kept backup");
+}
+
 }
 
 int main() {
@@ -534,6 +686,7 @@ int main() {
     CheckCorruptBackups();
     CheckStagedRestore();
     CheckBackupSwap();
+    CheckLinkedPaths();
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);
