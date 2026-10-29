@@ -1839,6 +1839,19 @@ struct SaveDataRestoreBackupData {
     std::uint8_t reserved[32];
     std::int32_t pad2;
 };
+static_assert(offsetof(SaveDataCheckBackupData, title_id) == 0x08);
+static_assert(offsetof(SaveDataCheckBackupData, dir_name) == 0x10);
+static_assert(offsetof(SaveDataCheckBackupData, param) == 0x18);
+static_assert(offsetof(SaveDataCheckBackupData, icon) == 0x20);
+static_assert(offsetof(SaveDataCheckBackupData, reserved) == 0x28);
+static_assert(sizeof(SaveDataCheckBackupData) == 0x48);
+static_assert(offsetof(SaveDataRestoreBackupData, title_id) == 0x08);
+static_assert(offsetof(SaveDataRestoreBackupData, dir_name) == 0x10);
+static_assert(offsetof(SaveDataRestoreBackupData, fingerprint) == 0x18);
+static_assert(offsetof(SaveDataRestoreBackupData, unused) == 0x20);
+static_assert(offsetof(SaveDataRestoreBackupData, reserved) == 0x24);
+static_assert(offsetof(SaveDataRestoreBackupData, pad2) == 0x44);
+static_assert(sizeof(SaveDataRestoreBackupData) == 0x48);
 
 struct SaveDataConvert {
     std::int32_t user_id;

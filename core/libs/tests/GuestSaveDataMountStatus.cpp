@@ -665,6 +665,60 @@ void CheckLinkedPaths() {
     Check(ReadText(live / "data.bin") == "inside", "the restore puts back the kept backup");
 }
 
+void CheckBackupGuestErrors() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "errors", sizeof("errors"));
+    SaveDataParam param{};
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    check.param = &param;
+    Check(BackUp(&name, "first", "First") == 0, "the first backup of a save succeeds");
+    Check(BackUp(&name, "second", "Second") == 0, "a second sceSaveDataUmountWithBackup succeeds");
+    Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, "Second") == 0, "the second backup replaces the first one's param");
+    Check(ReadText(std::filesystem::path("_sd_backup") / "errors" / "save" / "data.bin") == "second", "the second backup replaces the first one's files");
+
+    SaveDataMountResult mounted{};
+    Check(MountSave(&name, MountReadWrite, &mounted), "the save mounts for a backup whose copy fails");
+    FailStep("backup.copy", 1);
+    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, "umountWithBackup returns 0 when the backup copy fails");
+    ClearFailingStep();
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0 && event.error_code == SaveDataErrorInternal, "a failed backup copy gives the event error INTERNAL, got " + std::to_string(event.error_code));
+    SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "a failed backup copy still unmounts the save");
+    param = {};
+    Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, "Second") == 0, "a failed backup copy keeps the previous backup");
+
+    SceSaveDataTitleId other{};
+    std::memcpy(other.data, "PPSA99999", sizeof("PPSA99999"));
+    check.title_id = &other;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData with another title's id is NOT_FOUND");
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    restore.title_id = &other;
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotFound, "restoreBackupData with another title's id is NOT_FOUND");
+
+    for (const char* invalid : {"..", "a/b"}) {
+        const std::string label = std::string("\"") + invalid + "\"";
+        SceSaveDataDirName bad{};
+        std::memcpy(bad.data, invalid, std::strlen(invalid) + 1);
+        SaveDataCheckBackupData badCheck{};
+        badCheck.dir_name = &bad;
+        Check(sceSaveDataCheckBackupData(&badCheck) == SaveDataErrorParameter, "checkBackupData of " + label + " is PARAMETER");
+        SaveDataRestoreBackupData badRestore{};
+        badRestore.dir_name = &bad;
+        Check(sceSaveDataRestoreBackupData(&badRestore) == SaveDataErrorParameter, "restoreBackupData of " + label + " is PARAMETER");
+        SaveDataMount3 mount{};
+        mount.dir_name = &bad;
+        mount.mount_mode = MountReadWrite | MountCreate2;
+        SaveDataMountResult result{};
+        Check(sceSaveDataMount3(&mount, &result) == SaveDataErrorParameter, "a save named " + label + " cannot be mounted to be backed up");
+        SaveDataMountPoint point{};
+        std::memcpy(point.data, invalid, std::strlen(invalid) + 1);
+        Check(sceSaveDataUmountWithBackup(&point) == SaveDataErrorNotMounted, "umountWithBackup of the mount point " + label + " is NOT_MOUNTED");
+    }
+}
+
 }
 
 int main() {
@@ -687,6 +741,7 @@ int main() {
     CheckStagedRestore();
     CheckBackupSwap();
     CheckLinkedPaths();
+    CheckBackupGuestErrors();
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);
