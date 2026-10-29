@@ -3660,7 +3660,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             if (!fullWalk()) disagreed.fetch_add(1, std::memory_order_relaxed);
             validatedTextures = saved;
             storageUntracked = savedStorage;
-            if (checked.fetch_add(1, std::memory_order_relaxed) % 100000 == 99999) std::fprintf(stderr, "[verify-untracked] %llu fast proofs over untracked memory checked by the full walk, %llu disagreed%c", static_cast<unsigned long long>(checked.load()), static_cast<unsigned long long>(disagreed.load()), 10);
+            if (checked.fetch_add(1, std::memory_order_relaxed) % 1000 == 999) std::fprintf(stderr, "[verify-untracked] %llu fast proofs over untracked memory checked by the full walk, %llu disagreed%c", static_cast<unsigned long long>(checked.load()), static_cast<unsigned long long>(disagreed.load()), 10);
         }
     }
     // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
