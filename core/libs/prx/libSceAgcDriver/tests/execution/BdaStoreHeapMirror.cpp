@@ -355,13 +355,15 @@ constexpr std::uint64_t Page = 4096;
 struct Compared {
     std::uint64_t span = 0;
     std::uint64_t compared = 0;
+    std::uint64_t copiedReference = 0;
+    std::uint64_t readReference = 0;
 };
 
 Compared CountCompared(const std::function<void()>& work) {
     const auto before = AgcDriver::Graphics::AddressStoreCounters();
     work();
     const auto after = AgcDriver::Graphics::AddressStoreCounters();
-    return {after.spanBytes - before.spanBytes, after.comparedBytes - before.comparedBytes};
+    return {after.spanBytes - before.spanBytes, after.comparedBytes - before.comparedBytes, after.copiedReferenceBytes - before.copiedReferenceBytes, after.readReferenceBytes - before.readReferenceBytes};
 }
 
 void RequireAccepted(const std::string& log, const std::string& what) {
@@ -377,6 +379,7 @@ void RequireStored(const GuestHeap& heap, std::uint64_t offset, const std::strin
 
 void RequireCompared(const Compared& counted, std::uint64_t pages, std::uint64_t span, const std::string& what) {
     Require(counted.compared == pages * Page && counted.span == span, "BDA store heap mirror: " + what + " compared " + std::to_string(counted.compared) + " of " + std::to_string(counted.span) + " span bytes, expected " + std::to_string(pages * Page) + " of " + std::to_string(span));
+    Require(counted.copiedReference == span && counted.readReference == 0, "BDA store heap mirror: " + what + " took " + std::to_string(counted.copiedReference) + " reference bytes by a GPU copy and " + std::to_string(counted.readReference) + " by the CPU, expected " + std::to_string(span) + " by a GPU copy");
 }
 
 void StoredPageTests(AgcDriver::VulkanDevice& device) {
@@ -393,10 +396,15 @@ void StoredPageTests(AgcDriver::VulkanDevice& device) {
     RequireStored(heap, StoreOffset, "a store into one block");
     Require(heap.Load(Far) == 0x88888888u, "BDA store heap mirror: the write-back rolled back a CPU store made into another block during the dispatch");
     RequireCompared(one, 1, HeapBytes, "a store into one page");
-    const auto two = CountCompared([&] { log = Store(device, heap.Address() + Straddle, [&] { heap.Store(Far + sizeof(std::uint32_t), 0x89898989u); }); });
+    const auto two = CountCompared([&] {
+        log = Store(device, heap.Address() + Straddle, [&] {
+            heap.Store(Far + sizeof(std::uint32_t), 0x89898989u);
+            heap.Store(Straddle - sizeof(std::uint32_t), 0x16161616u);
+        });
+    });
     RequireAccepted(log, "a store across two blocks");
     RequireStored(heap, Straddle, "a store across two blocks");
-    Require(heap.Load(Straddle - sizeof(std::uint32_t)) == 0x12121212u, "BDA store heap mirror: a store across two blocks changed the dword before it");
+    Require(heap.Load(Straddle - sizeof(std::uint32_t)) == 0x16161616u, "BDA store heap mirror: a store across two blocks rolled back a CPU store made during the dispatch into a page it stored to");
     Require(heap.Load(Far) == 0x88888888u && heap.Load(Far + sizeof(std::uint32_t)) == 0x89898989u, "BDA store heap mirror: a store across two blocks rolled back CPU stores into another block");
     RequireCompared(two, 2, HeapBytes, "a store across two blocks");
     const auto tail = CountCompared([&] { log = Store(device, heap.Address() + Tail); });

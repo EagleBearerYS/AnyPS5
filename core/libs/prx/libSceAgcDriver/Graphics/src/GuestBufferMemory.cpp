@@ -3215,7 +3215,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         return mirror;
     }
     try {
-        mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | (heap ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT : VkBufferUsageFlags{0}));
     } catch (const std::runtime_error& error) {
         if (heap) {
             std::uint64_t held = 0;
@@ -5617,6 +5617,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
     addAddressStoreSpans();
     takeHeapReferences();
     ResidentBuffer::FlushChanged(context);
+    recordHeapReferences();
     if (!profile) return;
     const auto loopUs = microsecondsSince(loopStart);
     readUs.fetch_add(refreshUs, std::memory_order_relaxed);
@@ -6256,6 +6257,8 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> mergeWrites(std::vector<std
 struct AddressStoreTally {
     std::atomic<std::uint64_t> spanBytes{0};
     std::atomic<std::uint64_t> comparedBytes{0};
+    std::atomic<std::uint64_t> copiedReferenceBytes{0};
+    std::atomic<std::uint64_t> readReferenceBytes{0};
 };
 
 AddressStoreTally& AddressStoreTallies() {
@@ -6267,7 +6270,7 @@ AddressStoreTally& AddressStoreTallies() {
 
 AddressStoreStats AddressStoreCounters() {
     const auto& tally = AddressStoreTallies();
-    return {tally.spanBytes.load(std::memory_order_relaxed), tally.comparedBytes.load(std::memory_order_relaxed)};
+    return {tally.spanBytes.load(std::memory_order_relaxed), tally.comparedBytes.load(std::memory_order_relaxed), tally.copiedReferenceBytes.load(std::memory_order_relaxed), tally.readReferenceBytes.load(std::memory_order_relaxed)};
 }
 
 void GuestBufferMemory::NoteAddressStores(std::vector<std::pair<std::uint64_t, std::uint64_t>> pages) {
@@ -6308,7 +6311,11 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::compared
 
 void GuestBufferMemory::takeHeapReferences() {
     heapReferences.clear();
+    heapReferenceCopies.clear();
+    pendingReferenceCopies.clear();
     heapReadbacks.clear();
+    const bool copied = !Recorder::InCompletion() && Recorder::Active() != nullptr;
+    std::uint64_t readBytes = 0;
     for (const auto& [begin, end] : mergeWrites(writes)) {
         const auto* found = owner(begin, end);
         if (found == nullptr || found->mirror == nullptr || !found->mirror->heap || !found->mirror->writable) continue;
@@ -6317,11 +6324,55 @@ void GuestBufferMemory::takeHeapReferences() {
         const auto served = std::min(end, servedEnd(*found));
         if (begin >= served) continue;
         growResident(mirror, {{begin, served}});
+        if (copied) {
+            pendingReferenceCopies.emplace_back(begin, served);
+            continue;
+        }
         std::vector<std::byte> bytes(static_cast<std::size_t>(served - begin));
         if (mirror.resident != nullptr) mirror.resident->Read(begin, bytes);
         else std::memcpy(bytes.data(), mirror.buffer->Bytes().data() + (begin - mirror.base), bytes.size());
         heapReferences.emplace_back(begin, std::move(bytes));
+        readBytes += served - begin;
     }
+    if (addressStores) AddressStoreTallies().readReferenceBytes.fetch_add(readBytes, std::memory_order_relaxed);
+}
+
+void GuestBufferMemory::recordHeapReferences() {
+    if (pendingReferenceCopies.empty()) return;
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr && !Recorder::InCompletion(), "heap mirror reference copies need an active recorder");
+    VkAccessFlags covered = 0;
+    const auto commands = recorder->Commands(&covered);
+    const auto timing = recorder->BeginGpuTiming(StagingCopyBackKey);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+    std::uint64_t copiedBytes = 0;
+    for (const auto& [begin, end] : pendingReferenceCopies) {
+        const auto& mirror = *owner(begin, end)->mirror;
+        const auto bytes = end - begin;
+        std::shared_ptr<Buffer> reference;
+        if (mirror.resident != nullptr) {
+            reference = mirror.resident->RecordReadback(commands, begin, bytes);
+        } else {
+            reference = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            CopyBuffer(context, commands, mirror.buffer->Handle(), begin - mirror.base, reference->Handle(), 0, bytes);
+        }
+        recorder->Keep(reference, static_cast<std::size_t>(bytes));
+        heapReferenceCopies.emplace_back(begin, std::move(reference));
+        copiedBytes += bytes;
+    }
+    pendingReferenceCopies.clear();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+    recorder->MarkCovered(covered);
+    recorder->EndGpuTiming(timing, copiedBytes);
+    if (addressStores) AddressStoreTallies().copiedReferenceBytes.fetch_add(copiedBytes, std::memory_order_relaxed);
+}
+
+std::span<const std::byte> GuestBufferMemory::heapReference(std::uint64_t begin) {
+    if (const auto copied = std::find_if(heapReferenceCopies.begin(), heapReferenceCopies.end(), [&](const auto& entry) { return entry.first == begin; }); copied != heapReferenceCopies.end()) return copied->second->Bytes();
+    if (const auto read = std::find_if(heapReferences.begin(), heapReferences.end(), [&](const auto& entry) { return entry.first == begin; }); read != heapReferences.end()) return read->second;
+    return {};
 }
 
 void GuestBufferMemory::WriteBack() {
@@ -6359,8 +6410,8 @@ void GuestBufferMemory::WriteBack() {
             if (mirror.heap && begin >= served) continue;
             const auto length = static_cast<std::size_t>((mirror.heap ? served : end) - begin);
             if (mirror.heap) {
-                const auto reference = std::find_if(heapReferences.begin(), heapReferences.end(), [&](const auto& entry) { return entry.first == begin; });
-                Require(reference != heapReferences.end() && reference->second.size() == length, "heap mirror write-back has no reference");
+                const auto reference = heapReference(begin);
+                Require(reference.size() == length, "heap mirror write-back has no reference");
                 const auto compared = comparedRuns(begin, served, declared);
                 if (addressStores) {
                     auto& tally = AddressStoreTallies();
@@ -6368,7 +6419,7 @@ void GuestBufferMemory::WriteBack() {
                     for (const auto& [first, last] : compared) tally.comparedBytes.fetch_add(last - first, std::memory_order_relaxed);
                 }
                 const auto store = [&](std::uint64_t first, std::span<const std::byte> current) {
-                    const auto original = std::span<const std::byte>(reference->second).subspan(static_cast<std::size_t>(first - begin), current.size());
+                    const auto original = reference.subspan(static_cast<std::size_t>(first - begin), current.size());
                     if (mirror.sparse) storeSparse(mirror, first, current, original, runs);
                     else storeChanged(first, current, original, runs);
                 };
@@ -6445,6 +6496,7 @@ void GuestBufferMemory::WriteBack() {
     lease.clear();
     space.reset();
     heapReferences.clear();
+    heapReferenceCopies.clear();
     heapReadbacks.clear();
     storedPages.reset();
 }

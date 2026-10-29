@@ -259,6 +259,8 @@ MirrorStats MirrorCounters();
 struct AddressStoreStats {
     std::uint64_t spanBytes = 0;
     std::uint64_t comparedBytes = 0;
+    std::uint64_t copiedReferenceBytes = 0;
+    std::uint64_t readReferenceBytes = 0;
 };
 AddressStoreStats AddressStoreCounters();
 std::uint64_t SnapshotMismatches();
@@ -518,6 +520,8 @@ private:
     void addAddressStoreSpans();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> comparedRuns(std::uint64_t begin, std::uint64_t end, std::span<const std::pair<std::uint64_t, std::uint64_t>> declared) const;
     void takeHeapReferences();
+    void recordHeapReferences();
+    std::span<const std::byte> heapReference(std::uint64_t begin);
     Context context;
     bool stagingAllowed = false;
     bool addressStaging = true;
@@ -544,6 +548,8 @@ private:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> readsOverBase;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> servedInsideBase;
     std::vector<std::pair<std::uint64_t, std::vector<std::byte>>> heapReferences;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> pendingReferenceCopies;
+    std::vector<std::pair<std::uint64_t, std::shared_ptr<Buffer>>> heapReferenceCopies;
     std::vector<std::pair<std::uint64_t, std::shared_ptr<Buffer>>> heapReadbacks;
     // UploadPrepare ran (regions are frozen); `uploaded` once UploadFinish ran.
     bool prepared = false;
