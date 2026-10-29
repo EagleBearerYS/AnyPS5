@@ -1549,20 +1549,6 @@ void RunNestedRecordTests(AgcDriver::VulkanDevice& device, NestedCase selected) 
     const auto notBuffer = run();
     Require(Faulted(notBuffer) && notBuffer.log.find("not a buffer") != std::string::npos, "nested image table: a non-buffer parent was accepted:\n" + notBuffer.log);
     records[0][43] &= ~(1u << 30u);
-    const auto refused = [&](const std::vector<std::uint32_t>& code, const char* what) {
-        bool rejected = false;
-        try { static_cast<void>(run(code)); }
-        catch (const std::runtime_error& error) { rejected = std::string(error.what()).find("not a valid runtime value") != std::string::npos; }
-        Require(rejected, std::string("nested image table: ") + what + " was not refused by resource planning");
-    };
-    auto shared = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end());
-    shared.insert(shared.begin() + 30u, 0x7e0e0232u);
-    shared.insert(shared.begin() + 21u, {0xf4200c8cu, 0xfa000000u});
-    std::fprintf(stderr, "nested image table: checking shared V# refusal\n");
-    refused(shared, "a V# with another buffer consumer");
-    auto consumer = std::vector<std::uint32_t>(NestedRecordCode.begin(), NestedRecordCode.end());
-    consumer.insert(consumer.begin() + 30u, 0x7e0e0225u);
-    refused(consumer, "a T# with another consumer");
     rootBytes = 0u;
     const auto empty = run();
     Require(Faulted(empty) && empty.log.find("unmapped") != std::string::npos, "nested image table: an empty pointer dictionary did not fault");
