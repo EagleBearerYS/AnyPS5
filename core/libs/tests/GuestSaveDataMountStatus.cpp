@@ -477,6 +477,42 @@ void CheckStagedRestore() {
     Check(sceSaveDataCheckBackupData(&check) == 0, "the backup outlives a restore into a missing save directory");
 }
 
+void CheckBackupSwap() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "rotated", sizeof("rotated"));
+    const auto backup = std::filesystem::path("_sd_backup") / "rotated" / "save";
+    SaveDataParam param{};
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    check.param = &param;
+    const char* titles[] = {"First", "Second", "Third"};
+    for (int i = 0; i < 3; ++i) {
+        const std::string what = "backup " + std::to_string(i + 1) + " of three";
+        const std::string data = "rotation " + std::to_string(i + 1);
+        Check(BackUp(&name, data, titles[i]) == 0, what + " succeeds");
+        Check(ReadText(backup / "data.bin") == data, what + " holds the save it was made from");
+        Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, titles[i]) == 0, what + " replaces the last one's param");
+        Check(!LeavesCopies("rotated"), what + " leaves no staged or old copy");
+    }
+    const auto previous = Snapshot(backup);
+    const FailedStep failures[] = {{"backup.aside", 1}, {"backup.place", 1}};
+    for (const FailedStep& failure : failures) {
+        const std::string what = std::string("a backup whose ") + failure.step + " step fails";
+        FailStep(failure.step, failure.call);
+        const int error = BackUp(&name, "unsaved", "Unsaved");
+        ClearFailingStep();
+        Check(error == SaveDataErrorInternal, what + " gives the event error INTERNAL, got " + std::to_string(error));
+        Check(Snapshot(backup) == previous, what + " keeps the previous backup byte for byte");
+        param = {};
+        Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, "Third") == 0, what + " leaves the previous backup usable");
+        Check(!LeavesCopies("rotated"), what + " leaves no staged or old copy");
+    }
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "the backup kept by the failed backups restores");
+    Check(ReadText(std::filesystem::path("_sd") / "rotated" / "data.bin") == "rotation 3", "the restore puts back the third backup");
+}
+
 }
 
 int main() {
@@ -497,6 +533,7 @@ int main() {
     CheckBackups();
     CheckCorruptBackups();
     CheckStagedRestore();
+    CheckBackupSwap();
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);

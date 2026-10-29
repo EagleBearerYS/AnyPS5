@@ -490,26 +490,31 @@ static void backupSave(const std::string& dirName) {
     RemoveTree(staged);
     RemoveTree(old);
     std::filesystem::create_directories(staged);
-    copy_tree("backup.copy", source, entry_save(staged));
-    file_step("backup.copy", param_path(entry_save(staged)));
-    if (!store_param(entry_save(staged), load_param(source))) {
-        throw std::runtime_error("SaveData: cannot write the backup's param file for " + source);
+    FileSwap swap;
+    try {
+        copy_tree("backup.copy", source, entry_save(staged));
+        file_step("backup.copy", param_path(entry_save(staged)));
+        if (!store_param(entry_save(staged), load_param(source))) {
+            throw std::filesystem::filesystem_error("SaveData: cannot write the backup's param file", param_path(entry_save(staged)), std::make_error_code(std::errc::io_error));
+        }
+        if (std::filesystem::exists(blocks_path(source))) {
+            copy_file_step("backup.copy", blocks_path(source), blocks_path(entry_save(staged)));
+        }
+        flush_tree(staged);
+        std::filesystem::create_directories(BACKUP_DIR);
+        if (std::filesystem::exists(entry)) {
+            std::filesystem::create_directories(BACKUP_OLD_DIR);
+            swap.move("backup.aside", entry, old);
+        }
+        swap.move("backup.place", staged, entry);
+    } catch (...) {
+        swap.undo("backup.rollback");
+        std::error_code ignored;
+        RemoveTree(staged, ignored);
+        throw;
     }
-    if (std::filesystem::exists(blocks_path(source))) {
-        copy_file_step("backup.copy", blocks_path(source), blocks_path(entry_save(staged)));
-    }
-    std::filesystem::create_directories(BACKUP_DIR);
-    const bool replace = std::filesystem::exists(entry);
-    if (replace) {
-        std::filesystem::create_directories(BACKUP_OLD_DIR);
-        file_step("backup.aside", old);
-        std::filesystem::rename(entry, old);
-    }
-    file_step("backup.place", entry);
-    std::filesystem::rename(staged, entry);
-    if (replace) {
-        RemoveTree(old);
-    }
+    std::error_code ignored;
+    RemoveTree(old, ignored);
 }
 
 static void restoreSave(const std::string& dirName) {
