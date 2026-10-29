@@ -1,0 +1,46 @@
+library	function	class	claim
+libScePad	scePadSetLightBarForTracker	sourced	#8260 (open; GuestPad.cpp and a libScePad debt entry)
+libScePsml_debug	scePsmlMfsrGetContextBufferRequirement1100	sourced	klosixgaming-arch fork branches feat/psml-mfsr-versioned-uninitialized and local/rb-test (debt entry)
+libSceRtc	sceRtcSetConf	sourced	#9750 (GuestRtc.cpp tests it; no merge ref)
+libSceSaveData.native	sceSaveDataRegisterEventCallback	sourced	free (#10674, #12625 and #12699 only list it in pending-declaration debt text)
+libSceSaveData.native	sceSaveDataUnregisterEventCallback	sourced	free (#10674, #12625 and #12699 only list it in pending-declaration debt text)
+libSceVdecCore	sceVdecCoreCreateDecoder	sourced	free
+libSceVdecCore	sceVdecCoreDeleteDecoder	sourced	free
+libSceVdecCore	sceVdecCoreFlushDecodeOutput	sourced	free
+libSceVdecCore	sceVdecCoreGetDecodeOutput	sourced	free
+libSceVdecCore	sceVdecCoreMapMemoryBlock	sourced	free
+libSceVdecCore	sceVdecCoreQueryComputeResourceInfo	sourced	free
+libSceVdecCore	sceVdecCoreQueryFrameBufferInfo	sourced	free
+libSceVdecCore	sceVdecCoreQueryInstanceSize	sourced	free
+libSceVdecCore	sceVdecCoreResetDecoder	sourced	free
+libSceVdecCore	sceVdecCoreSetDecodeInput	sourced	free
+libSceVdecCore	sceVdecCoreSyncDecode	sourced	free
+libSceVdecCore	sceVdecCoreSyncDecodeWptr	sourced	free
+libSceVdecCore	sceVdecCoreTrySyncDecode	sourced	free
+libSceVdecCore	sceVdecCoreTrySyncDecodeWptr	sourced	free
+libSceVideoCoreServerInterface	sceVideoCoreAcquireDecoderResource	sourced	free
+libSceVideoCoreServerInterface	sceVideoCoreAcquireDecoderResourceForBeWrapper	sourced	free
+libSceVideoCoreServerInterface	sceVideoCoreReleaseDecoderResource	sourced	free
+libSceVideoCoreServerInterface	sceVideoCoreReleaseDecoderResourceForBeWrapper	sourced	free
+libSceVideodec2	sceVideodec2CreateHevcDecoder	sourced	free
+libSceVideodec2	sceVideodec2MapDirectMemory	sourced	free
+libSceVideodec2	sceVideodec2QueryHevcDecoderMemoryInfo	sourced	free
+libSceVoice	sceVoiceWriteToIPort	sourced	#6090 (open; GuestVoice.cpp); also #9753 (no merge ref, Voice.cpp) and klosixgaming-arch local/fc27-stack
+libc	daemon_nid_postfix	sourced-blocked	#10453 (implements in libc Process.cpp with GuestDaemon.cpp; no merge ref)
+libkernel	execv_nid_postfix	sourced-blocked	free (#9824, no merge ref, only adds a throwing body)
+libkernel	execve_nid_postfix	sourced-blocked	free (#9824, no merge ref, only adds a throwing body; #7201 calls the host execve)
+libkernel	execvp_nid_postfix	sourced-blocked	free (#9824, no merge ref, only adds a throwing body)
+libkernel	sceKernelAddReadEvent	sourced	#10645 (open; Equeue.cpp with GuestSocketEvents.cpp); also #8584, #9823, #9824, #12082 (no merge ref)
+libkernel	sceKernelAddWriteEvent	sourced	#10645 (open; Equeue.cpp with GuestSocketEvents.cpp); also #8584, #9823, #9824, #12082 (no merge ref)
+libkernel_sys	amd64_set_fsbase_nid_postfix	sourced-blocked	free
+libkernel_sys	fork_nid_postfix	sourced-blocked	free (#9826, no merge ref, only adds a throwing body; other hits are tests calling the host fork)
+libkernel_sys	kmq_open_nid_postfix	sourced-blocked	#9297, #9302 (open; implement the kmq family in libkernel_sys/Mqueue.cpp)
+libkernel_sys	pthread_get_user_context_np_nid_postfix	sourced-blocked	free
+libkernel_sys	pthread_resume_user_context_np_nid_postfix	sourced-blocked	free
+libkernel_sys	pthread_set_user_context_np_nid_postfix	sourced-blocked	free
+libkernel_sys	pthread_suspend_np_nid_postfix	sourced-blocked	#12130, #12642 (open)
+libkernel_sys	pthread_suspend_user_context_np_nid_postfix	sourced-blocked	free
+libkernel_sys	rfork_thread_nid_postfix	sourced-blocked	free
+libkernel_sys	sceKernelIsNeoMode	sourced	#12427 (open; GuestKernelSysNeoMode.cpp); also #10531 (no merge ref, the libkernel PS4 row)
+libkernel_sys	sceKernelSwitchToNeoMode	sourced	free (#8747, closed, declares it)
+libkernel_sys	vfork_nid_postfix	sourced-blocked	free
