@@ -1,0 +1,3 @@
+BASE=edf6804cf52c62eacafc592dd6142cb4efe5bd05
+REPEAT=10
+EXTRA_TESTS='guest_video_core_server_interface'
