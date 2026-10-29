@@ -1,0 +1,4 @@
+BASE=102b7a5cf0ed98dd94d9da76862eb1ee7865a932
+REPEAT=1
+EXTRA_TESTS='agc_driver_sample_multisample_target'
+VALIDATION=1
