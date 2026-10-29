@@ -112,8 +112,11 @@ public:
     static constexpr std::size_t Ways = 4;
     explicit DrawKeySightings(std::size_t keys);
     bool SeenBefore(std::uint64_t key);
+    bool Holds(std::uint64_t key) const;
 
 private:
+    std::size_t bucketOf(std::uint64_t key) const;
+
     std::vector<std::uint64_t> keys;
     std::vector<std::uint8_t> filled;
     std::vector<std::uint8_t> next;
@@ -164,16 +167,17 @@ struct DrawRelocationCounters {
 
 class DrawCacheBypass {
 public:
-    static constexpr std::uint32_t Window = 2048, BypassDraws = 16384;
+    static constexpr std::uint32_t Window = 2048, LowWindowsToBypass = 2, FirstBypassDraws = 2048, BypassDraws = 16384;
     explicit DrawCacheBypass(std::uint32_t percent);
     std::uint32_t Percent() const { return percent; }
     bool Skip();
-    void Note(bool hit);
+    void Note(bool useful);
 
 private:
     std::uint32_t percent, minimumHits;
     std::atomic<std::uint64_t> window{0};
     std::atomic<std::uint32_t> left{0};
+    std::atomic<std::uint32_t> lowWindows{0};
 };
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);
