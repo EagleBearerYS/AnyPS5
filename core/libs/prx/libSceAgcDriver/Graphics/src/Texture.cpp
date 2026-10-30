@@ -126,6 +126,8 @@ struct StorageTraffic {
     std::array<std::pair<std::uint64_t, std::uint64_t>, 4> uploads{};
     std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> uploadReasons;
     std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> drawnStores;
+    std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> uploadTotals;
+    std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> writeBackTotals;
     std::uint64_t directWriteBacks = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
@@ -190,6 +192,9 @@ void countStorageUpload(std::size_t path, std::uint64_t bytes) {
     auto& reason = traffic.uploadReasons[uploadReason != nullptr ? uploadReason : "other"];
     ++reason.first;
     reason.second += bytes;
+    auto& total = traffic.uploadTotals[uploadReason != nullptr ? uploadReason : "other"];
+    ++total.first;
+    total.second += bytes;
     reportStorageTraffic(traffic);
 }
 
@@ -200,6 +205,9 @@ void countStorageWriteBack(std::uint64_t bytes, bool direct, bool drawn = false)
     auto& totals = traffic.writeBacks[flushReason != nullptr ? flushReason : "other"];
     ++totals.first;
     totals.second += bytes;
+    auto& cumulative = traffic.writeBackTotals[flushReason != nullptr ? flushReason : "other"];
+    ++cumulative.first;
+    cumulative.second += bytes;
     if (direct) ++traffic.directWriteBacks;
     if (drawn) {
         auto& stores = traffic.drawnStores[flushReason != nullptr ? flushReason : "other"];
@@ -5781,6 +5789,12 @@ std::uint64_t StorageTexture::ClearHandOvers() {
 
 std::uint64_t StorageTexture::HandedOverSuperseded() {
     return handedOverSuperseded.load(std::memory_order_relaxed);
+}
+
+StorageTexture::TrafficTotals StorageTexture::CumulativeTraffic() {
+    auto& traffic = Traffic();
+    std::lock_guard lock(traffic.mutex);
+    return {traffic.uploadTotals, traffic.writeBackTotals};
 }
 
 std::optional<DccKeys> StorageTexture::clearHandOver() {
