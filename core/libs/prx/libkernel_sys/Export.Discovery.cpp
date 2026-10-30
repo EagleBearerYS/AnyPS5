@@ -1333,11 +1333,6 @@ int APS5_VABI sceKernelIsNeoMode(void) {
     return (attribute & PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE) != 0 ? 1 : 0;
 }
 
-int APS5_VABI sceKernelIsPs4Process(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelJitGetSharedMemoryInfo(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
