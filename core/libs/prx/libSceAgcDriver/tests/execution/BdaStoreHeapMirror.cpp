@@ -215,9 +215,9 @@ std::uint32_t Stored(std::uint32_t thread) {
     return Marker | (thread * 4u);
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, std::uint32_t threads = Threads) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> regions{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, regions},
@@ -228,8 +228,8 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
     return ShaderRecompiler::Recompile(request);
 }
 
-std::string Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const std::function<void()>& during = {}) {
-    const auto result = Compile(device, code, userData);
+std::string Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, const std::function<void()>& during = {}, std::uint32_t threads = Threads) {
+    const auto result = Compile(device, code, userData, threads);
     StderrCapture log;
     std::string thrown;
     try {
@@ -588,6 +588,29 @@ void StorePageTests(AgcDriver::VulkanDevice& device) {
     Require(log.find("found none of the " + std::to_string(slots) + " store pages free (APS5_BDA_STORE_PAGES)") != std::string::npos, "BDA store heap mirror: a dispatch storing into " + std::to_string(slots + 1) + " pages of a heap mirror was not refused for its store pages:\n" + log);
 }
 
+constexpr std::uint32_t DefaultStorePages = 1024;
+
+void DefaultStorePageTests(AgcDriver::VulkanDevice& device) {
+    const auto slots = AgcDriver::Graphics::BdaResources::StorePageSlots();
+    Require(slots == DefaultStorePages, "BDA store heap mirror: the default store page test needs the default " + std::to_string(DefaultStorePages) + " store pages (APS5_BDA_STORE_PAGES unset), the driver has " + std::to_string(slots));
+    constexpr std::uint64_t First = Block;
+    constexpr std::uint64_t Pages = DefaultStorePages + 1;
+    constexpr std::uint64_t Last = First + (Pages - 1) * Page;
+    GuestHeap heap(true, {}, (Last + Page + Block - 1) / Block * Block);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    auto userData = AddressData(heap.Address() + First);
+    const auto other = AddressData(heap.Address() + Last);
+    userData.insert(userData.end(), other.begin(), other.end());
+    const auto log = Run(device, PagesCode, userData, {}, DefaultStorePages);
+    Require(log.find("found none of the " + std::to_string(slots) + " store pages free (APS5_BDA_STORE_PAGES)") != std::string::npos, "BDA store heap mirror: a dispatch storing into " + std::to_string(Pages) + " pages of a heap mirror was not refused for its store pages:\n" + log);
+    for (std::uint64_t page = 0; page + 1 < Pages; ++page) {
+        Require(heap.Load(First + page * Page) == 0, "BDA store heap mirror: the refused dispatch's store into page " + std::to_string(page) + " reached guest memory as " + Hex(heap.Load(First + page * Page)));
+    }
+    for (std::uint32_t thread = 0; thread < DefaultStorePages; ++thread) {
+        Require(heap.Load(Last + thread * sizeof(std::uint32_t)) == 0, "BDA store heap mirror: the refused dispatch's store of thread " + std::to_string(thread) + " into its last page reached guest memory");
+    }
+}
+
 void TwoDispatchTests(AgcDriver::VulkanDevice& device) {
     GuestHeap heap(true);
     constexpr std::uint64_t First = 2 * Block + 0x100;
@@ -695,6 +718,7 @@ int main(int argc, char** argv) {
     try {
         const bool budget = argc > 1 && std::string_view(argv[1]) == "--budget";
         const bool storePages = argc > 1 && std::string_view(argv[1]) == "--store-pages";
+        const bool storePagesDefault = argc > 1 && std::string_view(argv[1]) == "--store-pages-default";
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
 #ifdef _WIN32
@@ -720,6 +744,14 @@ int main(int argc, char** argv) {
                 StorePageTests(*device);
             }
             std::puts("BDA store heap mirror store page tests passed");
+            return 0;
+        }
+        if (storePagesDefault) {
+            for (const bool copyBacked : {false, true}) {
+                const AddressSpaceLimit limit(copyBacked ? 1 : 0);
+                DefaultStorePageTests(*device);
+            }
+            std::puts("BDA store heap mirror default store page tests passed");
             return 0;
         }
         for (const bool copyBacked : {false, true}) {
