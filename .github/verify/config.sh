@@ -1,0 +1,4 @@
+BASE=da026c70655a132031d45e2008c24f993870d801
+REPEAT=10
+EXTRA_TESTS='public_headers|guest_libressl_evp_cipher_ctx|guest_libressl_cipher|guest_libressl_aes|^guest_libressl|^public_headers_compile_'
+NO_BEFORE=1
