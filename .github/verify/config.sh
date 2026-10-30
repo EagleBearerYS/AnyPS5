@@ -1,0 +1,4 @@
+BASE=76fd1c09e9be0465d50a7431a79d371a5a10abb2
+REPEAT=1
+EXTRA_TESTS='^agc_driver_draw_cache'
+VALIDATION=1
