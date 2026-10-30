@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
@@ -63,6 +64,8 @@ alignas(256) constexpr std::array<std::uint32_t, 6> StoreByteCode{0x34020082, 0x
 alignas(256) constexpr std::array<std::uint32_t, 5> ZeroStoreCode{0x34020082, 0x7e040280, 0xdc708000, 0x00000201, 0xbf810000};
 
 alignas(256) constexpr std::array<std::uint32_t, 5> ZeroByteStoreCode{0x34020082, 0x7e040280, 0xdc608000, 0x00000201, 0xbf810000};
+
+alignas(256) constexpr std::array<std::uint32_t, 9> PagesCode{0x3402008c, 0x380402ff, Marker, 0xdc708000, 0x00000201, 0x34060082, 0xdc708000, 0x00020203, 0xbf810000};
 
 class OutputBlock {
 public:
@@ -560,6 +563,31 @@ void ZeroStoreTests(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void StorePageTests(AgcDriver::VulkanDevice& device) {
+    const auto slots = AgcDriver::Graphics::BdaResources::StorePageSlots();
+    Require(slots == Threads, "BDA store heap mirror: the store page test needs " + std::to_string(Threads) + " store pages (APS5_BDA_STORE_PAGES), the driver has " + std::to_string(slots));
+    constexpr std::uint64_t First = 16 * Block;
+    const auto run = [&](const GuestHeap& heap, std::uint64_t second) {
+        auto userData = AddressData(heap.Address() + First);
+        const auto other = AddressData(heap.Address() + First + second);
+        userData.insert(userData.end(), other.begin(), other.end());
+        return Run(device, PagesCode, userData);
+    };
+    {
+        GuestHeap heap(true);
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        RequireAccepted(run(heap, 0), "a dispatch storing into as many pages of a heap mirror as there are store pages");
+        for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+            const auto value = Marker | (thread << 12u);
+            Require(heap.Load(First + thread * Page) == value && heap.Load(First + thread * sizeof(std::uint32_t)) == value, "BDA store heap mirror: a dispatch storing into " + std::to_string(slots) + " pages lost the stores of thread " + std::to_string(thread) + " (" + Hex(heap.Load(First + thread * Page)) + " and " + Hex(heap.Load(First + thread * sizeof(std::uint32_t))) + ")");
+        }
+    }
+    GuestHeap heap(true);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    const auto log = run(heap, Threads * Page);
+    Require(log.find("found none of the " + std::to_string(slots) + " store pages free (APS5_BDA_STORE_PAGES)") != std::string::npos, "BDA store heap mirror: a dispatch storing into " + std::to_string(slots + 1) + " pages of a heap mirror was not refused for its store pages:\n" + log);
+}
+
 void TwoDispatchTests(AgcDriver::VulkanDevice& device) {
     GuestHeap heap(true);
     constexpr std::uint64_t First = 2 * Block + 0x100;
@@ -666,6 +694,7 @@ void ReadOnlyTests(AgcDriver::VulkanDevice& device) {
 int main(int argc, char** argv) {
     try {
         const bool budget = argc > 1 && std::string_view(argv[1]) == "--budget";
+        const bool storePages = argc > 1 && std::string_view(argv[1]) == "--store-pages";
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
 #ifdef _WIN32
@@ -683,6 +712,14 @@ int main(int argc, char** argv) {
             if (context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased) BudgetTests(*device, true);
             else std::puts("skipped the resident 2 GiB heap: the device has no sparse residency");
             std::puts("BDA store heap mirror budget tests passed");
+            return 0;
+        }
+        if (storePages) {
+            for (const bool copyBacked : {false, true}) {
+                const AddressSpaceLimit limit(copyBacked ? 1 : 0);
+                StorePageTests(*device);
+            }
+            std::puts("BDA store heap mirror store page tests passed");
             return 0;
         }
         for (const bool copyBacked : {false, true}) {
