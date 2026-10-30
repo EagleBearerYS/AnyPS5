@@ -1,0 +1,4 @@
+BASE=fa4eec0c3245c73f0dd1165a7af05d6a9b3500de
+REPEAT=10
+EXTRA_TESTS='agc_shader_disk_cache|agc_driver_image_table|agc_driver_pointer_vsharp_select_table|^agc_driver_nested_|^agc_driver_pointer_phi_'
+NO_BEFORE=1
