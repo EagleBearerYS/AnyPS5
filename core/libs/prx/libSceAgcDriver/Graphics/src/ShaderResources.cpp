@@ -2637,6 +2637,7 @@ void mixDataWords(std::uint64_t& hash, std::span<const std::uint32_t> words) {
 std::atomic<std::uint64_t> resourceCacheFinds{0};
 std::atomic<std::uint64_t> resourceCacheTouches{0};
 std::atomic<std::uint64_t> depthGuardRefusals{0};
+thread_local bool indexProof = false;
 
 }
 
@@ -2949,7 +2950,7 @@ RevalidateProfile& Revalidations() {
 }
 
 void countFastFail(FastFail reason) {
-    if (BuildProfiled()) Revalidations().fastFails[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+    if (BuildProfiled() && !indexProof) Revalidations().fastFails[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
 }
 
 void countPendingFail(std::span<const StorageTexture::PendingQuery> pending) {
@@ -2985,7 +2986,7 @@ void countFullWalkTime(FastFail reason, std::chrono::steady_clock::time_point st
 constexpr std::size_t RefusedSurfaceLimit = 65536;
 
 void countCollectRefusal(bool storage, std::uint64_t address, std::size_t bytes) {
-    if (!BuildProfiled()) return;
+    if (!BuildProfiled() || indexProof) return;
     auto& profile = Revalidations();
     (storage ? profile.refusedStorage : profile.refusedSampled).fetch_add(1, std::memory_order_relaxed);
     const bool accessible = GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes);
@@ -3299,7 +3300,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto address = own.baseAddress;
         const auto bytes = static_cast<std::size_t>(image->GuestBytes());
         if (DepthSurfaceOverlaps(context.device, address, bytes)) {
-            depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
+            if (!indexProof) depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
             return fail(FastFail::Depth);
         }
         if (GuestMemory::CollectWrites(address, bytes) == 0) {
@@ -3859,6 +3860,11 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
         auto& overlapping = ShaderRecompiler::ThreadOwned(overlappingSlot);
         FastFail reason = FastFail::Count;
         bool accepted = false;
+        indexProof = true;
+        struct Done {
+            bool& flag;
+            ~Done() { flag = false; }
+        } done{indexProof};
         if (!fastRevalidate(serialBefore, {}, reason, overlapping, accepted, &check, true)) {
             if (!partial || bumped.empty() || reason != FastFail::Changed) return fallback();
             if (!reresolveElements(bumped, replaced)) return fallback();
