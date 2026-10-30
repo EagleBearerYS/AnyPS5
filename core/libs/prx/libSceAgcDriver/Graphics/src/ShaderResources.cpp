@@ -2674,22 +2674,13 @@ std::uint64_t ShaderResources::DepthGuardRefusals() {
 bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
     const bool loopGuard = LoopGuardEnabled();
     return std::any_of(shaders.begin(), shaders.end(), [loopGuard](const CompiledShader& shader) {
-        const bool readOnlyBda = shader.program != nullptr && !SpaceReuseDisabled() && !ShaderStoresThroughAddresses(shader.program->spirv);
-        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [loopGuard, readOnlyBda](const ShaderRecompiler::DescriptorBinding& binding) { return (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && !readOnlyBda) || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
+        return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [&](const ShaderRecompiler::DescriptorBinding& binding) { return (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable && (SpaceReuseDisabled() || ShaderStoresThroughAddresses(shader.program->spirv))) || (loopGuard && binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer); });
     });
 }
 
-namespace {
-
-bool GpuHeapEnabled() {
-    static const bool enabled = std::getenv("APS5_GPU_HEAP") != nullptr;
-    return enabled;
-}
-
-}
-
 bool ShaderResources::SpaceReuseDisabled() {
-    return !GpuHeapEnabled();
+    static const bool disabled = std::getenv("APS5_NO_ADDRESS_DRAW_REUSE") != nullptr;
+    return disabled;
 }
 
 // APS5_PROFILE_DRAW: the per-device descriptor caches' counters, every 10 s.

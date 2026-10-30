@@ -4928,6 +4928,7 @@ bool GuestBufferMemory::SpaceOnly() const {
 }
 
 std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
+    if (space == nullptr) return {};
     releasedSpace = space;
     return std::move(space);
 }
