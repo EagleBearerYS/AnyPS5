@@ -2216,7 +2216,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         const StorageTexture* previous;
         ~ExemptAlias() { refreshingAlias = previous; }
     } exemptAlias{std::exchange(refreshingAlias, alias.get())};
-    const bool flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
+    bool flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
     // guest memory and the DCC keys still match, the image content is current. Pages nobody wrote
@@ -2281,6 +2281,12 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         };
         const auto keysStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         keys = handOverKeys.has_value() ? *handOverKeys : ProvedKeys();
+        if (alias != nullptr && keys != DccKeys::Uncompressed) {
+            refreshingAlias = exemptAlias.previous;
+            alias = nullptr;
+            flushed = FlushPending(scopeBegin, scopeBytes, nullptr, "storage refresh", PublishScope::None) || flushed;
+            keys = ProvedKeys();
+        }
         if (profile && descriptor.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, keysStart);
         if (keys != uploadedKeys) {
             changed.assign(trackedLayers, true);
