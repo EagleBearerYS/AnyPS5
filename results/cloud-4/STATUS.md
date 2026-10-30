@@ -1,5 +1,5 @@
-BUSY BF-289
-machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 20 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at perf/agc-preresolve-outside-gpu-mutex c336ba2e77); origin and upstream fetched, upstream main 40a8faf90a; lavapipe only, no GPU, no IPv6
+READY 2026-10-30T00:25:50Z: BF-289 done
+machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 20 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at diag/village-draw-key-census-v2-on-103015a9ca c9fed6627b); origin and upstream fetched, upstream main 40a8faf90a; lavapipe only, no GPU, no IPv6
 setup report:
 RESULT:
 - Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
