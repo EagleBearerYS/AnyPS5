@@ -1,0 +1,4 @@
+BASE=aaccd0ba39b7d40fdbf19664575a7e567d8542f7
+REPEAT=10
+EXTRA_TESTS='guest_vdec_core|guest_videodec|guest_videodec2|guest_videodec2_unimplemented|guest_vdecsw'
+NO_BEFORE=1
