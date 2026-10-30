@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstdint>
@@ -8,32 +9,6 @@
 #include <initializer_list>
 #include <stdexcept>
 #include <string_view>
-
-extern "C" int APS5_VABI sceLncUtilBlockAppSuspend(const char* reason);
-extern "C" int APS5_VABI sceLncUtilUnblockAppSuspend(const char* reason);
-extern "C" int APS5_VABI sceLncUtilEnableSuspendNotification();
-extern "C" int APS5_VABI sceLncUtilDisableSuspendNotification();
-extern "C" int APS5_VABI sceSystemServiceEnableSuspendNotification();
-extern "C" int APS5_VABI sceSystemServiceDisableSuspendNotification();
-extern "C" int APS5_VABI sceShellCoreUtilGetRemotePlayStatus(bool* active);
-extern "C" int APS5_VABI sceSystemServiceGetRemoteplayStatus(bool* active);
-extern "C" int APS5_VABI sceShellCoreUtilGetSharePlayStatus(bool* active);
-extern "C" int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active);
-extern "C" bool APS5_VABI sceShellCoreUtilIsGameLiveStreamingOnAir();
-extern "C" bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir();
-extern "C" bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode();
-extern "C" bool APS5_VABI sceSystemServiceIsShellUiFgAndGameBgCpuMode();
-extern "C" bool APS5_VABI sceShellCoreUtilIsImposeScreenOverlaid();
-extern "C" bool APS5_VABI sceShellCoreUtilIsScreenSaverOn();
-extern "C" bool APS5_VABI sceSystemServiceIsScreenSaverOn();
-extern "C" bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress();
-extern "C" int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active);
-extern "C" int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted);
-extern "C" int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted);
-extern "C" bool APS5_VABI sceSystemStateMgrIsBdDriveReady();
-extern "C" bool APS5_VABI sceShellCoreUtilIsUsbMassStorageMounted(std::uint32_t deviceIndex);
-extern "C" bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress();
-extern "C" int APS5_VABI sceLncUtilIsPs2Emu(bool* emulated);
 
 namespace {
 
