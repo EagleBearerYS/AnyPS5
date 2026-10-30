@@ -82,6 +82,11 @@ TextureProfile& Profile() {
     return profile;
 }
 
+bool skipStorageRoundTrip() {
+    static const bool skip = std::getenv("APS5_DIAG_SKIP_STORAGE_ROUNDTRIP") != nullptr;
+    return skip;
+}
+
 void keepStorageTexture(Recorder& recorder, std::shared_ptr<StorageTexture> texture) {
     if (texture == nullptr) return;
     if (!texture->Cached()) recorder.KeepBytes(texture.get(), static_cast<std::size_t>(texture->BudgetBytes()));
@@ -2203,7 +2208,8 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     handedOver.clear();
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr && !scoped ? clearHandOver() : std::nullopt;
-    const bool flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
+    const bool skipFlush = !handOverKeys.has_value() && skipStorageRoundTrip() && otherPendingOverlaps();
+    const bool flushed = !handOverKeys.has_value() && !skipFlush && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
     // guest memory and the DCC keys still match, the image content is current. Pages nobody wrote
@@ -2355,6 +2361,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             }
         }
     }
+    if (skipFlush && !keysChanged && !cpuWrote && generation != 0) unchanged = true;
     const bool outsideChanged = std::any_of(outside.begin(), outside.end(), [](bool value) { return value; });
     if (scoped) noteLayersBehind(firstLayer, lastLayer, outside);
     else layerBehind.clear();
@@ -4728,7 +4735,7 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPendingSlice(std::uint64_t a
         const auto layers = texture->geometry.imageLayers;
         if (texture->geometry.thick || layers <= 1 || bytes == 0 || address <= base || texture->guestBytes % layers != 0 || texture->guestBytes / layers != bytes) continue;
         if ((address - base) % bytes != 0 || (address - base) / bytes >= layers) continue;
-        if (found != nullptr) {
+        if (found != nullptr && !skipStorageRoundTrip()) {
             char message[256];
             std::snprintf(message, sizeof(message), "AGC graphics: 0x%llx+0x%llx is a slice of the pending array images 0x%llx and 0x%llx: which one holds its results is not modeled", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(found->descriptor.baseAddress), static_cast<unsigned long long>(base));
             throw std::runtime_error(message);
