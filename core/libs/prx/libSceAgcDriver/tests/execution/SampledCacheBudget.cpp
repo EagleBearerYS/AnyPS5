@@ -651,7 +651,8 @@ bool lookupChangedTests(Context context) {
     Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the lookup-changed template did not take the fast proof");
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     Require(first->Revalidate(shader, &report), "the audit refused an unchanged template");
-    Require(report.path == ShaderResources::ProofPath::Full, "a proof past the audit interval did not take the full walk");
+    if (AgcDriver::GuestMemory::WriteIndexEnabled()) Require(report.path == ShaderResources::ProofPath::Fast, "an unchanged template the write index proved took the audit's full walk");
+    else Require(report.path == ShaderResources::ProofPath::Full, "a proof past the audit interval did not take the full walk");
     Require(first->SampledTextures().front() == bound, "the audit changed the bound texture");
     Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the proof right after an audit did not take the fast proof");
     if (HostImportFor(context, surface.Address(), SurfaceBytes) == nullptr) {
@@ -671,6 +672,65 @@ bool lookupChangedTests(Context context) {
     ClearCachedTextures(context.device);
     std::puts("template over a changed sampled lookup passed");
     return true;
+}
+
+void indexAuditTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    Require(AgcDriver::GuestMemory::WriteIndexEnabled(), "the index audit test runs with APS5_TABLE_INDEX=1");
+    WatchedSurface surface(context);
+    ClearCachedTextures(context.device);
+    const auto program = SampledProgram(surface.Address());
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto first = std::make_shared<ShaderResources>(context, shader);
+    Require(first->Reusable() && first->SampledTextures().size() == 1, "the index audit template is not reusable");
+    const auto bound = first->SampledTextures().front();
+    ShaderResources::ProofReport report{};
+    Require(first->Revalidate(shader, &report) && report.path == ShaderResources::ProofPath::Fast, "the index audit template did not take the fast proof");
+    for (int round = 0; round < 2; ++round) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        const auto before = WriteIndexOutcomesCounted();
+        Require(first->Revalidate(shader, &report), "the write index refused an unchanged template past the audit interval");
+        const auto after = WriteIndexOutcomesCounted();
+        Require(after.accepted == before.accepted + 1u, "the write index did not prove the unchanged template past the audit interval");
+        Require(report.path == ShaderResources::ProofPath::Fast, "an unchanged template the write index proved took the audit's full walk");
+        Require(first->SampledTextures().front() == bound, "the proof changed the bound texture");
+    }
+    first.reset();
+    ClearCachedTextures(context.device);
+    std::puts("template the write index proved past the audit interval passed");
+}
+
+void indexUncachedTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    Require(AgcDriver::GuestMemory::WriteIndexEnabled(), "the index uncached test runs with APS5_TABLE_INDEX=1");
+    WatchedSurface surface(context, BlockBytes);
+    const auto at = [&](std::size_t index) { return surface.Address() + index * SurfaceBytes; };
+    ClearCachedTextures(context.device);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, at(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && capacity < Surfaces, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    std::vector<std::shared_ptr<Texture>> frame;
+    for (std::size_t index = 0; index < capacity; ++index) frame.push_back(Sampled(context, at(index)));
+    Require(TextureCacheUsage().sampledEntries == capacity, "the frame's textures did not fill the sampled cache");
+    const auto program = SampledProgram(at(capacity));
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto refused = std::make_shared<ShaderResources>(context, shader);
+    Require(refused->Reusable() && refused->SampledTextures().size() == 1, "the uncached template is not reusable");
+    const auto bound = refused->SampledTextures().front();
+    Require(bound->Released() && TextureCacheUsage().sampledEntries == capacity, "the texture first used in a frame that fills the sampled cache was cached");
+    ShaderResources::ProofReport report{};
+    Require(!refused->Revalidate(shader, &report), "a template binding a texture the sampled cache refused proved current on the write index");
+    refused.reset();
+    frame.clear();
+    ClearCachedTextures(context.device);
+    std::puts("template binding a texture the sampled cache refused passed");
 }
 
 void reportedBudgetTests(const Context& context) {
@@ -1364,6 +1424,18 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             if (!lookupChangedTests(context)) return VulkanTestSkipped;
             std::puts("resource cache lookup-changed tests passed");
+            return 0;
+        }
+        if (mode == "resource-index-audit") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            indexAuditTests(context);
+            std::puts("resource cache index audit tests passed");
+            return 0;
+        }
+        if (mode == "resource-index-uncached") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            indexUncachedTests(context);
+            std::puts("resource cache index uncached tests passed");
             return 0;
         }
         if (mode == "collect-refusals") {

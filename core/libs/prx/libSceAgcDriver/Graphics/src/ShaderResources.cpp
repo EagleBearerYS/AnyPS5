@@ -3603,7 +3603,7 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
         const auto& surface = validatedTextures[i];
         const auto begin = surface.resource.baseAddress;
         const auto bytes = surface.bytes;
-        if (!surface.valid || surface.depth || bytes == 0) {
+        if (!surface.valid || surface.depth || bytes == 0 || (textures[i] != nullptr && textures[i]->Released())) {
             perElementTextures.push_back(i);
             continue;
         }
@@ -4062,7 +4062,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
         if (fallback != OwnRefreshFallback::Count) countOwnRefreshFallback(fallback);
     }
-    if (fast && TemplateAuditDue(lastFullWalk)) {
+    if (fast && !indexProved && TemplateAuditDue(lastFullWalk)) {
         fast = false;
         ownRefreshed = false;
         reason = FastFail::Audit;
