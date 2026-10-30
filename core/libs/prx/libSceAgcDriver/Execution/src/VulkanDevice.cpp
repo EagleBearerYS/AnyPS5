@@ -4959,6 +4959,7 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
         prepared->phaseMs[which] += std::chrono::duration<double, std::milli>(now - phaseStart).count();
         phaseStart = now;
     };
+    std::optional<Graphics::Recorder::ResourceBuildScope> resourceBuild(std::in_place);
     if (ResourceCacheEnabled() && shader.PipelineVariantId() != 0) {
         prepared->key = DispatchContentKey(compute, context.device);
         phase(PreparedDispatch::PrepareKey);
@@ -4979,6 +4980,7 @@ std::shared_ptr<PreparedDispatch> VulkanDevice::PrepareDispatch(const ShaderReco
         prepared->resources = std::make_shared<Graphics::ShaderResources>(context, compute, snapshots, true, dispatchThreads);
         phase(PreparedDispatch::PrepareStageA);
     }
+    resourceBuild.reset();
     if (cached != nullptr && CachedPrecollect()) {
         cached->PrecollectSurfaces();
         phase(PreparedDispatch::PreparePrecollect);
@@ -5551,6 +5553,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
     // line, so the hold's biggest part (stage B's image lookups, the whole build of an address-based
     // shader) is named, and "resources: hook waits" says how much of the build was the nested flush
     // hook waiting for recorded work (a locked wait: it overlaps the other rows).
+    std::optional<Graphics::Recorder::ResourceBuildScope> resourceBuild(std::in_place);
     const auto subPhaseStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto waitedBefore = profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     // The image lookups of this call by outcome (stage B, a Revalidate or a locked build), for the
@@ -5696,6 +5699,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::Rec
         }
     }
     resources->PatchPushConstants(pushBytes);
+    resourceBuild.reset();
     if (profile) timer.add(PhaseResourcesHookWaits, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);
     // The lookup outcomes of this call: rows with counts on the [indirect] line, and a summary for
     // the longest call.
@@ -5904,7 +5908,10 @@ RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResu
     const auto waitedBefore = profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     const auto proofStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     Graphics::ShaderResources::ProofReport report;
-    const bool proved = hit->resources->ProveCurrent(shaders[0], &report);
+    const bool proved = [&] {
+        const Graphics::Recorder::ResourceBuildScope resourceBuild;
+        return hit->resources->ProveCurrent(shaders[0], &report);
+    }();
     if (profile) {
         counters.proofNs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - proofStart).count()), std::memory_order_relaxed);
         timer.add(PhaseResourcesHookWaits, Graphics::Recorder::ThreadWaitedMs() - waitedBefore);

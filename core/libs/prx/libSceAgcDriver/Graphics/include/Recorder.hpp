@@ -453,6 +453,13 @@ public:
     // sync observed the GPU's work; one that found the fence signaled already read the GPU's bytes
     // both times and observed nothing (Driver.cpp's dword evidence reads it before and after).
     static std::uint64_t ThreadHookWaits();
+    class ResourceBuildScope {
+    public:
+        ResourceBuildScope();
+        ~ResourceBuildScope();
+        ResourceBuildScope(const ResourceBuildScope&) = delete;
+        ResourceBuildScope& operator=(const ResourceBuildScope&) = delete;
+    };
     // Cumulative counts for the [labels] line (APS5_PROFILE_DRAW): stores recorded (RecordStore),
     // the runs they formed (one barrier pair each), stores joined to a pending contiguous one,
     // stores that replaced pending bytes, WAW barriers inside runs, joins refused because the

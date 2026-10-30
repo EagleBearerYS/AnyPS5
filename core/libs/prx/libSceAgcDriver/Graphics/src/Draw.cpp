@@ -1738,6 +1738,7 @@ bool TrimDrawResourceKey() {
 
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer, PreResolvedDraw* preResolved) {
     ResolvedResources resolved;
+    const Recorder::ResourceBuildScope resourceBuild;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
     // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
     // descriptor set when it is still valid (see ResourceCache; the dispatch path does the same).
@@ -3069,6 +3070,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         Require(std::ranges::any_of(images, [&](const std::pair<VkImage, bool>& image) { return image.first == binding.resident->Image() && image.second; }), "the partial write of a packed color target does not store into the target's resident image");
     }
     if (!lean && !resolved.moved.empty()) {
+        const Recorder::ResourceBuildScope resourceBuild;
         resolved.resources = std::make_shared<ShaderResources>(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
         resolved.moved.clear();
     }
@@ -3665,7 +3667,10 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     if (resources == nullptr) return miss(DrawRecipeMiss::TemplateGone);
     Require(resources->Reusable(), "draw recipe over a non-reusable template");
     const auto proofStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    const bool proved = resources->ProveCurrent(shaders, &result.proof);
+    const bool proved = [&] {
+        const Recorder::ResourceBuildScope resourceBuild;
+        return resources->ProveCurrent(shaders, &result.proof);
+    }();
     if (profile) result.proofUs = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - proofStart).count();
     if (!proved) {
         SharedResourceCache().Remove(recipe.key, resources.get());
@@ -3820,6 +3825,7 @@ std::shared_ptr<PreResolvedDraw> PreResolveDraw(const Context& context, const St
     pre->indexAddress = draw.indexAddress;
     pre->indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
     try {
+        const Recorder::ResourceBuildScope resourceBuild;
         if (DrawResourcesCacheable(shaders)) {
             pre->key = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, pre->indexBytes, !TrimDrawResourceKey());
             pre->keyed = true;

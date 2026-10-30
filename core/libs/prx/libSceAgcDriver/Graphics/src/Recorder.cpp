@@ -244,6 +244,7 @@ bool RecorderAlive(std::uint64_t id) {
 thread_local int completionDepth = 0;
 // This thread's hook syncs that waited for an unsignaled target (Recorder::ThreadHookWaits).
 thread_local std::uint64_t hookRealWaits = 0;
+thread_local int resourceBuildDepth = 0;
 
 }
 
@@ -278,6 +279,11 @@ bool HookLockedWait() {
 bool HookFullSync() {
     static const bool hookFullSync = std::getenv("APS5_HOOK_FULL_SYNC") != nullptr;
     return hookFullSync;
+}
+
+bool SkipHookWaits() {
+    static const bool skip = std::getenv("APS5_DIAG_SKIP_HOOK_WAITS") != nullptr;
+    return skip;
 }
 
 // APS5_HOOK_FLUSH_CPU_BLOCKS=0: an access whose every 64 KiB block the CPU wrote since the
@@ -1033,7 +1039,8 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
             record();
         }
     }
-    if (!HookSnapshotEnabled() || SnapshotOverlaps(address, bytes)) {
+    const bool skipWaits = resourceBuildDepth != 0 && completionDepth == 0 && SkipHookWaits();
+    if (!skipWaits && (!HookSnapshotEnabled() || SnapshotOverlaps(address, bytes))) {
         hookLocks.fetch_add(1, std::memory_order_relaxed);
         GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Hook);
         std::lock_guard gpu(GuestMemory::GpuMutex());
@@ -1067,7 +1074,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     } else {
         stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published, waited);
     }
-    if (stored || published || (completionDepth == 0 && SnapshotOverlaps(address, bytes))) {
+    if (!skipWaits && (stored || published || (completionDepth == 0 && SnapshotOverlaps(address, bytes)))) {
         // Stores into imported memory were only recorded; the CPU is about to read them. The wait
         // targets the batch holding them (the open one: SyncThrough submits it) and runs with the
         // mutex released when this acquisition is the outermost; a nested hook waits locked through
@@ -1402,6 +1409,14 @@ Recorder::StoreStatistics Recorder::StoreCounts() {
 
 std::uint64_t Recorder::ThreadHookWaits() {
     return hookRealWaits;
+}
+
+Recorder::ResourceBuildScope::ResourceBuildScope() {
+    ++resourceBuildDepth;
+}
+
+Recorder::ResourceBuildScope::~ResourceBuildScope() {
+    --resourceBuildDepth;
 }
 
 bool Recorder::SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes) {
