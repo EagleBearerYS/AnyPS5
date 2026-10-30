@@ -1,0 +1,4 @@
+BASE=cd88cee8148018992c9d6a2e5a2ed1252c593fec
+REPEAT=1
+EXTRA_TESTS='agc_driver_table_index_validation|agc_driver_resource_cache_replaced_texture|agc_driver_resource_cache_lookup_changed'
+NO_BEFORE=1
