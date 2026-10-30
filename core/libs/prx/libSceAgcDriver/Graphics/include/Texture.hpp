@@ -574,6 +574,8 @@ private:
     std::vector<AliasPlan> pendingAliases() const;
     static const char* aliasRefusal(const StorageTexture& refreshed, const StorageTexture& flushed, std::uint64_t address, std::size_t bytes, const StorageTexture* except);
     static void noteAliasFlush(const StorageTexture& refreshed, const StorageTexture& flushed, std::uint64_t address, std::size_t bytes, const StorageTexture* except);
+    static void noteAliasBorrow(const StorageTexture& refreshed, const StorageTexture& lender, std::uint64_t blocks);
+    static std::string aliasDescription(const StorageTexture& texture);
     std::optional<DccKeys> clearHandOver();
     void supersedeHandedOver(std::uint32_t first, std::uint32_t count);
     // The pending images FlushPending(address, bytes) would store (not the one a Refresh validates,
