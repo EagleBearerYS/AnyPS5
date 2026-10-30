@@ -29,6 +29,7 @@
 #include <cstring>
 #include <future>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -117,6 +118,16 @@ static std::string CaptureStdout(TBody body) {
 
 static void CheckSocketHostErrors() {
     Require(Failed(sceNetSocket(nullptr, 2, 1, 17), 43));
+}
+
+static void CheckSocketArgumentErrors() {
+    for (const int family : {0, 99}) {
+        Require(Failed(sceNetSocket(nullptr, family, 1, 6), 47));
+        Require(Failed(sceNetSocket(nullptr, family, 99, 6), 47));
+    }
+    for (const int family : {2, 28}) {
+        for (const int type : {0, 4, 99}) Require(Failed(sceNetSocket(nullptr, family, type, 6), 43));
+    }
 }
 
 static void CheckStreamSender(int family) {
@@ -255,9 +266,15 @@ static void CheckNetstat() {
     Require(sceNetShowRoute6() == 0);
     Require(Failed(sceNetShowNetstatWithMemory(-1), 9));
     Require(Failed(sceNetShowRouteWithMemory(-1), 9));
+    Require(Failed(sceNetShowIfconfigWithMemory(-1), 9));
+    Require(Failed(sceNetShowPolicyWithMemory(-1), 9));
+    Require(Failed(sceNetShowRoute6WithMemory(-1), 9));
     const int pool = sceNetPoolCreate("netstat", 4096, 0);
     Require(pool > 0);
     Require(sceNetShowRouteWithMemory(pool) == 0);
+    Require(sceNetShowIfconfigWithMemory(pool) == 0);
+    Require(sceNetShowPolicyWithMemory(pool) == 0);
+    Require(sceNetShowRoute6WithMemory(pool) == 0);
     const auto empty = CaptureNetstat(pool);
     Require(empty.find("bytes=4096 sockets=0") != std::string::npos);
     const int socket = sceNetSocket("netstat", 2, 1, 0);
@@ -279,6 +296,9 @@ static void CheckNetstat() {
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetShowNetstatWithMemory(pool), 9));
     Require(Failed(sceNetShowRouteWithMemory(pool), 9));
+    Require(Failed(sceNetShowIfconfigWithMemory(pool), 9));
+    Require(Failed(sceNetShowPolicyWithMemory(pool), 9));
+    Require(Failed(sceNetShowRoute6WithMemory(pool), 9));
 }
 
 static void CheckPoolStats() {
@@ -290,6 +310,38 @@ static void CheckPoolStats() {
     Require(Failed(sceNetGetMemoryPoolStats(pool, nullptr), 22));
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, &stats), 9));
+}
+
+static void CheckPoolErrors() {
+    for (const int size : {0, -1, std::numeric_limits<int>::min()}) {
+        *sceNetErrnoLoc() = 33;
+        Require(Failed(sceNetPoolCreate("bad", size, 0), 22));
+    }
+    const int first = sceNetPoolCreate("first", 0x1000, 0);
+    const int second = sceNetPoolCreate("second", 0x1000, 0);
+    Require(first > 0 && second > 0 && first != second);
+    Require(sceNetPoolDestroy(first) == 0);
+    for (const int id : {first, 0, -1, std::numeric_limits<int>::max()}) {
+        *sceNetErrnoLoc() = 33;
+        Require(Failed(sceNetPoolDestroy(id), 9));
+    }
+    Require(sceNetPoolDestroy(second) == 0);
+}
+
+static void CheckStatisticsInfo() {
+    Require(Failed(sceNetGetStatisticsInfo(nullptr, 0), 14));
+    NetStatisticsInfo info;
+    std::memset(&info, 0xaa, sizeof(info));
+    Require(sceNetGetStatisticsInfo(&info, 0) == 0);
+    Require(sizeof(info) == 24);
+    Require(info.kernel_mem_free_size > 0 && info.kernel_mem_free_min > 0);
+    Require(info.libnet_mem_free_size > 0 && info.libnet_mem_free_min > 0);
+    Require(info.kernel_mem_free_min <= info.kernel_mem_free_size);
+    Require(info.libnet_mem_free_min <= info.libnet_mem_free_size);
+    Require(info.packet_count == 0 && info.packet_qos_count == 0);
+    NetStatisticsInfo again;
+    Require(sceNetGetStatisticsInfo(&again, 0x1234) == 0);
+    Require(std::memcmp(&again, &info, sizeof(info)) == 0);
 }
 
 static void CheckIfName() {
@@ -2159,7 +2211,10 @@ int main() {
     CheckInitParam();
     CheckEpollWritable();
     CheckSocketHostErrors();
+    CheckSocketArgumentErrors();
     CheckPoolStats();
+    CheckPoolErrors();
+    CheckStatisticsInfo();
     CheckIfName();
     CheckRandom();
     CheckByteOrderConversion();
@@ -2212,6 +2267,19 @@ int main() {
     Require(setsockopt_nid_postfix(closed, 0xffff, 0x20, &enabled, sizeof(enabled)) == 0);
     Require(sceNetSetsockopt(closed, 0xffff, 0x20, &enabled, sizeof(enabled)) == 0);
     Require(sceNetSetsockopt(closed, 0xffff, 0x4, &enabled, sizeof(enabled)) == 0);
+    int option = 0;
+    std::uint32_t optionSize = sizeof(option);
+    Require(sceNetGetsockopt(closed, 0xffff, 0x20, &option, &optionSize) == 0 && option == 0x20 && optionSize == sizeof(option));
+    Require(sceNetGetsockopt(closed, 0xffff, 0x4, &option, &optionSize) == 0 && option == 0x4);
+    option = 0;
+    optionSize = sizeof(option);
+    Require(getsockopt_nid_postfix(closed, 0xffff, 0x20, &option, &optionSize) == 0 && option == 0x20 && optionSize == sizeof(option));
+    KernelTimeval receiveTimeout{0, 250000};
+    Require(setsockopt_nid_postfix(closed, 0xffff, 0x1006, &receiveTimeout, sizeof(receiveTimeout)) == 0);
+    receiveTimeout = {};
+    std::uint32_t timeoutSize = sizeof(receiveTimeout);
+    Require(getsockopt_nid_postfix(closed, 0xffff, 0x1006, &receiveTimeout, &timeoutSize) == 0 && timeoutSize == sizeof(receiveTimeout));
+    Require(receiveTimeout.tv_sec == 0 && receiveTimeout.tv_usec == 250000);
     Require(close_nid_postfix(closed) == 0);
     Require(Failed(sceNetSocketClose(closed), 9));
     CheckKernelTimeouts();
