@@ -4287,6 +4287,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         for (const auto& texture : flush) std::fprintf(stderr, "[flush] image 0x%llx+0x%llx for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), reason, static_cast<unsigned long long>(address), bytes);
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
+    static const bool traceAlias = std::getenv("APS5_TRACE_STORAGE_ALIAS") != nullptr;
+    if (traceAlias && refreshing != nullptr && reason != nullptr && std::strcmp(reason, "storage refresh") == 0) {
+        for (const auto& texture : flush) noteAliasFlush(*refreshing, *texture, address, bytes, except);
+    }
     if (!ownNotes.empty() && (flush.size() != 1 || std::any_of(flush.begin(), flush.end(), [](const std::shared_ptr<StorageTexture>& texture) { return ExistingHostImportFor(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) == nullptr; }))) ownNotes.clear();
     if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion() && recorder->PendingWriterSerial(address, bytes, ownNotes) != 0) {
         try {
@@ -5831,6 +5835,84 @@ std::shared_ptr<StorageTexture> StorageTexture::pendingAlias() const {
         if (sameShape && candidate->Cached() && candidate->uploadedKeys == DccKeys::Uncompressed) return candidate;
     }
     return nullptr;
+}
+
+const char* StorageTexture::aliasRefusal(const StorageTexture& refreshed, const StorageTexture& flushed, std::uint64_t address, std::size_t bytes, const StorageTexture* except) {
+    static const bool disabled = std::getenv("APS5_NO_ALIAS_BORROW") != nullptr;
+    if (disabled) return "switch";
+    if (address != refreshed.descriptor.baseAddress || bytes != refreshed.guestBytes) return "scoped refresh";
+    if (except != nullptr) return "another image is the alias";
+    if (!refreshed.blockUnits) return "refreshed image not block units";
+    if (!flushed.blockUnits) return "flushed image not block units";
+    const auto& mine = refreshed.descriptor;
+    const auto& theirs = flushed.descriptor;
+    if (theirs.baseAddress != mine.baseAddress) return "base differs";
+    if (flushed.guestBytes != refreshed.guestBytes) return "size differs";
+    if (theirs.width != mine.width) return "width differs";
+    if (theirs.height != mine.height) return "height differs";
+    if (theirs.depthOrLastArray != mine.depthOrLastArray || theirs.baseArray != mine.baseArray) return "layers differ";
+    if (theirs.mipCount != mine.mipCount) return "mips differ";
+    if (theirs.tileMode != mine.tileMode) return "tiling differs";
+    const auto oneSlice = [](const GuestTextureResource& resource) { return resource.dimension == TextureDimension::k2D || (resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray == 0); };
+    if (mine.dimension != theirs.dimension && !(oneSlice(mine) && oneSlice(theirs))) return "dimension differs";
+    if (BytesPerElement(mine.format) != BytesPerElement(theirs.format)) return "element size differs";
+    if (refreshed.geometry.imageLayers != flushed.geometry.imageLayers || refreshed.geometry.imageDepth != flushed.geometry.imageDepth || refreshed.trackedLayers != flushed.trackedLayers) return "geometry differs";
+    if (!flushed.Cached()) return "flushed image not cached";
+    if (flushed.uploadedKeys != DccKeys::Uncompressed) return "flushed image keys not uncompressed";
+    if (refreshed.uploadedKeys != DccKeys::Uncompressed) return "refreshed image keys not uncompressed";
+    if (ExistingHostImportFor(refreshed.context, mine.baseAddress, static_cast<std::size_t>(refreshed.guestBytes)) == nullptr) return "no host import";
+    std::vector<std::uint8_t> stamped(refreshed.trackedLayers);
+    if (!GuestMemory::ChangedBlocks(mine.baseAddress, static_cast<std::size_t>(refreshed.guestBytes), flushed.layerGeneration, stamped)) return "untracked";
+    for (std::uint32_t unit = 0; unit < flushed.trackedLayers && unit < refreshed.trackedLayers; ++unit) {
+        if (!flushed.layerPending[unit]) continue;
+        if (flushed.layerGeneration[unit] == 0) return "flushed unit untracked";
+        if (stamped[unit] == GuestMemory::BlockUnchanged && refreshed.layerPending[unit]) return "unit pending in both";
+    }
+    return "borrowable";
+}
+
+void StorageTexture::noteAliasFlush(const StorageTexture& refreshed, const StorageTexture& flushed, std::uint64_t address, std::size_t bytes, const StorageTexture* except) {
+    struct Trace {
+        AgcDriver::Mutex mutex;
+        std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> pairs;
+        std::uint64_t flushes = 0;
+        std::uint64_t overlapBytes = 0;
+        std::chrono::steady_clock::time_point lastReport{};
+    };
+    static Trace trace;
+    const auto describe = [](const StorageTexture& texture) {
+        const auto& resource = texture.descriptor;
+        char text[256];
+        const bool imported = ExistingHostImportFor(texture.context, resource.baseAddress, static_cast<std::size_t>(texture.guestBytes)) != nullptr;
+        std::snprintf(text, sizeof(text), "0x%llx+0x%llx fmt %u tile %u dim %u %ux%u layers %u mips %u units %s import %s keys %s", static_cast<unsigned long long>(resource.baseAddress), static_cast<unsigned long long>(texture.guestBytes), resource.format, static_cast<unsigned>(resource.tileMode), static_cast<unsigned>(resource.dimension), resource.width, resource.height, resource.depthOrLastArray + 1u, resource.mipCount, texture.blockUnits ? "block" : "layer", imported ? "yes" : "no", DccKeysName(texture.uploadedKeys));
+        return std::string(text);
+    };
+    const auto begin = std::max(flushed.descriptor.baseAddress, address);
+    const auto end = std::min(flushed.descriptor.baseAddress + flushed.guestBytes, address + bytes);
+    const auto overlap = end > begin ? end - begin : 0;
+    const auto key = "refreshed " + describe(refreshed) + " | flushed " + describe(flushed) + " | " + aliasRefusal(refreshed, flushed, address, bytes, except);
+    std::lock_guard lock(trace.mutex);
+    auto& pair = trace.pairs[key];
+    ++pair.first;
+    pair.second += overlap;
+    ++trace.flushes;
+    trace.overlapBytes += overlap;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - trace.lastReport < std::chrono::seconds(10)) return;
+    std::vector<std::pair<std::string, std::pair<std::uint64_t, std::uint64_t>>> top(trace.pairs.begin(), trace.pairs.end());
+    const auto count = std::min<std::size_t>(top.size(), 8);
+    std::partial_sort(top.begin(), top.begin() + static_cast<std::ptrdiff_t>(count), top.end(), [](const auto& a, const auto& b) { return a.second.first != b.second.first ? a.second.first > b.second.first : a.first < b.first; });
+    std::string line;
+    char text[96];
+    for (std::size_t i = 0; i < count; ++i) {
+        std::snprintf(text, sizeof(text), ": %llu flushes, %.1f MiB overlap]", static_cast<unsigned long long>(top[i].second.first), top[i].second.second / 1048576.0);
+        line += " [" + top[i].first + text;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[storage-alias] since the last line: %llu refresh write-backs of other images (%.1f MiB overlap) in %zu pairs; top %zu (refreshed | flushed | why not borrowed):%s\n", static_cast<unsigned long long>(trace.flushes), trace.overlapBytes / 1048576.0, trace.pairs.size(), count, line.c_str());
+    trace.pairs.clear();
+    trace.flushes = 0;
+    trace.overlapBytes = 0;
+    trace.lastReport = now;
 }
 
 void StorageTexture::forgetBorrowed(std::uint32_t first, std::uint32_t count) {
