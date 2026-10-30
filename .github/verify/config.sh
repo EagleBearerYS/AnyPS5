@@ -1,0 +1,3 @@
+BASE=7f36e41c458c2abbf06c5a638636869ed9a4cc59
+REPEAT=10
+EXTRA_TESTS='agc_shader_nested_snapshot_retry'
