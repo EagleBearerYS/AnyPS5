@@ -1,0 +1,4 @@
+BASE=a5939f10a85fdbcd3e0fe75e5eea278f4fe3e52a
+REPEAT=10
+EXTRA_TESTS='agc_driver_image_table|agc_driver_nested_sampler_table|agc_shader_disk_cache|^agc_driver_nested_image_table|^agc_driver_pointer_phi_'
+NO_BEFORE=1
