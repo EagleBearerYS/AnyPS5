@@ -1,8 +1,11 @@
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -10,8 +13,10 @@
 #include <windows.h>
 #include <io.h>
 #else
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -20,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <regex>
 #include <sstream>
 #include <stdexcept>
@@ -42,6 +48,12 @@ struct Labels {
     alignas(256) volatile std::uint32_t done = 0;
     alignas(256) volatile std::uint32_t spare = 0;
     alignas(256) volatile std::uint32_t spareDone = 0;
+    alignas(256) volatile std::uint32_t producerGate = 0;
+    alignas(256) volatile std::uint32_t crossLabel = 0;
+    alignas(256) volatile std::uint32_t crossDone = 0;
+    alignas(256) volatile std::uint32_t tailLabel = 0;
+    alignas(256) volatile std::uint32_t tailDone = 0;
+    alignas(256) volatile std::uint32_t watchedDone = 0;
 };
 
 class GuestBlock {
@@ -210,6 +222,16 @@ private:
     std::FILE* file = nullptr;
 };
 
+std::string Hex(std::uint64_t value) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%llx", static_cast<unsigned long long>(value));
+    return text;
+}
+
+std::string Hex(const volatile std::uint32_t* pointer) {
+    return Hex(reinterpret_cast<std::uintptr_t>(pointer));
+}
+
 void SetWaitTimeout() {
 #ifdef _WIN32
     _putenv_s("APS5_GPU_WAIT_TIMEOUT_MS", "100");
@@ -218,14 +240,13 @@ void SetWaitTimeout() {
 #endif
 }
 
-void SubmitAcb(std::vector<std::uint32_t>& words) {
+void SubmitAcb(std::vector<std::uint32_t>& words, std::uint32_t queue = 0x20) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    Require(sceAgcDriverSubmitAcb(0x20, &packet) == 0, "label wait timeout reason: a queue 0x20 submission failed");
+    Require(sceAgcDriverSubmitAcb(queue, &packet) == 0, "label wait timeout reason: a queue 0x" + Hex(queue) + " submission failed");
 }
 
-std::string Reason(const ErrorCapture& capture, const volatile std::uint32_t* label) {
-    char prefix[64];
-    std::snprintf(prefix, sizeof(prefix), "[gpu]   label 0x%llx wait submitted", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(label)));
+std::string Line(const ErrorCapture& capture, const volatile std::uint32_t* label, const std::string& marker) {
+    const auto prefix = "[gpu]   label 0x" + Hex(reinterpret_cast<std::uintptr_t>(label)) + " " + marker;
     const auto start = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() - start < std::chrono::seconds(5)) {
         const auto text = capture.Text();
@@ -235,6 +256,10 @@ std::string Reason(const ErrorCapture& capture, const volatile std::uint32_t* la
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     return {};
+}
+
+std::string Reason(const ErrorCapture& capture, const volatile std::uint32_t* label) {
+    return Line(capture, label, "wait submitted");
 }
 
 void TimeoutReasons(Labels& labels) {
@@ -282,6 +307,169 @@ void TimeoutReasons(Labels& labels) {
     std::cout << unfinished << '\n' << checked << '\n';
     std::cout << "label wait timeout reason: a timed-out wait names its submission stamp, the check at submission and the label's stores\n";
 }
+
+class WatchedBlock {
+public:
+    WatchedBlock() {
+#ifdef _WIN32
+        block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, BlockBytes));
+        if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+#else
+        void* raw = mmap(nullptr, BlockBytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(raw != MAP_FAILED, "label wait timeout reason: cannot map the watched block");
+        const auto begin = reinterpret_cast<std::uintptr_t>(raw);
+        const auto aligned = (begin + BlockBytes - 1) & ~(static_cast<std::uintptr_t>(BlockBytes) - 1);
+        if (aligned != begin) munmap(raw, aligned - begin);
+        if (aligned + BlockBytes != begin + BlockBytes * 2) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + BlockBytes - aligned);
+        block = reinterpret_cast<std::uint8_t*>(aligned);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+#endif
+        Require(block != nullptr, "label wait timeout reason: cannot allocate the watched block");
+        std::memset(block, 0, BlockBytes);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+    }
+
+    ~WatchedBlock() {
+        GuestAllocations::Mutation().Remove(block);
+#ifdef _WIN32
+        GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+#else
+        munmap(block, BlockBytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+#endif
+    }
+
+    WatchedBlock(const WatchedBlock&) = delete;
+    WatchedBlock& operator=(const WatchedBlock&) = delete;
+
+    volatile std::uint32_t* Label() { return reinterpret_cast<volatile std::uint32_t*>(block + 256); }
+
+private:
+    std::uint8_t* block = nullptr;
+};
+
+std::uint64_t BlockOf(const volatile std::uint32_t* label) {
+    return reinterpret_cast<std::uintptr_t>(label) & ~std::uint64_t{0xffff};
+}
+
+struct Moments {
+    std::uint64_t copiedStamp = 0;
+    std::uint64_t checkedStamp = 0;
+    std::uint64_t nowStamp = 0;
+    double copiedMs = 0;
+    double checkedMs = 0;
+    double nowMs = 0;
+    double validMs = 0;
+};
+
+Moments ReadMoments(const std::string& line, bool tail) {
+    const std::regex submitted(R"(submitted by the title at stamp (\d+) value 0x0 \(\+([0-9.]+) ms\), checked at stamp (\d+) value 0x0 \(\+([0-9.]+) ms\), kind submit; now stamp (\d+) \(\+([0-9.]+) ms\)$)");
+    const std::regex copied(R"(tail copied at stamp (\d+) value 0x0 \(\+([0-9.]+) ms\), checked at stamp (\d+) value 0x0 \(\+([0-9.]+) ms\), kind rewind-tail, valid bit seen \+([0-9.]+) ms; now stamp (\d+) \(\+([0-9.]+) ms\)$)");
+    std::smatch match;
+    Require(std::regex_search(line, match, tail ? copied : submitted), "label wait timeout reason: the line does not name the wait's copy and check moments: " + line);
+    Moments moments;
+    moments.copiedStamp = std::stoull(match[1].str());
+    moments.copiedMs = std::stod(match[2].str());
+    moments.checkedStamp = std::stoull(match[3].str());
+    moments.checkedMs = std::stod(match[4].str());
+    const std::size_t now = tail ? 6 : 5;
+    if (tail) moments.validMs = std::stod(match[5].str());
+    moments.nowStamp = std::stoull(match[now].str());
+    moments.nowMs = std::stod(match[now + 1].str());
+    Require(moments.copiedStamp <= moments.checkedStamp && moments.checkedStamp <= moments.nowStamp && moments.validMs <= moments.copiedMs && moments.copiedMs <= moments.checkedMs && moments.checkedMs + 99.0 <= moments.nowMs, "label wait timeout reason: the moments are out of order (copy, check, then the timeout at least 100 ms later): " + line);
+    return moments;
+}
+
+std::string WaitingLine(std::uint32_t queue, const std::string& serial, const volatile std::uint32_t* label) {
+    return "queue 0x" + Hex(queue) + ": executing serial " + serial + " at dword 0 opcode 0x3c, waiting on 0x" + Hex(label) + " function 3 ref 0x1 mask 0xffffffff; 0 pending$";
+}
+
+void CrossQueueProducer(Labels& labels) {
+    labels.producerGate = 0u;
+    labels.crossLabel = 0u;
+    labels.crossDone = 0u;
+    ErrorCapture capture;
+    std::vector<std::uint32_t> producer;
+    WaitEqual(producer, &labels.producerGate, 1u);
+    ReleaseLabel(producer, &labels.crossLabel, 1u);
+    SubmitAcb(producer, 0x21);
+    std::vector<std::uint32_t> waiter;
+    WaitEqual(waiter, &labels.crossLabel, 1u);
+    WriteData(waiter, &labels.crossDone, 1u);
+    SubmitAcb(waiter);
+    const auto moments = Line(capture, &labels.crossLabel, "submitted by the title");
+    const auto block = Line(capture, &labels.crossLabel, "block 0x");
+    const auto writers = Line(capture, &labels.crossLabel, "writers pending or running:");
+    const auto producerState = Line(capture, &labels.crossLabel, "queue 0x21:");
+    const auto waiterState = Line(capture, &labels.crossLabel, "queue 0x20:");
+    labels.producerGate = 1u;
+    Until(labels.crossDone, 1u, std::chrono::seconds(10), "label wait timeout reason: the wait did not end after its producer on queue 0x21 was released");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto log = capture.Restore();
+    Require(!moments.empty() && !block.empty() && !writers.empty() && !producerState.empty() && !waiterState.empty(), "label wait timeout reason: the timed-out cross-queue wait printed no moments, block, writers or queue line; stderr was:\n" + log);
+    ReadMoments(moments, false);
+    std::smatch match;
+    const std::regex blockLine(R"(block 0x([0-9a-f]+): (not watched, no write stamps|watched); write generation at the check \d+, tracker generation now \d+)");
+    Require(std::regex_search(block, match, blockLine) && std::stoull(match[1].str(), nullptr, 16) == BlockOf(&labels.crossLabel), "label wait timeout reason: the line does not name the label's block and its generations: " + block);
+    const std::regex writersLine(R"(writers pending or running: queue 0x21 serial (\d+) \(running\)$)");
+    Require(std::regex_search(writers, match, writersLine), "label wait timeout reason: the line does not name the producer running on queue 0x21: " + writers);
+    Require(std::regex_search(producerState, std::regex(WaitingLine(0x21, match[1].str(), &labels.producerGate))), "label wait timeout reason: the queue 0x21 line does not show the producer blocked on its own wait: " + producerState);
+    Require(std::regex_search(waiterState, std::regex(WaitingLine(0x20, R"(\d+)", &labels.crossLabel))), "label wait timeout reason: the queue 0x20 line does not show the timed-out wait: " + waiterState);
+    std::cout << moments << '\n' << block << '\n' << writers << '\n' << producerState << '\n' << waiterState << '\n';
+    std::cout << "label wait timeout reason: a timed-out wait names its copy and check moments, its block and its producer blocked on another queue\n";
+}
+
+void RewindTail(Labels& labels) {
+    labels.tailLabel = 0u;
+    labels.tailDone = 0u;
+    ErrorCapture capture;
+    std::vector<std::uint32_t> words{0xc0005900u, 0u};
+    WaitEqual(words, &labels.tailLabel, 1u);
+    WriteData(words, &labels.tailDone, 1u);
+    SubmitAcb(words);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::atomic_ref<std::uint32_t>(words[1]).store(0x80000000u, std::memory_order_release);
+    AgcDriver::GuestMemory::MarkWritten(reinterpret_cast<std::uintptr_t>(&words[1]), 4);
+    const auto moments = Line(capture, &labels.tailLabel, "tail copied");
+    const auto waiterState = Line(capture, &labels.tailLabel, "queue 0x20:");
+    labels.tailLabel = 1u;
+    Until(labels.tailDone, 1u, std::chrono::seconds(10), "label wait timeout reason: the REWIND tail's wait did not end after its label was stored");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto log = capture.Restore();
+    Require(!moments.empty() && !waiterState.empty(), "label wait timeout reason: the timed-out REWIND tail wait printed no moments or queue line; stderr was:\n" + log);
+    ReadMoments(moments, true);
+    Require(std::regex_search(waiterState, std::regex(WaitingLine(0x20, R"(\d+)", &labels.tailLabel))), "label wait timeout reason: the queue 0x20 line does not show the REWIND tail's wait: " + waiterState);
+    std::cout << moments << '\n' << waiterState << '\n';
+    std::cout << "label wait timeout reason: a timed-out wait in a REWIND tail names the tail copy and when the valid bit was seen\n";
+}
+
+void WatchedStore(Labels& labels, WatchedBlock* watched) {
+    if (watched == nullptr) {
+        std::cout << "label wait timeout reason: guest writes are not watched here, the watched block line is not checked\n";
+        return;
+    }
+    auto* label = watched->Label();
+    labels.watchedDone = 0u;
+    ErrorCapture capture;
+    std::vector<std::uint32_t> waiter;
+    WaitEqual(waiter, label, 1u);
+    WriteData(waiter, &labels.watchedDone, 1u);
+    SubmitAcb(waiter);
+    *label = 7u;
+    const auto block = Line(capture, label, "block 0x");
+    *label = 1u;
+    Until(labels.watchedDone, 1u, std::chrono::seconds(10), "label wait timeout reason: the wait on the watched label did not end after its label was stored");
+    AgcDriverWaitIdle_nid_postfix();
+    const auto log = capture.Restore();
+    Require(!block.empty(), "label wait timeout reason: the timed-out wait on a watched label printed no block line; stderr was:\n" + log);
+    std::smatch match;
+    const std::regex blockLine(R"(block 0x([0-9a-f]+): watched; write generation at the check (\d+), tracker generation now \d+; stamp \d+ cpu stamp \d+, after a collect stamp (\d+) cpu stamp (\d+); stamped after the check yes, a CPU store collected after the check yes$)");
+    Require(std::regex_search(block, match, blockLine) && std::stoull(match[1].str(), nullptr, 16) == BlockOf(label), "label wait timeout reason: the line does not name the CPU store collected after the check: " + block);
+    Require(std::stoull(match[4].str()) > std::stoull(match[2].str()) && std::stoull(match[3].str()) >= std::stoull(match[4].str()), "label wait timeout reason: the block stamps do not follow the write generation at the check: " + block);
+    std::cout << block << '\n';
+    std::cout << "label wait timeout reason: a timed-out wait on a watched label names the CPU store collected after its check\n";
+}
 }
 
 int main(int argc, char** argv) {
@@ -292,8 +480,13 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         device.reset();
         GuestBlock block;
+        std::optional<WatchedBlock> watched;
+        if (reasons && AgcDriver::GuestMemory::WriteWatched()) watched.emplace();
         if (reasons) {
             TimeoutReasons(block.Data());
+            CrossQueueProducer(block.Data());
+            RewindTail(block.Data());
+            WatchedStore(block.Data(), watched ? &*watched : nullptr);
         } else {
             StoredAfterSubmission(block.Data());
             HeldAtSubmission(block.Data());

@@ -131,6 +131,8 @@ void Driver::noteReleasedTails(const Submission& submission) {
 void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words) {
     submission.commands.clear();
     submission.conditionalEnds.clear();
+    submission.waitCopies.clear();
+    submission.waitCopyMs = -1;
     std::size_t budget = std::size_t{1} << 26u;
     copySegment(submission, guest, words, budget);
 }
@@ -208,6 +210,7 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
             continue;
         }
         if (opcode == 0x22u && count == 5) guarded.emplace_back(cursor + count + Pm4::ConditionalWords(std::span(guest + cursor, count)), submission.commands.size());
+        if (opcode == 0x3cu || opcode == 0x93u) noteWaitCopied(submission, submission.commands.size(), std::span(guest + cursor, count));
         submission.commands.insert(submission.commands.end(), guest + cursor, guest + cursor + count);
         cursor += count;
         if (opcode == 0x59u) {
@@ -325,6 +328,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
     static const bool ring = ReadSubmissionRingSettings();
     if (ring) PrepareSubmissionRing(stalled.queue);
     std::atomic_ref<std::uint32_t> control(*const_cast<std::uint32_t*>(stalled.rewindTail - 1));
+    auto validSeenMs = TraceMs();
     if ((control.load(std::memory_order_acquire) & Pm4::RewindValid) == 0) {
         noteWaitBlocked(stalled.queue, reinterpret_cast<std::uint64_t>(stalled.rewindTail - 1), true);
         struct BlockedWait {
@@ -341,9 +345,12 @@ void Driver::executeRewindTail(const Submission& stalled) {
             if (stalled.queue == 0 && completionsPending()) reapCompletionLabels();
             PollSleep();
         }
+        validSeenMs = TraceMs();
     }
     Submission tail{};
     tail.queue = stalled.queue;
+    tail.rewindTailCopy = true;
+    tail.rewindValidSeenMs = validSeenMs;
     if (APS5_ENABLE_TIMING_LOG) tail.receivedAt = std::chrono::steady_clock::now();
     auto& released = releasedTails();
     if (!released.empty() && released.front() == stalled.rewindTail - 1) {
@@ -367,6 +374,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
         rethrowFailure();
         checkStopping();
         reserveOutputs(tail);
+        if (const auto worker = workers.find(tail.queue); worker != workers.end()) worker->second.runningWrites.insert(worker->second.runningWrites.end(), tail.labelWrites.begin(), tail.labelWrites.end());
         tail.shaders = shaders;
         tail.serial = stalled.serial;
         tail.received = ++eventSerial;
@@ -620,12 +628,28 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
     }
     if (opcode != 0x3c && opcode != 0x93) return;
     auto& check = submission.waitChecks.emplace_back(cursor, SubmitWaitCheck{}).second;
+    if (submission.waitCheckMs < 0) submission.waitCheckMs = TraceMs();
+    check.checked.ms = submission.waitCheckMs;
+    check.checked.stamp = eventSerial.load(std::memory_order_acquire);
+    check.writeGeneration = GuestMemory::WriteGeneration();
+    check.rewindTail = submission.rewindTailCopy;
+    check.validSeenMs = submission.rewindValidSeenMs;
+    const auto copy = std::lower_bound(submission.waitCopies.begin(), submission.waitCopies.end(), cursor, [](const std::pair<std::size_t, WaitCopy>& entry, std::size_t key) { return entry.first < key; });
+    bool mappingUnchanged = false;
+    if (copy != submission.waitCopies.end() && copy->first == cursor) {
+        check.copyRecorded = true;
+        check.copied = copy->second.moment;
+        mappingUnchanged = copy->second.forgetSerial % 2 == 0 && copy->second.forgetSerial == GuestMemory::ForgetSerial() && copy->second.accessSerial == GuestMemory::AccessSerial();
+    }
     if (packet.size() < 7 || ((packet[1] >> 4u) & 3u) != 1u) return;
     const auto wait = Pm4::DecodeWait(packet);
     const auto address = wait.address;
     const std::size_t bytes = wait.bytes;
     check.outcome = SubmitCheck::Inaccessible;
-    if (address % 4 != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return;
+    if (address % 4 != 0 || !(mappingUnchanged ? check.copied.read : GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes))) return;
+    check.checked.value = *reinterpret_cast<const volatile std::uint32_t*>(address);
+    if (bytes == 8) check.checked.value |= static_cast<std::uint64_t>(*reinterpret_cast<const volatile std::uint32_t*>(address + 4)) << 32u;
+    check.checked.read = true;
     const auto worker = workers.find(submission.queue);
     for (std::size_t offset = 0; offset < bytes; offset += 4) {
         const auto dword = address + offset;
@@ -650,6 +674,24 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
         check.outcome = SubmitCheck::Held;
         submission.heldAtSubmit.insert(cursor);
     }
+}
+
+void Driver::noteWaitCopied(Submission& submission, std::size_t at, std::span<const std::uint32_t> packet) {
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if (!((opcode == 0x3cu && packet.size() == 7) || (opcode == 0x93u && packet.size() == 9)) || ((packet[1] >> 4u) & 3u) != 1u) return;
+    if (submission.waitCopyMs < 0) submission.waitCopyMs = TraceMs();
+    WaitCopy copy;
+    copy.moment.ms = submission.waitCopyMs;
+    copy.moment.stamp = eventSerial.load(std::memory_order_acquire);
+    copy.forgetSerial = GuestMemory::ForgetSerial();
+    copy.accessSerial = GuestMemory::AccessSerial();
+    const auto wait = Pm4::DecodeWait(packet);
+    if (wait.address % 4 == 0 && GuestMemory::Accessible(reinterpret_cast<const void*>(wait.address), wait.bytes)) {
+        copy.moment.value = *reinterpret_cast<const volatile std::uint32_t*>(wait.address);
+        if (wait.bytes == 8) copy.moment.value |= static_cast<std::uint64_t>(*reinterpret_cast<const volatile std::uint32_t*>(wait.address + 4)) << 32u;
+        copy.moment.read = true;
+    }
+    submission.waitCopies.emplace_back(at, copy);
 }
 
 const SubmitWaitCheck* Driver::findSubmitCheck(const Submission& submission, std::size_t cursor) {

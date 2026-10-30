@@ -121,6 +121,11 @@ const std::atomic<std::uint64_t>*& Driver::workerQueued() {
     return queued;
 }
 
+std::atomic<std::uint64_t>*& Driver::workerPacket() {
+    static thread_local std::atomic<std::uint64_t>* packet = nullptr;
+    return packet;
+}
+
 void Driver::reapCompletionLabels() {
     std::unique_lock gpuLock(GuestMemory::GpuMutex(), std::try_to_lock);
     if (!gpuLock.owns_lock()) {
@@ -176,6 +181,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 auto& worker = workers.at(id);
                 auto& pending = worker.pending;
                 workerQueued() = &worker.queued;
+                workerPacket() = &worker.executingPacket;
                 if (traceGpu && pending.empty()) std::fprintf(stderr, "[gpu] %.1f idle queue=0x%x\n", TraceMs(), id);
                 const auto ready = [&] { return failure || stopping || !pending.empty(); };
                 const auto allQueuesIdle = [&] {
@@ -243,6 +249,8 @@ void Driver::run(std::uint32_t id) noexcept {
                 pending.pop_front();
                 worker.runningSerial = submission.serial;
                 worker.runningWrites = submission.labelWrites;
+                worker.executingPacket.store(0, std::memory_order_relaxed);
+                worker.executingSerial.store(submission.serial, std::memory_order_release);
                 if (APS5_ENABLE_TIMING_LOG) submission.dequeuedAt = std::chrono::steady_clock::now();
                 if (id == 0) queue0Executing = submission.suspend ? 0 : submission.received;
                 struct OrderHold {
@@ -281,6 +289,7 @@ void Driver::run(std::uint32_t id) noexcept {
                 if (profile && submission.enqueuedAt != std::chrono::steady_clock::time_point{}) costs.dequeueNs += static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - submission.enqueuedAt).count());
             }
             execute(submission);
+            if (auto* packet = workerPacket(); packet != nullptr) packet->store(AfterLastPacket, std::memory_order_relaxed);
             if (submission.progress && submission.rewindTail == nullptr && !completionDeferred()) submitOpenWork(submission.progress);
             if (traceGpu) std::fprintf(stderr, "[gpu] %.1f done serial=%llu queue=0x%x\n", TraceMs(), static_cast<unsigned long long>(submission.serial), id);
             const auto completeStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
@@ -295,6 +304,7 @@ void Driver::run(std::uint32_t id) noexcept {
                     forgetUnfinishedWrites(workers.at(id), submission);
                 }
                 if (id == 0) queue0Executing = 0;
+                workers.at(id).executingSerial.store(0, std::memory_order_release);
                 if (id != 0) {
                     workers.at(id).executingWaitFree = 0;
                     workers.at(id).executingWaits = false;

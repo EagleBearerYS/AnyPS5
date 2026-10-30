@@ -129,8 +129,8 @@ private:
     void checkStopping() const;
     std::uint32_t reserveEopFlip(const FlipInfo& info, std::uint32_t token);
     static bool& onWorkerThread();
-    static void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words);
-    static bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget);
+    void copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words);
+    bool copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget);
     static void readRegisterLists(Submission& submission);
     void waitForFlipRoom(const Submission& submission);
     void holdFlipBehindWorker(const Submission& submission);
@@ -223,6 +223,10 @@ private:
     std::string describeLabelStores(std::uint64_t address, std::size_t bytes);
     static std::string describeSubmitCheck(const SubmitWaitCheck* check);
     static const SubmitWaitCheck* findSubmitCheck(const Submission& submission, std::size_t cursor);
+    void noteWaitCopied(Submission& submission, std::size_t at, std::span<const std::uint32_t> packet);
+    std::string describeWaitMoments(const SubmitWaitCheck* check) const;
+    static std::string describeLabelBlock(std::uint64_t address, const SubmitWaitCheck* check);
+    void describeWaitProducers(std::uint64_t address, std::size_t bytes);
     bool storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer = nullptr);
     static void traceLabel(std::span<const std::uint32_t> packet, std::uint32_t queue);
     static std::array<WriteRecord, 16384>& writeHistory();
@@ -380,6 +384,7 @@ private:
     void deliverFlipEopInterrupt(std::uint32_t queue);
     void markCompleted(std::uint64_t serial);
     static const std::atomic<std::uint64_t>*& workerQueued();
+    static std::atomic<std::uint64_t>*& workerPacket();
     void reapCompletionLabels();
     void run(std::uint32_t id) noexcept;
 

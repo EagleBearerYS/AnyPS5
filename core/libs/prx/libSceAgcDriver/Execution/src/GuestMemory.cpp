@@ -839,6 +839,10 @@ std::uint64_t ForgetSerial() {
     return forgetSerial.load(std::memory_order_acquire);
 }
 
+std::uint64_t AccessSerial() {
+    return Pages().accessSerial.load(std::memory_order_acquire);
+}
+
 Commitment DescribeCommitted(std::uint64_t address, std::size_t bytes, bool writable) {
     require(bytes <= std::numeric_limits<std::uint64_t>::max() - address, "address range overflow");
     const TimedAccess timed(CounterVerify, bytes);
@@ -2250,6 +2254,20 @@ bool ChangedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std
         if (k < cpu.size()) cpu[k] = generation == 0 || tracker.cpuStampOf(block) > generation ? 1 : 0;
     }
     return true;
+}
+
+BlockStamps StampsOf(std::uint64_t address) {
+    BlockStamps stamps;
+    if (address > std::numeric_limits<std::uint64_t>::max() - 4) return stamps;
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || !tracker.covers(address, 4)) return stamps;
+    const auto block = tracker.blockOf(address);
+    stamps.watched = true;
+    stamps.stamp = tracker.stampOf(block);
+    stamps.cpuStamp = tracker.cpuStampOf(block);
+    return stamps;
 }
 
 namespace {

@@ -393,6 +393,9 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s%s at 0x%llx timed out after %dms (function %u ref 0x%llx mask 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", requireMemory ? " (landing)" : "",
                          static_cast<unsigned long long>(awaited), waitTimeoutMs(), packet[1] & 7u, static_cast<unsigned long long>(reference), static_cast<unsigned long long>(mask), static_cast<unsigned long long>(current));
             std::fprintf(stderr, "[gpu]   label 0x%llx wait submitted at stamp %llu: %s; stores newest first:%s; now %llu\n", static_cast<unsigned long long>(awaited), static_cast<unsigned long long>(received), describeSubmitCheck(check).c_str(), describeLabelStores(awaited, awaitedBytes).c_str(), static_cast<unsigned long long>(eventSerial.load()));
+            std::fprintf(stderr, "[gpu]   label 0x%llx %s\n", static_cast<unsigned long long>(awaited), describeWaitMoments(check).c_str());
+            std::fprintf(stderr, "[gpu]   label 0x%llx %s\n", static_cast<unsigned long long>(awaited), describeLabelBlock(awaited, check).c_str());
+            describeWaitProducers(awaited, awaitedBytes);
             const auto address = awaited;
             for (const auto& record : writeHistory()) {
                 if (record.length != 0 && record.target <= address && address < record.target + std::max<std::uint64_t>(record.length, 4))

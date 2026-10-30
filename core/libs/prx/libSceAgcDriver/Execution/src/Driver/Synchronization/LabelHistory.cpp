@@ -1,4 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
@@ -7,6 +10,7 @@
 #include <cstring>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace AgcDriver::DriverDetail {
 
@@ -109,6 +113,108 @@ std::string Driver::describeSubmitCheck(const SubmitWaitCheck* check) {
         return text;
     }
     return "unknown check at submission";
+}
+
+std::string Driver::describeWaitMoments(const SubmitWaitCheck* check) const {
+    const auto nowMs = TraceMs();
+    const auto now = static_cast<unsigned long long>(eventSerial.load(std::memory_order_acquire));
+    const auto value = [](const WaitMoment& moment) {
+        char text[32];
+        if (moment.read) std::snprintf(text, sizeof(text), "0x%llx", static_cast<unsigned long long>(moment.value));
+        else std::snprintf(text, sizeof(text), "unread");
+        return std::string(text);
+    };
+    char text[512];
+    if (check == nullptr) {
+        std::snprintf(text, sizeof(text), "submission moments not recorded; now stamp %llu (+%.1f ms)", now, nowMs);
+        return text;
+    }
+    char copied[192];
+    if (check->copyRecorded) std::snprintf(copied, sizeof(copied), "%s at stamp %llu value %s (+%.1f ms)", check->rewindTail ? "tail copied" : "submitted by the title", static_cast<unsigned long long>(check->copied.stamp), value(check->copied).c_str(), check->copied.ms);
+    else std::snprintf(copied, sizeof(copied), "%s", check->rewindTail ? "tail copy not recorded" : "submission copy not recorded");
+    char kind[96];
+    if (check->rewindTail) std::snprintf(kind, sizeof(kind), "rewind-tail, valid bit seen +%.1f ms", check->validSeenMs);
+    else std::snprintf(kind, sizeof(kind), "submit");
+    std::snprintf(text, sizeof(text), "%s, checked at stamp %llu value %s (+%.1f ms), kind %s; now stamp %llu (+%.1f ms)", copied, static_cast<unsigned long long>(check->checked.stamp), value(check->checked).c_str(), check->checked.ms, kind, now, nowMs);
+    return text;
+}
+
+std::string Driver::describeLabelBlock(std::uint64_t address, const SubmitWaitCheck* check) {
+    char text[448];
+    const auto block = static_cast<unsigned long long>(address & ~std::uint64_t{0xffff});
+    char atCheck[64];
+    if (check != nullptr) std::snprintf(atCheck, sizeof(atCheck), "%llu", static_cast<unsigned long long>(check->writeGeneration));
+    else std::snprintf(atCheck, sizeof(atCheck), "not recorded");
+    const auto before = GuestMemory::StampsOf(address);
+    const auto generation = static_cast<unsigned long long>(GuestMemory::TrackerGeneration());
+    if (!before.watched) {
+        std::snprintf(text, sizeof(text), "block 0x%llx: not watched, no write stamps; write generation at the check %s, tracker generation now %llu", block, atCheck, generation);
+        return text;
+    }
+    GuestMemory::CollectWritesUncached(address, 4);
+    const auto after = GuestMemory::StampsOf(address);
+    char since[112];
+    if (check != nullptr) std::snprintf(since, sizeof(since), "stamped after the check %s, a CPU store collected after the check %s", after.stamp > check->writeGeneration ? "yes" : "no", after.cpuStamp > check->writeGeneration ? "yes" : "no");
+    else std::snprintf(since, sizeof(since), "no check to compare with");
+    std::snprintf(text, sizeof(text), "block 0x%llx: watched; write generation at the check %s, tracker generation now %llu; stamp %llu cpu stamp %llu, after a collect stamp %llu cpu stamp %llu; %s", block, atCheck, generation, static_cast<unsigned long long>(before.stamp), static_cast<unsigned long long>(before.cpuStamp), static_cast<unsigned long long>(after.stamp), static_cast<unsigned long long>(after.cpuStamp), since);
+    return text;
+}
+
+void Driver::describeWaitProducers(std::uint64_t address, std::size_t bytes) {
+    std::string writers;
+    std::vector<std::string> states;
+    {
+        std::lock_guard lock(mutex);
+        const auto writes = [&](const std::vector<std::uint64_t>& dwords) {
+            for (std::size_t offset = 0; offset < bytes; offset += 4) {
+                if (std::find(dwords.begin(), dwords.end(), address + offset) != dwords.end()) return true;
+            }
+            return false;
+        };
+        char item[320];
+        for (const auto& [queue, worker] : workers) {
+            const auto executing = worker.executingSerial.load(std::memory_order_acquire);
+            if (executing != 0 && executing == worker.runningSerial && writes(worker.runningWrites)) {
+                std::snprintf(item, sizeof(item), "%s queue 0x%x serial %llu (running)", writers.empty() ? "" : ",", queue, static_cast<unsigned long long>(executing));
+                writers += item;
+            }
+            std::size_t ahead = 0;
+            for (const auto& pending : worker.pending) {
+                if (writes(pending.labelWrites)) {
+                    std::snprintf(item, sizeof(item), "%s queue 0x%x serial %llu (pending, %zu ahead of it)", writers.empty() ? "" : ",", queue, static_cast<unsigned long long>(pending.serial), ahead);
+                    writers += item;
+                }
+                ++ahead;
+            }
+            std::string state;
+            if (executing == 0) {
+                if (worker.pending.empty()) state = queue == 0 && queue0Dormant.load(std::memory_order_relaxed) ? "idle (dormant)" : "idle";
+                else {
+                    std::snprintf(item, sizeof(item), "not executing, next pending serial %llu", static_cast<unsigned long long>(worker.pending.front().serial));
+                    state = item;
+                }
+            } else {
+                const auto packet = worker.executingPacket.load(std::memory_order_relaxed);
+                if (packet == 0) std::snprintf(item, sizeof(item), "executing serial %llu before its first packet", static_cast<unsigned long long>(executing));
+                else if (packet == AfterLastPacket) std::snprintf(item, sizeof(item), "executing serial %llu after its last packet", static_cast<unsigned long long>(executing));
+                else std::snprintf(item, sizeof(item), "executing serial %llu at dword %llu opcode 0x%x", static_cast<unsigned long long>(executing), static_cast<unsigned long long>((packet >> 8u) - 1), static_cast<unsigned>(packet & 0xffu));
+                state = item;
+                if (queue == 0 || (queue >= 0x20 && queue < SubmissionQueueEnd)) {
+                    const auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
+                    const auto awaited = slot.address.load(std::memory_order_acquire);
+                    const auto shape = slot.shape.load(std::memory_order_relaxed);
+                    if (awaited != 0 && shape != 0) std::snprintf(item, sizeof(item), ", waiting on 0x%llx function %u ref 0x%llx mask 0x%llx", static_cast<unsigned long long>(awaited), static_cast<unsigned>(shape & 0xffffffffu), static_cast<unsigned long long>(slot.reference.load(std::memory_order_relaxed)), static_cast<unsigned long long>(slot.mask.load(std::memory_order_relaxed)));
+                    else if (awaited != 0) std::snprintf(item, sizeof(item), ", waiting on the REWIND control word at 0x%llx", static_cast<unsigned long long>(awaited));
+                    else item[0] = '\0';
+                    state += item;
+                }
+            }
+            std::snprintf(item, sizeof(item), "[gpu]   label 0x%llx queue 0x%x: %s; %zu pending", static_cast<unsigned long long>(address), queue, state.c_str(), worker.pending.size());
+            states.emplace_back(item);
+        }
+    }
+    std::fprintf(stderr, "[gpu]   label 0x%llx writers pending or running:%s\n", static_cast<unsigned long long>(address), writers.empty() ? " none" : writers.c_str());
+    for (const auto& line : states) std::fprintf(stderr, "%s\n", line.c_str());
 }
 
 bool Driver::storedSince(std::span<const std::uint32_t> packet, std::uint64_t address, std::size_t bytes, std::uint64_t received, std::uint32_t queue, std::uint32_t* writer) {

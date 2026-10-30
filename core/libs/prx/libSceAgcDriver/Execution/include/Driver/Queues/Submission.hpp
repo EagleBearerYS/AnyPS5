@@ -22,11 +22,30 @@ namespace AgcDriver::DriverDetail {
 
 enum class SubmitCheck : std::uint8_t { NotMemory, Inaccessible, EarlierWrite, UnfinishedWrite, Checked, Held };
 
+struct WaitMoment {
+    double ms = 0;
+    std::uint64_t stamp = 0;
+    std::uint64_t value = 0;
+    bool read = false;
+};
+
+struct WaitCopy {
+    WaitMoment moment;
+    std::uint64_t forgetSerial = 0;
+    std::uint64_t accessSerial = 0;
+};
+
 struct SubmitWaitCheck {
     SubmitCheck outcome = SubmitCheck::NotMemory;
     std::uint32_t writerQueue = 0;
     std::uint64_t writerSerial = 0;
     std::uint64_t value = 0;
+    bool copyRecorded = false;
+    WaitMoment copied;
+    WaitMoment checked;
+    std::uint64_t writeGeneration = 0;
+    bool rewindTail = false;
+    double validSeenMs = 0;
 };
 
 struct Submission {
@@ -48,6 +67,11 @@ struct Submission {
     std::vector<std::uint64_t> labelWrites;
     std::set<std::size_t> heldAtSubmit;
     std::vector<std::pair<std::size_t, SubmitWaitCheck>> waitChecks;
+    std::vector<std::pair<std::size_t, WaitCopy>> waitCopies;
+    double waitCopyMs = -1;
+    double waitCheckMs = -1;
+    bool rewindTailCopy = false;
+    double rewindValidSeenMs = 0;
     std::chrono::steady_clock::time_point receivedAt{};
     std::chrono::steady_clock::time_point copiedAt{};
     std::chrono::steady_clock::time_point validatedAt{};
@@ -59,6 +83,8 @@ struct Submission {
     std::size_t rewindWords = 0;
 };
 
+inline constexpr std::uint64_t AfterLastPacket = ~std::uint64_t{0};
+
 struct QueueWorker {
     std::deque<Submission> pending;
 
@@ -68,6 +94,8 @@ struct QueueWorker {
     bool executingWaits = false;
     std::uint64_t runningSerial = 0;
     std::vector<std::uint64_t> runningWrites;
+    std::atomic<std::uint64_t> executingSerial{0};
+    alignas(64) std::atomic<std::uint64_t> executingPacket{0};
     std::thread thread;
 };
 
