@@ -723,6 +723,14 @@ struct LookupOutcomes {
 };
 LookupOutcomes& ThreadLookupOutcomes();
 
+struct StorageAliasProgramScope {
+    explicit StorageAliasProgramScope(std::uint64_t program);
+    ~StorageAliasProgramScope();
+    StorageAliasProgramScope(const StorageAliasProgramScope&) = delete;
+    StorageAliasProgramScope& operator=(const StorageAliasProgramScope&) = delete;
+    std::uint64_t previous;
+};
+
 }
 
 #endif

@@ -181,7 +181,255 @@ void reportStorageTraffic(StorageTraffic& traffic) {
     traffic.directWriteBacks = 0;
 }
 
-void countStorageUpload(std::size_t path, std::uint64_t bytes) {
+bool storageAliasCensus() {
+    static const bool enabled = std::getenv("APS5_TRACE_STORAGE_ALIAS") != nullptr;
+    return enabled;
+}
+
+bool aliasBorrowDisabled() {
+    static const bool disabled = std::getenv("APS5_NO_ALIAS_BORROW") != nullptr;
+    return disabled;
+}
+
+thread_local std::uint64_t aliasProgram = 0;
+
+enum class AliasRefusal : std::size_t { NotTried, Scoped, Disabled, RefresherNotBlockUnits, OtherBase, OtherSize, AliasNotBlockUnits, Width, Height, DepthOrLayers, BaseArray, Mips, TileMode, Dimension, ElementSize, ImageLayers, ImageDepth, TrackedUnits, AliasNotCached, AliasKeysCompressed, AnotherAlias, KeysCompressed, NoHostImport, AliasUntracked, AliasUnitUntracked, PendingInBoth, Count };
+
+constexpr std::array<const char*, static_cast<std::size_t>(AliasRefusal::Count)> AliasRefusalNames{"not tried", "scoped refresh", "borrow disabled", "refresher not block units", "other base", "other size", "alias not block units", "width", "height", "depth or layers", "base array", "mips", "tile mode", "dimension", "element size", "image layers", "image depth", "tracked units", "alias not cached", "alias keys not uncompressed", "another alias chosen", "keys not uncompressed", "no host import", "alias untracked", "alias unit without generation", "unit pending in both"};
+
+struct AliasRefreshScope {
+    const StorageTexture* image = nullptr;
+    std::uint64_t program = 0;
+    std::vector<std::pair<const StorageTexture*, AliasRefusal>> candidates;
+    std::vector<std::size_t> pairs;
+    AliasRefreshScope* previous = nullptr;
+};
+
+thread_local AliasRefreshScope* aliasRefresh = nullptr;
+
+struct AliasImage {
+    std::uint64_t base = 0;
+    std::uint64_t bytes = 0;
+    std::uint32_t format = 0;
+    std::uint32_t dimension = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::uint32_t depthOrLastArray = 0;
+    std::uint32_t mips = 0;
+    std::uint32_t tile = 0;
+    bool dcc = false;
+    std::uint32_t layers = 0;
+    std::uint32_t depth = 0;
+    std::uint32_t pitch = 0;
+
+    bool Same(const AliasImage& other) const {
+        return base == other.base && bytes == other.bytes && format == other.format && dimension == other.dimension && width == other.width && height == other.height && depthOrLastArray == other.depthOrLastArray && mips == other.mips && tile == other.tile && dcc == other.dcc;
+    }
+};
+
+AliasImage aliasKey(const StorageTexture& texture) {
+    const auto& descriptor = texture.Descriptor();
+    AliasImage image;
+    image.base = descriptor.baseAddress;
+    image.bytes = texture.GuestBytes();
+    image.format = descriptor.format;
+    image.dimension = static_cast<std::uint32_t>(descriptor.dimension);
+    image.width = descriptor.width;
+    image.height = descriptor.height;
+    image.depthOrLastArray = descriptor.depthOrLastArray;
+    image.mips = descriptor.mipCount;
+    image.tile = static_cast<std::uint32_t>(descriptor.tileMode);
+    image.dcc = descriptor.dccAddress != 0;
+    return image;
+}
+
+void describeAliasImage(const StorageTexture& texture, AliasImage& image) {
+    const auto geometry = DescribeSurface(texture.Descriptor());
+    image.layers = geometry.imageLayers;
+    image.depth = geometry.imageDepth;
+    image.pitch = geometry.mips.empty() ? 0u : geometry.mips.front().pitchBytes;
+}
+
+struct AliasPrograms {
+    std::array<std::pair<std::uint64_t, std::uint64_t>, 6> entries{};
+    std::size_t used = 0;
+    std::uint64_t other = 0;
+
+    void Add(std::uint64_t program) {
+        for (std::size_t i = 0; i < used; ++i) {
+            if (entries[i].first != program) continue;
+            ++entries[i].second;
+            return;
+        }
+        if (used == entries.size()) {
+            ++other;
+            return;
+        }
+        entries[used++] = {program, 1};
+    }
+
+    std::string Top() const {
+        auto sorted = entries;
+        std::sort(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(used), [](const auto& a, const auto& b) { return a.second > b.second; });
+        std::string text;
+        char item[48];
+        for (std::size_t i = 0; i < used && i < 3; ++i) {
+            if (sorted[i].first == 0) std::snprintf(item, sizeof(item), "%snone x%llu", text.empty() ? "" : ", ", static_cast<unsigned long long>(sorted[i].second));
+            else std::snprintf(item, sizeof(item), "%s0x%llx x%llu", text.empty() ? "" : ", ", static_cast<unsigned long long>(sorted[i].first), static_cast<unsigned long long>(sorted[i].second));
+            text += item;
+        }
+        if (text.empty()) text = "none";
+        return text;
+    }
+};
+
+struct AliasPair {
+    AliasImage x;
+    AliasImage y;
+    std::uint64_t writeBacks = 0;
+    std::uint64_t writeBackBytes = 0;
+    std::uint64_t uploads = 0;
+    std::uint64_t uploadBytes = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(AliasRefusal::Count)> refusals{};
+    AliasPrograms xPrograms;
+    AliasPrograms yPrograms;
+};
+
+struct AliasCensus {
+    AgcDriver::Mutex mutex;
+    std::vector<AliasPair> pairs;
+    std::unordered_map<const StorageTexture*, std::uint64_t> writers;
+    std::uint64_t writeBacks = 0;
+    std::uint64_t writeBackBytes = 0;
+    std::uint64_t uploads = 0;
+    std::uint64_t uploadBytes = 0;
+    std::uint64_t outside = 0;
+    std::uint64_t outsideBytes = 0;
+    std::uint64_t overflow = 0;
+    std::uint64_t overflowBytes = 0;
+    std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
+};
+
+constexpr std::size_t AliasCensusPairs = 64;
+
+void reportAliasCensus(bool atExit = false);
+
+AliasCensus& Census() {
+    static AliasCensus& census = []() -> AliasCensus& {
+        static AliasCensus created;
+        static_cast<void>(AgcDriver::ProfileOutput_nid_no_patch());
+        std::atexit([] { reportAliasCensus(true); });
+        return created;
+    }();
+    return census;
+}
+
+std::string describeAliasLine(const AliasImage& image) {
+    char text[224];
+    std::snprintf(text, sizeof(text), "0x%llx+0x%llx fmt 0x%x dim %u %ux%u d/la %u layers %u depth %u mips %u tile %u pitch %u dcc %s", static_cast<unsigned long long>(image.base), static_cast<unsigned long long>(image.bytes), image.format, image.dimension, image.width, image.height, image.depthOrLastArray, image.layers, image.depth, image.mips, image.tile, image.pitch, image.dcc ? "yes" : "no");
+    return text;
+}
+
+void reportAliasCensus(bool atExit) {
+    auto& census = Census();
+    std::lock_guard lock(census.mutex);
+    const auto now = std::chrono::steady_clock::now();
+    if (!atExit && now - census.lastReport < std::chrono::seconds(10)) return;
+    if (atExit && census.writeBacks == 0 && census.uploads == 0 && census.outside == 0) return;
+    const auto windowSeconds = std::chrono::duration<double>(now - census.lastReport).count();
+    census.lastReport = now;
+    std::vector<std::size_t> order(census.pairs.size());
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return census.pairs[a].writeBackBytes + census.pairs[a].uploadBytes > census.pairs[b].writeBackBytes + census.pairs[b].uploadBytes; });
+    AgcDriver::ProfilePrint_nid_no_patch("[storage-alias] %.1f s%s: storage refresh write-backs %llu/%.1f MiB, flushed re-uploads %llu/%.1f MiB; %zu (X, Y) pairs, top %zu by bytes below; write-backs outside a refresh %llu/%.1f MiB, over the %zu-pair table %llu/%.1f MiB\n", windowSeconds, atExit ? " (at exit)" : "", static_cast<unsigned long long>(census.writeBacks), census.writeBackBytes / 1048576.0, static_cast<unsigned long long>(census.uploads), census.uploadBytes / 1048576.0, census.pairs.size(), std::min<std::size_t>(order.size(), 8), static_cast<unsigned long long>(census.outside), census.outsideBytes / 1048576.0, AliasCensusPairs, static_cast<unsigned long long>(census.overflow), census.overflowBytes / 1048576.0);
+    for (std::size_t rank = 0; rank < order.size() && rank < 8; ++rank) {
+        const auto& pair = census.pairs[order[rank]];
+        const auto overlapBegin = std::max(pair.x.base, pair.y.base);
+        const auto overlapEnd = std::min(pair.x.base + pair.x.bytes, pair.y.base + pair.y.bytes);
+        std::string refusals;
+        for (std::size_t reason = 0; reason < pair.refusals.size(); ++reason) {
+            if (pair.refusals[reason] == 0) continue;
+            char item[64];
+            std::snprintf(item, sizeof(item), "%s%s x%llu", refusals.empty() ? "" : ", ", AliasRefusalNames[reason], static_cast<unsigned long long>(pair.refusals[reason]));
+            refusals += item;
+        }
+        AgcDriver::ProfilePrint_nid_no_patch("[storage-alias] %zu: X %s | Y %s | overlap 0x%llx+0x%llx | write-back %llu/%.1f MiB, re-upload %llu/%.1f MiB | not borrowed: %s | X programs %s | Y programs %s\n", rank + 1, describeAliasLine(pair.x).c_str(), describeAliasLine(pair.y).c_str(), static_cast<unsigned long long>(overlapBegin), static_cast<unsigned long long>(overlapEnd > overlapBegin ? overlapEnd - overlapBegin : 0), static_cast<unsigned long long>(pair.writeBacks), pair.writeBackBytes / 1048576.0, static_cast<unsigned long long>(pair.uploads), pair.uploadBytes / 1048576.0, refusals.c_str(), pair.xPrograms.Top().c_str(), pair.yPrograms.Top().c_str());
+    }
+    census.pairs.clear();
+    if (census.writers.size() > 8192) census.writers.clear();
+    census.writeBacks = census.writeBackBytes = census.uploads = census.uploadBytes = 0;
+    census.outside = census.outsideBytes = census.overflow = census.overflowBytes = 0;
+}
+
+void censusWriteBack(const StorageTexture& image, std::uint64_t bytes) {
+    auto& census = Census();
+    std::lock_guard lock(census.mutex);
+    ++census.writeBacks;
+    census.writeBackBytes += bytes;
+    auto* scope = aliasRefresh;
+    if (scope == nullptr || scope->image == nullptr) {
+        ++census.outside;
+        census.outsideBytes += bytes;
+        return;
+    }
+    auto refusal = AliasRefusal::NotTried;
+    for (const auto& [candidate, reason] : scope->candidates) {
+        if (candidate != &image) continue;
+        refusal = reason;
+        break;
+    }
+    const auto x = aliasKey(*scope->image);
+    const auto y = aliasKey(image);
+    std::size_t slot = census.pairs.size();
+    for (std::size_t i = 0; i < census.pairs.size(); ++i) {
+        if (!census.pairs[i].x.Same(x) || !census.pairs[i].y.Same(y)) continue;
+        slot = i;
+        break;
+    }
+    if (slot == census.pairs.size()) {
+        if (census.pairs.size() == AliasCensusPairs) {
+            ++census.overflow;
+            census.overflowBytes += bytes;
+            return;
+        }
+        auto& added = census.pairs.emplace_back();
+        added.x = x;
+        added.y = y;
+        describeAliasImage(*scope->image, added.x);
+        describeAliasImage(image, added.y);
+    }
+    auto& pair = census.pairs[slot];
+    ++pair.writeBacks;
+    pair.writeBackBytes += bytes;
+    ++pair.refusals[static_cast<std::size_t>(refusal)];
+    pair.xPrograms.Add(scope->program);
+    const auto writer = census.writers.find(&image);
+    pair.yPrograms.Add(writer != census.writers.end() ? writer->second : 0);
+    if (std::find(scope->pairs.begin(), scope->pairs.end(), slot) == scope->pairs.end()) scope->pairs.push_back(slot);
+}
+
+void censusUpload(const StorageTexture& image, std::uint64_t bytes) {
+    auto& census = Census();
+    std::lock_guard lock(census.mutex);
+    ++census.uploads;
+    census.uploadBytes += bytes;
+    const auto* scope = aliasRefresh;
+    if (scope == nullptr || scope->image != &image) return;
+    for (const auto slot : scope->pairs) {
+        if (slot >= census.pairs.size()) continue;
+        ++census.pairs[slot].uploads;
+        census.pairs[slot].uploadBytes += bytes;
+    }
+}
+
+void censusWriter(const StorageTexture& image) {
+    auto& census = Census();
+    std::lock_guard lock(census.mutex);
+    census.writers[&image] = aliasProgram;
+}
+
+void countStorageUpload(const StorageTexture& image, std::size_t path, std::uint64_t bytes) {
+    if (storageAliasCensus() && uploadReason != nullptr && std::strcmp(uploadReason, "flushed") == 0) censusUpload(image, bytes);
     if (!LookupOutcomes::Profiled()) return;
     auto& traffic = Traffic();
     std::lock_guard lock(traffic.mutex);
@@ -193,7 +441,8 @@ void countStorageUpload(std::size_t path, std::uint64_t bytes) {
     reportStorageTraffic(traffic);
 }
 
-void countStorageWriteBack(std::uint64_t bytes, bool direct, bool drawn = false) {
+void countStorageWriteBack(const StorageTexture& image, std::uint64_t bytes, bool direct, bool drawn = false) {
+    if (storageAliasCensus() && flushReason != nullptr && std::strcmp(flushReason, "storage refresh") == 0) censusWriteBack(image, bytes);
     if (!LookupOutcomes::Profiled()) return;
     auto& traffic = Traffic();
     std::lock_guard lock(traffic.mutex);
@@ -2116,6 +2365,12 @@ LookupOutcomes& ThreadLookupOutcomes() {
     return outcomes;
 }
 
+StorageAliasProgramScope::StorageAliasProgramScope(std::uint64_t program) : previous(std::exchange(aliasProgram, program)) {}
+
+StorageAliasProgramScope::~StorageAliasProgramScope() {
+    aliasProgram = previous;
+}
+
 bool StorageTexture::Refresh() {
     return refresh(0, trackedLayers);
 }
@@ -2185,13 +2440,26 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // stamped); an untracked unit is stored whole by that write-back, and a unit pending in both
     // images takes the old order (store, then this image re-uploads it).
     auto alias = scoped ? std::shared_ptr<StorageTexture>{} : pendingAlias();
-    if (alias != nullptr && !(ProvedClearKeys(descriptor, guestBytes, keyProof) == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr)) alias = nullptr;
+    const auto* chosenAlias = alias.get();
+    auto aliasRefusal = AliasRefusal::NotTried;
+    if (alias != nullptr && ProvedClearKeys(descriptor, guestBytes, keyProof) != DccKeys::Uncompressed) {
+        aliasRefusal = AliasRefusal::KeysCompressed;
+        alias = nullptr;
+    }
+    if (alias != nullptr && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) == nullptr) {
+        aliasRefusal = AliasRefusal::NoHostImport;
+        alias = nullptr;
+    }
     if (alias != nullptr) {
         std::vector<std::uint8_t> aliasStamped(trackedLayers);
-        if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped)) alias = nullptr;
+        if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped)) {
+            aliasRefusal = AliasRefusal::AliasUntracked;
+            alias = nullptr;
+        }
         for (std::uint32_t unit = 0; alias != nullptr && unit < trackedLayers; ++unit) {
             if (!alias->layerPending[unit]) continue;
             if (alias->layerGeneration[unit] == 0 || (aliasStamped[unit] == GuestMemory::BlockUnchanged && layerPending[unit])) {
+                aliasRefusal = alias->layerGeneration[unit] == 0 ? AliasRefusal::AliasUnitUntracked : AliasRefusal::PendingInBoth;
                 alias = nullptr;
                 break;
             }
@@ -2199,6 +2467,54 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     }
     const auto scopeBegin = scoped ? layerBegin(firstLayer) : descriptor.baseAddress;
     const auto scopeBytes = scoped ? static_cast<std::size_t>(layerBegin(lastLayer - 1) + layerBytes(lastLayer - 1) - scopeBegin) : static_cast<std::size_t>(guestBytes);
+    std::optional<AliasRefreshScope> census;
+    struct CensusScope {
+        std::optional<AliasRefreshScope>& scope;
+        ~CensusScope() {
+            if (scope.has_value()) aliasRefresh = scope->previous;
+        }
+    } censusScope{census};
+    if (storageAliasCensus()) {
+        if (aliasRefresh == nullptr) reportAliasCensus();
+        const auto oneSlice = [](const GuestTextureResource& resource) { return resource.dimension == TextureDimension::k2D || (resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray == 0); };
+        const auto refusalFor = [&](const StorageTexture& other) {
+            const auto& mine = descriptor;
+            const auto& theirs = other.descriptor;
+            if (scoped) return AliasRefusal::Scoped;
+            if (aliasBorrowDisabled()) return AliasRefusal::Disabled;
+            if (!blockUnits) return AliasRefusal::RefresherNotBlockUnits;
+            if (theirs.baseAddress != mine.baseAddress) return AliasRefusal::OtherBase;
+            if (other.guestBytes != guestBytes) return AliasRefusal::OtherSize;
+            if (!other.blockUnits) return AliasRefusal::AliasNotBlockUnits;
+            if (theirs.width != mine.width) return AliasRefusal::Width;
+            if (theirs.height != mine.height) return AliasRefusal::Height;
+            if (theirs.depthOrLastArray != mine.depthOrLastArray) return AliasRefusal::DepthOrLayers;
+            if (theirs.baseArray != mine.baseArray) return AliasRefusal::BaseArray;
+            if (theirs.mipCount != mine.mipCount) return AliasRefusal::Mips;
+            if (theirs.tileMode != mine.tileMode) return AliasRefusal::TileMode;
+            if (mine.dimension != theirs.dimension && !(oneSlice(mine) && oneSlice(theirs))) return AliasRefusal::Dimension;
+            if (BytesPerElement(mine.format) != BytesPerElement(theirs.format)) return AliasRefusal::ElementSize;
+            if (geometry.imageLayers != other.geometry.imageLayers) return AliasRefusal::ImageLayers;
+            if (geometry.imageDepth != other.geometry.imageDepth) return AliasRefusal::ImageDepth;
+            if (trackedLayers != other.trackedLayers) return AliasRefusal::TrackedUnits;
+            if (!other.Cached()) return AliasRefusal::AliasNotCached;
+            if (other.uploadedKeys != DccKeys::Uncompressed) return AliasRefusal::AliasKeysCompressed;
+            if (&other != chosenAlias) return AliasRefusal::AnotherAlias;
+            return aliasRefusal;
+        };
+        census.emplace();
+        census->image = this;
+        census->program = aliasProgram;
+        census->previous = aliasRefresh;
+        {
+            auto& pending = Pending();
+            std::lock_guard lock(pending.mutex);
+            for (auto* texture : pending.textures) {
+                if (texture != this && texture->overlaps(scopeBegin, scopeBytes)) census->candidates.emplace_back(texture, refusalFor(*texture));
+            }
+        }
+        aliasRefresh = &*census;
+    }
     // No publish: the upload below reads the stored units from the unit shadow itself.
     handedOver.clear();
     handedUnits.clear();
@@ -2756,7 +3072,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
         if (batch) batch->SubmitAndWait();
         else recorder->EndGpuTiming(timing, guestBytes);
-        countStorageUpload(0, guestBytes);
+        countStorageUpload(*this, 0, guestBytes);
         ++version;
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadClear, start);
         return;
@@ -2785,7 +3101,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 runs.emplace_back(0, guestBytes);
             }
             const auto uploadedBytes = uploadWindows(*import, runs, layers == nullptr && version == 0);
-            countStorageUpload(1, uploadedBytes);
+            countStorageUpload(*this, 1, uploadedBytes);
             if (layers != nullptr) {
                 partialUploads.fetch_add(1, std::memory_order_relaxed);
                 partialUploadBytes.fetch_add(uploadedBytes, std::memory_order_relaxed);
@@ -2846,7 +3162,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             singlePassMoves.fetch_add(1, std::memory_order_relaxed);
             if (batch) batch->SubmitAndWait();
             else recorder->EndGpuTiming(timing, uploadedBytes);
-            countStorageUpload(1, uploadedBytes);
+            countStorageUpload(*this, 1, uploadedBytes);
             ++Profile().storageDirectUploads;
             ++version;
             if (profile) LookupOutcomes::Add(LookupOutcomes::UploadDirect, start);
@@ -2883,7 +3199,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
         if (batch) batch->SubmitAndWait();
         else recorder->EndGpuTiming(timing, uploadedBytes);
-        countStorageUpload(1, uploadedBytes);
+        countStorageUpload(*this, 1, uploadedBytes);
         ++Profile().storageDirectUploads;
         ++version;
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadDirect, start);
@@ -2965,7 +3281,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             batch.SubmitAndWait();
             APS5_LOG_CHARS_OUT("StorageTexture upload done");
     }
-    countStorageUpload(2, uploadedBytes);
+    countStorageUpload(*this, 2, uploadedBytes);
     ++version;
     if (profile) LookupOutcomes::Add(LookupOutcomes::UploadCpu, start);
 }
@@ -3850,6 +4166,7 @@ void StorageTexture::noteLayersBehind(std::uint32_t firstLayer, std::uint32_t la
 }
 
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
+    if (storageAliasCensus()) censusWriter(*this);
     GuestMemory::NoteGpuPending(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
@@ -5893,7 +6210,7 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
     context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &copied);
     if (batch) batch->SubmitAndWait();
     else recorder->EndGpuTiming(timing, bytes);
-    countStorageUpload(3, bytes);
+    countStorageUpload(*this, 3, bytes);
     if (borrowedFrom.lock() != source.weak_from_this().lock() || borrowedUnits.size() != trackedLayers) {
         borrowedUnits.assign(trackedLayers, false);
         borrowedFrom = source.weak_from_this();
@@ -6134,7 +6451,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (blockUnits) {
             // The kept blocks alone pass through the retiler (windows of their slices).
             const auto storedBytes = writeBackWindows(segments, keep, firstStored, lastStored, shadowed, imported, saveUnits.empty() ? nullptr : savedBytes.get());
-            countStorageWriteBack(storedBytes, true);
+            countStorageWriteBack(*this, storedBytes, true);
             if (profile) Profile().storageGpu += timer.lap();
             forgetStored();
             traceKeyStore("block write-back", descriptor, guestBytes);
@@ -6149,7 +6466,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         if (drawn.rect) {
             PublishShadow(stampBegin, static_cast<std::size_t>(stampEnd - stampBegin), PublishScope::PartialUnits, PublishReason::Upload);
             const auto storedBytes = storeDrawnRect(drawn, segments, stores, saveUnits);
-            countStorageWriteBack(storedBytes, true, true);
+            countStorageWriteBack(*this, storedBytes, true, true);
             if (profile) Profile().storageGpu += timer.lap();
             forgetStored();
             uploadedKeys = DccKeys::Uncompressed;
@@ -6268,7 +6585,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             recorder->NotePendingWrite(firstStored, static_cast<std::size_t>(lastStored - firstStored));
             if (drawn.drawn) noteStore(recorder->LastWriteNote(firstStored, static_cast<std::size_t>(lastStored - firstStored)));
         }
-        countStorageWriteBack(storedBytes, true, drawn.drawn);
+        countStorageWriteBack(*this, storedBytes, true, drawn.drawn);
         if (profile) Profile().storageGpu += timer.lap();
         // The guest bytes now differ from `original`; other caches of the range see the write.
         forgetStored();
@@ -6396,7 +6713,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     APS5_LOG_CHARS_OUT_DEBUG("StorageTexture writeback done");
     std::uint64_t storedBytes = 0;
     for (const auto& [from, to] : stores) storedBytes += to - from;
-    countStorageWriteBack(drawn.rect ? storedBytes : guestBytes, false, drawn.drawn);
+    countStorageWriteBack(*this, drawn.rect ? storedBytes : guestBytes, false, drawn.drawn);
     if (profile) Profile().storageGpu += timer.lap();
     if (dump) {
         char name[64];

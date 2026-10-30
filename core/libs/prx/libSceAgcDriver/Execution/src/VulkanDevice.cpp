@@ -5483,6 +5483,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Grap
 }
 
 VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipeOut, const std::array<std::uint32_t, 3>& threadGroup, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
+    const Graphics::StorageAliasProgramScope aliasProgramScope(programAddress);
     startJournalReplay();
     for (const auto& binding : shader.bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
@@ -5834,6 +5835,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
 }
 
 RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, const std::shared_ptr<RecipeHit>& hit, IndirectOutcome& outcome, const std::shared_ptr<PreparedDispatch>& verify, bool refreshByWords, const std::array<std::uint32_t, 3>& threadGroup) {
+    const Graphics::StorageAliasProgramScope aliasProgramScope(programAddress);
     state->recorder->BoundKeptBytes();
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     PerformanceTimer timing("Vulkan.DispatchRecipe");
