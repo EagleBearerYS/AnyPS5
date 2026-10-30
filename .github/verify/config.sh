@@ -1,0 +1,4 @@
+BASE=5ecef095b61e7a406b279c97896f3a8a6fbd6353
+REPEAT=1
+EXTRA_TESTS='agc_frame_capture|agc_driver_sample_multisample_target|^agc_driver_native_'
+VALIDATION=1
