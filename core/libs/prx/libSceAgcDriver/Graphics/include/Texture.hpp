@@ -18,6 +18,7 @@
 #include <optional>
 #include <functional>
 #include <span>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -388,6 +389,11 @@ public:
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
     std::array<std::uint64_t, 4> HintedComparison(std::uint64_t address, std::size_t bytes) const;
+    struct TrafficTotals {
+        std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> uploads;
+        std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> writeBacks;
+    };
+    static TrafficTotals CumulativeTraffic();
     std::uint64_t GuestBytes() const;
     std::uint64_t BudgetBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
@@ -549,14 +555,27 @@ private:
     // the tracked layer it belongs to, for GuestMemory::ChangedBlocks.
     void blockGenerations(std::vector<std::uint64_t>& generations) const;
     std::uint64_t unitBlockGeneration(std::uint32_t unit, std::uint64_t at) const;
-    // Another image of exactly this surface under another storage format with results pending
-    // (block units, uncompressed, still cached), if any: Refresh takes its pending units from its
-    // image on the device (borrowUnits) instead of having them stored and re-read, and the alias
-    // stays responsible for storing them until this image's own results supersede them
-    // (markLayersPending). APS5_NO_ALIAS_BORROW=1 stores and re-reads as before.
-    std::shared_ptr<StorageTexture> pendingAlias() const;
+    static constexpr std::uint32_t NoUnit = ~0u;
+    struct UnitTile {
+        std::uint32_t layer;
+        std::uint32_t level;
+        std::uint32_t x;
+        std::uint32_t y;
+        std::uint32_t width;
+        std::uint32_t height;
+    };
+    std::optional<UnitTile> unitTile(std::uint32_t unit) const;
+    struct AliasPlan {
+        std::shared_ptr<StorageTexture> alias;
+        bool sameShape = false;
+        std::vector<std::uint32_t> units;
+        std::vector<bool> copyable;
+    };
+    std::vector<AliasPlan> pendingAliases() const;
     static const char* aliasRefusal(const StorageTexture& refreshed, const StorageTexture& flushed, std::uint64_t address, std::size_t bytes, const StorageTexture* except);
     static void noteAliasFlush(const StorageTexture& refreshed, const StorageTexture& flushed, std::uint64_t address, std::size_t bytes, const StorageTexture* except);
+    static void noteAliasBorrow(const StorageTexture& refreshed, const StorageTexture& lender, std::uint64_t blocks);
+    static std::string aliasDescription(const StorageTexture& texture);
     std::optional<DccKeys> clearHandOver();
     void supersedeHandedOver(std::uint32_t first, std::uint32_t count);
     // The pending images FlushPending(address, bytes) would store (not the one a Refresh validates,
@@ -576,7 +595,7 @@ private:
     // Whether the results the last hook skip left pending over its access (AccessKeptByCpu) are
     // still the pending ones and a write-back for the range would store them.
     bool skippedResultsInside(std::uint64_t address, std::size_t bytes) const;
-    std::uint64_t borrowUnits(StorageTexture& source, const std::vector<bool>& units);
+    std::uint64_t borrowUnits(const std::vector<AliasPlan>& plans, const std::vector<std::int32_t>& lenders);
     void forgetBorrowed(std::uint32_t first, std::uint32_t count);
     bool clearByKeysFill(DccKeys keys, std::uint8_t key);
     bool overlaps(std::uint64_t address, std::size_t bytes) const;
@@ -644,10 +663,13 @@ private:
     std::uint32_t partialStores = 0;
     std::uint64_t partialWindowStart = 0;
     std::uint64_t storeWholeUntil = 0;
-    // Units holding the alias's results (see pendingAlias), at the alias's version then.
-    std::weak_ptr<StorageTexture> borrowedFrom;
-    std::uint64_t borrowedVersion = 0;
-    std::vector<bool> borrowedUnits;
+    struct BorrowedUnit {
+        std::weak_ptr<StorageTexture> from;
+        std::uint64_t version = 0;
+        std::uint32_t unit = 0;
+        bool held = false;
+    };
+    std::vector<BorrowedUnit> borrowedUnits;
     std::vector<std::pair<std::weak_ptr<StorageTexture>, std::uint64_t>> handedOver;
     std::vector<bool> handedUnits;
     // Units of this image were borrowed since it was last written: the borrower's proofs
