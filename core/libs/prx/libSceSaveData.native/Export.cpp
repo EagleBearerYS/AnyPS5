@@ -122,7 +122,7 @@ void StartEventDelivery() {
     std::lock_guard lock(callbacks.mutex);
     if (callbacks.worker != nullptr) return;
     if (scePthreadCreate(&worker->thread, nullptr, DeliverEvents, worker.get(), "SceSaveDataEventCallback") != 0) {
-        throw std::runtime_error("sceSaveDataInitialize3: scePthreadCreate failed for the event callback thread");
+        throw std::runtime_error("sceSaveDataRegisterEventCallback: scePthreadCreate failed for the event callback thread");
     }
     callbacks.worker = worker.release();
 }
@@ -1011,7 +1011,6 @@ int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
 int APS5_VABI sceSaveDataInitialize3(const void* init) {
     (void)init;
     std::lock_guard lock(g_slots_mutex);
-    if (g_initializations == 0) StartEventDelivery();
     ++g_initializations;
     return SAVE_DATA_OK;
 }
@@ -1770,6 +1769,7 @@ int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, v
     if (callback == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    StartEventDelivery();
     std::lock_guard lock(callbacks.mutex);
     callbacks.callback = callback;
     callbacks.userdata = userdata;

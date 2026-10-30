@@ -11,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <random>
 #include <string>
@@ -134,6 +135,21 @@ private:
     std::thread thread;
 };
 
+#ifdef __linux__
+std::size_t TaskCount() {
+    return static_cast<std::size_t>(std::distance(std::filesystem::directory_iterator("/proc/self/task"), std::filesystem::directory_iterator{}));
+}
+
+bool WaitForTaskCount(std::size_t count) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (TaskCount() != count) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+#endif
+
 void WriteText(const std::filesystem::path& path, const std::string& text) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     file << text;
@@ -185,6 +201,43 @@ void CheckDelivered(std::size_t index, int callback, void* userdata, std::uint32
     const auto polled = Poll(what);
     Check(SameEvent(polled, call.event), what + " is the event the poll returns");
 }
+
+void CheckSessionsWithoutRegistration() {
+#ifdef __linux__
+    const auto before = TaskCount();
+#endif
+    for (int session = 0; session < 2; ++session) {
+        const auto label = "session " + std::to_string(session) + " without a registration";
+        Check(sceSaveDataInitialize3(nullptr) == 0, label + ": SaveData initializes");
+#ifdef __linux__
+        Check(TaskCount() == before, label + ": Initialize3 starts no thread, " + std::to_string(before) + " threads before and " + std::to_string(TaskCount()) + " after");
+#endif
+        Check(sceSaveDataTerminate() == 0, label + ": SaveData terminates");
+    }
+}
+
+#ifdef __linux__
+void CheckDeliveryThreadStartsAtRegistration() {
+    const auto before = TaskCount();
+    const auto counted = [&](const std::string& what) { return what + ", " + std::to_string(before) + " threads before and " + std::to_string(TaskCount()) + " now"; };
+    int tag = 0;
+    Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes for the delivery thread check");
+    Check(TaskCount() == before, counted("Initialize3 starts no delivery thread"));
+    Check(sceSaveDataRegisterEventCallback(nullptr, &tag) == SaveDataErrorParameter, "a null callback is PARAMETER in the delivery thread check");
+    Check(TaskCount() == before, counted("a refused registration starts no delivery thread"));
+    Check(sceSaveDataRegisterEventCallback(First, &tag) == 0, "the first callback registers in the delivery thread check");
+    Check(TaskCount() == before + 1, counted("the first registration starts one delivery thread"));
+    Check(sceSaveDataRegisterEventCallback(Second, &tag) == 0, "the second callback registers in the delivery thread check");
+    Check(sceSaveDataUnregisterEventCallback() == 0, "the second callback unregisters in the delivery thread check");
+    Check(sceSaveDataRegisterEventCallback(First, &tag) == 0, "the first callback registers again in the delivery thread check");
+    Check(TaskCount() == before + 1, counted("a replacing registration and one after an unregister reuse the delivery thread"));
+    {
+        Watchdog watchdog("the terminate that joins the delivery thread");
+        Check(sceSaveDataTerminate() == 0, "SaveData terminates after the delivery thread check");
+    }
+    Check(WaitForTaskCount(before), counted("the final terminate joins the delivery thread within 5 s"));
+}
+#endif
 
 void CheckRegistration() {
     int tag = 0;
@@ -394,6 +447,10 @@ int main() {
     std::filesystem::current_path(root);
     int firstTag = 0;
     int secondTag = 0;
+    CheckSessionsWithoutRegistration();
+#ifdef __linux__
+    CheckDeliveryThreadStartsAtRegistration();
+#endif
     CheckRegistration();
     CheckBackupDelivery(&firstTag);
     CheckUmountWithBackupDelivery(&firstTag);
