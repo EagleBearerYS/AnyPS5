@@ -3046,7 +3046,7 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
     const auto index = GuestMemory::WriteIndexCounted();
     GuestMemory::ResetWriteIndexCounts();
     std::string sources;
-    constexpr std::array<const char*, static_cast<std::size_t>(GuestMemory::WriteBumpSource::Count)> SourceNames{"cpu", "driver", "pending", "unwatch", "forget", "release", "import"};
+    constexpr std::array<const char*, static_cast<std::size_t>(GuestMemory::WriteBumpSource::Count)> SourceNames{"cpu", "driver", "pending", "unwatch", "forget", "release", "import", "depth"};
     for (std::size_t i = 0; i < SourceNames.size(); ++i) sources += " " + std::string(SourceNames[i]) + " " + std::to_string(index.bySource[i]);
     static std::array<std::uint64_t, IndexCountCount> reported{};
     std::array<std::uint64_t, IndexCountCount> counts{};
@@ -3624,7 +3624,7 @@ void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
         const auto& surface = validatedTextures[i];
         const auto begin = surface.resource.baseAddress;
         const auto bytes = surface.bytes;
-        if (!surface.valid || surface.depth || bytes == 0) {
+        if (!surface.valid || surface.depth || bytes == 0 || (textures[i] != nullptr && textures[i]->Released())) {
             perElementTextures.push_back(i);
             continue;
         }
@@ -3793,6 +3793,7 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
             return false;
         }
         validatedTextures[i] = {found->resource, found->bytes, found->keys, found->generation, 0, found->source, found->depth, true};
+        if ((found->depth || found->source != nullptr || found->resource.dccAddress != 0) && std::find(comparedTextures.begin(), comparedTextures.end(), i) == comparedTextures.end() && std::find(perElementTextures.begin(), perElementTextures.end(), i) == perElementTextures.end()) perElementTextures.push_back(i);
     }
     lookupLog().clear();
     return true;
@@ -4096,7 +4097,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
         if (fallback != OwnRefreshFallback::Count) countOwnRefreshFallback(fallback);
     }
-    if (fast && TemplateAuditDue(lastFullWalk)) {
+    if (fast && !indexProved && TemplateAuditDue(lastFullWalk)) {
         fast = false;
         ownRefreshed = false;
         reason = FastFail::Audit;

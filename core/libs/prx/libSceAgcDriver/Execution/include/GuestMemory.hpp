@@ -84,7 +84,8 @@ void TrimSubscriptionBumps(WriteSubscription& subscription, std::uint64_t genera
 std::uint64_t WriteBlockOf(std::uint64_t address);
 void NoteGpuPending(std::uint64_t address, std::size_t bytes);
 void NoteTextureReleased(std::uint64_t address);
-enum class WriteBumpSource : std::uint8_t { Cpu, Driver, Pending, Unwatch, Forget, Release, Import, Count };
+void NoteDepthRegistered(std::uint64_t address, std::size_t bytes);
+enum class WriteBumpSource : std::uint8_t { Cpu, Driver, Pending, Unwatch, Forget, Release, Import, Depth, Count };
 struct WriteIndexStats {
     std::uint64_t subscriptions = 0;
     std::uint64_t blocks = 0;
