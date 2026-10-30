@@ -2309,6 +2309,7 @@ private:
 
         if (buffer != BufferAccess::None) {
             if (!TakeGpuDescriptor(inst, flags.index)) fail("buffer operation requires a four-dword runtime V#");
+            if (bdaTraceEnabled() && buffer == BufferAccess::Atomic) std::fprintf(stderr, "[bda] %s at pc 0x%08x: buffer atomic through a runtime V#\n", std::string(IrOpcodeName(op)).c_str(), flags.pc);
             return;
         }
         if (addressInfo.access != AddressAccess::None) {
@@ -2331,7 +2332,7 @@ private:
             // reason a stage takes the BDA path can be read off without a shader dump.
             // The first few accesses of a program are printed (a Bink kernel has hundreds); Run
             // reports how many more there were.
-            if (bdaTraceEnabled() && ++m_bdaTraces <= bdaTraceLimit) {
+            if (bdaTraceEnabled() && (addressInfo.access == AddressAccess::Atomic || ++m_bdaTraces <= bdaTraceLimit)) {
                 const auto* kind = memory.kind == ResourceKind::ScalarAddress ? "scalar address" : memory.kind == ResourceKind::Global ? "global" : "flat";
                 const IrValue* offset = inst.ArgumentCount() > 1 ? inst.Argument(1)->Resolve() : nullptr;
                 const bool immediateOffset = offset != nullptr && offset->HasImmediate();
