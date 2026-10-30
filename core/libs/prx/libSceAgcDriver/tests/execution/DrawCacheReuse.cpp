@@ -324,7 +324,7 @@ void LowHitRateBypassesTheCache() {
 }
 
 void ColdSceneKeepsTheCacheLookedUp() {
-    constexpr std::size_t Frames = 4, SceneDraws = 1000;
+    constexpr std::size_t Frames = 4, SceneDraws = 200;
     const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
     const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
     const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
@@ -333,14 +333,16 @@ void ColdSceneKeepsTheCacheLookedUp() {
     float scale = 5000.0f;
     std::vector<float> scene(SceneDraws);
     for (auto& value : scene) value = scale += 0.25f;
+    CloseWindow(false);
+    NoteLookups(DrawCacheBypass::Window - 2 * SceneDraws, false);
     auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
     for (std::size_t frame = 1; frame <= Frames; ++frame) {
         const auto after = Submit(ScaledDraws(scene));
         const auto hits = after.hits - before.hits;
-        if (frame == Frames) Require(10 * hits >= 9 * SceneDraws, mode + ": frame " + std::to_string(frame) + " of a scene that repeats the same 1000 new draws every frame hit " + std::to_string(hits) + " of them, expected at least 90%");
+        if (frame == Frames) Require(10 * hits >= 9 * SceneDraws, mode + ": frame " + std::to_string(frame) + " of a scene that repeats the same 200 new draws every frame, its first two frames closing a window of misses, hit " + std::to_string(hits) + " of them, expected at least 90%");
         before = after;
     }
-    std::cout << mode << ": a scene of 1000 new draws repeated every frame hit the draw cache by its fourth frame\n";
+    std::cout << mode << ": a scene of 200 new draws repeated every frame, its first two frames closing a window of misses, hit the draw cache by its fourth frame\n";
 }
 
 void StageHitsKeepTheCacheLookedUp() {
