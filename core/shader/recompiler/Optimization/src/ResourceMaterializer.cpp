@@ -716,7 +716,10 @@ public:
         for (const auto& sampler : plan.info.samplers) {
             if (sampler.table != NoTable) {
                 count = std::max(count, sampler.table + 1u);
-                if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value() && plan.descriptorSources[sampler.source].tableColumn->indirect) hasIndirect = true;
+                if (sampler.source < plan.descriptorSources.size() && plan.descriptorSources[sampler.source].tableColumn.has_value()) {
+                    const auto& column = *plan.descriptorSources[sampler.source].tableColumn;
+                    hasIndirect |= column.indirect || plan.descriptorSources.at(column.heapSource).tableColumn.has_value();
+                }
             }
         }
         if (count == 0u) {
