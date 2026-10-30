@@ -1,2 +1,2 @@
-BUSY PRM-081
-machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 20 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at diag/village-read-sites-on-306fc4cfb4 141937e69e); origin and upstream fetched, upstream main 51c31ea17e; lavapipe only, no GPU, no IPv6
+READY 2026-10-30T19:48:43Z: PRM-081 done
+machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 20 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at prm/9586-main-4bc9e779aa 2831b2367d); origin and upstream fetched, upstream main 51c31ea17e; lavapipe only, no GPU, no IPv6
