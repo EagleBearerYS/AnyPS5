@@ -271,6 +271,7 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         inputLock.lock();
         recordLabelsForPacket(localDevice.get(), queueId);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(memoryFill->valueAddress), 4)) return false;
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ClearInputs);
         GuestMemory::Read(memoryFill->valueAddress, std::as_writable_bytes(std::span(pattern).first(1)), 4);
         std::fill(pattern.begin() + 1, pattern.end(), pattern[0]);
         base = memoryFill->address;
@@ -284,6 +285,7 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         inputLock.lock();
         recordLabelsForPacket(localDevice.get(), queueId);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range->control), 8)) return false;
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ClearInputs);
         std::array<std::uint32_t, 2> control;
         GuestMemory::Read(range->control, std::as_writable_bytes(std::span(control)), 4);
         const auto count = range->UniformBytes(control[0], control[1]);
@@ -314,6 +316,7 @@ bool Driver::fillBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
             inputLock.lock();
             recordLabelsForPacket(localDevice.get(), queueId);
             if (!GuestMemory::Accessible(reinterpret_cast<const void*>(source), sizeof(pattern))) return false;
+            const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ClearInputs);
             GuestMemory::Read(source, std::as_writable_bytes(std::span(pattern)), 4);
         } else {
             pattern = {userData[4], userData[5], userData[6], userData[7]};

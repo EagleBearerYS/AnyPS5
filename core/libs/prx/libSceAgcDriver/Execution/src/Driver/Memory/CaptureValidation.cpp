@@ -7,6 +7,7 @@
 namespace AgcDriver::DriverDetail {
 
 bool Driver::captureStable(std::span<const ShaderRecompiler::MemoryRegion> captured) {
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::CaptureCheck);
     using Policy = ShaderMemory::PendingWrite;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     std::uint64_t ValidateCounters::*reason = &ValidateCounters::syncedOff;
@@ -124,6 +125,7 @@ bool Driver::validateCaptured(std::uint64_t program, std::uint32_t queue, std::s
                 continue;
             }
             const auto& region = captured[i];
+            const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::CaptureCheck);
             const bool isPending = next < pending.size() && pending[next] == i;
             if (isPending) ++next;
             const bool unsynced = isPending ? rawPending : inPlace;

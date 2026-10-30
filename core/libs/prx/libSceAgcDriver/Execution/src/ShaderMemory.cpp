@@ -567,6 +567,7 @@ bool ShaderMemory::Vouched(PendingWriteQuery pending, std::uint64_t address, std
     CaptureTotals().vouchCalls.fetch_add(1, std::memory_order_relaxed);
     if (stamp.generation == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes || stamp.layout != GuestAllocations::GuestAllocationsGeneration_nid_postfix()) return false;
     if (pending != nullptr && pending(address, static_cast<std::size_t>(bytes), {}) != PendingWrite::None) return false;
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ShaderWords);
     GuestMemory::FlushGpuWrites(address, static_cast<std::size_t>(bytes));
     if (GuestMemory::CollectWrites(address, static_cast<std::size_t>(bytes)) == 0) return false;
     return GuestMemory::UnchangedSince(address, static_cast<std::size_t>(bytes), stamp.generation);

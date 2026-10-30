@@ -29,6 +29,7 @@ std::shared_ptr<Texture> TextureCache::Get(std::span<const std::uint32_t> words,
     std::copy(words.begin(), words.end(), key.begin());
     for (auto it = entries.begin(); it != entries.end(); ++it) {
         if (it->descriptor != key) continue;
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::TextureCompare);
         if (GuestMemory::EqualsCommitted(resource.baseAddress, it->snapshot)) {
             auto result = it->texture;
             entries.splice(entries.end(), entries, it);
@@ -43,6 +44,7 @@ std::shared_ptr<Texture> TextureCache::Get(std::span<const std::uint32_t> words,
     const auto bytes = ComputeSurfaceSize(mips, layers);
     Require(bytes != 0 && bytes <= std::numeric_limits<std::size_t>::max(), "texture cache surface size overflow");
     std::vector<std::byte> snapshot(static_cast<std::size_t>(bytes));
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::TextureRead);
     GuestMemory::ReadCommitted(resource.baseAddress, snapshot);
     auto texture = std::make_shared<Texture>(context, *context.detiler, resource, components, snapshot);
     const auto retained = snapshot.size() + texture->AllocationBytes();

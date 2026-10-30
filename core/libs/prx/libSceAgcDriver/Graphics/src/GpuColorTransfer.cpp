@@ -121,6 +121,7 @@ void GpuColorTransfer::prepare(std::uint32_t newWidth, std::uint32_t newHeight, 
 void GpuColorTransfer::Upload(std::uint64_t address, std::uint32_t newWidth, std::uint32_t newHeight, ColorTileMode newMode, std::uint32_t newElementBytes) {
     prepare(newWidth, newHeight, newMode, newElementBytes);
     const ColorTargetLayout layout(width, height, mode, elementBytes);
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::RenderTarget);
     GuestMemory::Read(address, tiled->Bytes(), layout.Alignment());
 }
 

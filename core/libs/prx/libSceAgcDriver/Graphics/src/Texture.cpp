@@ -2595,6 +2595,7 @@ void traceKeyStore(const char* path, const GuestTextureResource& descriptor, std
 }
 
 void StorageTexture::captureGuestBytes(const std::vector<bool>* layers) {
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::StorageCapture);
     original.resize(static_cast<std::size_t>(guestBytes));
     comparedRanges = {};
     std::vector<bool> selected(trackedLayers, true);
@@ -2623,6 +2624,7 @@ bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, 
         ~Exempt() { refreshing = previous; }
     } exempt{refreshing};
     refreshing = this;
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::StorageCompare);
     Require(address >= descriptor.baseAddress && bytes <= guestBytes && address - descriptor.baseAddress <= guestBytes - bytes, "texture comparison exceeds its snapshot");
     Require(original.size() == guestBytes, "texture comparison has no complete snapshot");
     GuestMemory::FlushGpuWrites(address, bytes);
@@ -2705,6 +2707,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     if (layers != nullptr && ((!blockUnits && trackedLayers != arrayLayers) || std::all_of(layers->begin(), layers->end(), [](bool selected) { return selected; }))) layers = nullptr;
     auto now = GuestMemory::CollectWrites(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     const auto stampLayers = [&](bool selectedOnly) {
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::StorageUpload);
         const bool whole = !selectedOnly || layers == nullptr;
         if (guestBytes > GenerationBaselineBytes || !guestBytesSettled()) generationBaseline.clear();
         else if (whole) {
@@ -2929,6 +2932,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         forgetBorrowed(0, trackedLayers);
         stampLayers(false);
         original.resize(static_cast<std::size_t>(guestBytes));
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::StorageUpload);
         GuestMemory::ReadCommitted(descriptor.baseAddress, original);
     }
     {
@@ -6463,6 +6467,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     std::vector<bool> unsaved = layerOriginal;
     unsaved.flip();
     for (const auto& [begin, end] : unitRuns(unsaved)) {
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::StorageWriteBack);
         if (drawn.rect) {
             GuestMemory::ReadCommitted(descriptor.baseAddress + begin, std::span(original).subspan(static_cast<std::size_t>(begin), static_cast<std::size_t>(end - begin)));
             continue;

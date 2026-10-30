@@ -137,12 +137,14 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     for (auto& range : state.initial) {
         if (auto* recorder = RecorderFor(context)) recorder->SyncThrough(range.address, range.bytes);
         StorageTexture::FlushPending(range.address, range.bytes);
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::DepthSurface);
         GuestMemory::FlushGpuWrites(range.address, range.bytes);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(range.address), range.bytes) || !GuestMemory::Watched(range.address, range.bytes)) return refuse("native multisample depth import requires watched accessible guest memory");
         range.generation = GuestMemory::CollectWritesUncached(range.address, range.bytes);
         if (range.generation == 0u) return refuse("native multisample depth import requires tracked generations");
     }
     std::vector<std::uint32_t> metadata(htile.bytes / sizeof(std::uint32_t));
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Htile);
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(metadata)), 256u);
     for (const auto word : metadata) {
         if (!htileProvesClear(word, target.htileDepthOnly, target.clearDepth)) return refuse("native multisample depth initial HTILE does not prove its clear value");
@@ -230,6 +232,7 @@ std::optional<DepthPlaneOverwrite> decodeOverwrite(const StorageImageClear& clea
     if (StorageTexture::AnyPendingOverlaps(std::span(&colorRange, 1))) return decline(DeclinePending);
     std::uint32_t c0 = 0;
     try {
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ClearInputs);
         GuestMemory::Read(base, std::as_writable_bytes(std::span(&c0, 1)), 4);
     } catch (...) {
         return decline(DeclineColor);
@@ -668,6 +671,7 @@ public:
         if (described.baseAddress != view.baseAddress || described.format != view.format || described.tileMode != view.tileMode || described.dimension != view.dimension) return false;
         std::uint32_t current = 0;
         try {
+            const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ClearInputs);
             GuestMemory::Read(overwrite->colorAddress, std::as_writable_bytes(std::span(&current, 1)), 4);
         } catch (...) {
             return false;
@@ -1348,6 +1352,7 @@ public:
                 continue;
             }
             auto upload = std::make_shared<Buffer>(context, static_cast<std::size_t>(geometry.layerBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+            const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::DepthSurface);
             GuestMemory::ReadCommitted(current.address, upload->Bytes().first(static_cast<std::size_t>(geometry.layerBytes)));
             uploads.push_back(std::move(upload));
             uploadLayers.push_back(layer);
@@ -1854,6 +1859,7 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
         }
     }
     std::vector<std::uint32_t> words(bytes / 4u);
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Htile);
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(words)), 4);
     VkImageAspectFlags cleared = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
     for (const auto word : words) cleared &= HtileFillClears(word, target.htileStencil);
@@ -2309,6 +2315,7 @@ std::optional<MemoryValueFill> MatchMemoryValueFill(std::span<const std::uint32_
 
 void NoteMemoryValueFill(const MemoryValueFill& fill) {
     std::uint32_t value = 0;
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ClearInputs);
     GuestMemory::Read(fill.valueAddress, std::as_writable_bytes(std::span(&value, 1)), 4);
     NoteDepthMetadataFill(fill.address, fill.bytes, value);
 }

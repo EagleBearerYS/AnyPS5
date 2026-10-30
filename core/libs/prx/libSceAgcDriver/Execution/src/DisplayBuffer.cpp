@@ -249,6 +249,7 @@ std::vector<std::byte> ReadDisplayBuffer(const DisplayBuffer& buffer) {
         static const auto start = std::chrono::steady_clock::now();
         std::fprintf(stderr, "[gpu] scanout display buffer 0x%llx %ux%u format 0x%016llx at %.1f s\n", static_cast<unsigned long long>(buffer.address), buffer.width, buffer.height, static_cast<unsigned long long>(buffer.pixelFormat), std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
     }
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Scanout);
     GuestMemory::FlushGpuWrites(buffer.address, size);
     GuestMemory::CheckRange(reinterpret_cast<const void*>(buffer.address), size, buffer.alignment);
     const auto* source = reinterpret_cast<const std::byte*>(buffer.address);
@@ -267,6 +268,7 @@ std::vector<std::byte> DisplayBufferTexels(const DisplayBuffer& buffer, std::spa
 
 std::vector<std::byte> ReadDisplayBufferTexels(const DisplayBuffer& buffer) {
     const auto size = DisplayBufferSize(buffer);
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Scanout);
     GuestMemory::FlushGpuWrites(buffer.address, size);
     GuestMemory::CheckRange(reinterpret_cast<const void*>(buffer.address), size, buffer.alignment);
     return DisplayBufferTexels(buffer, {reinterpret_cast<const std::byte*>(buffer.address), size});

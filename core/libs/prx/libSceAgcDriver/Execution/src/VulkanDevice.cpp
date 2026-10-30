@@ -3351,6 +3351,7 @@ VkClearColorValue PqClearValue(const DisplayBuffer& buffer) {
 }
 
 std::optional<std::array<std::byte, 4>> CompressedClearPixel(const DisplayBuffer& buffer, std::size_t bytes) {
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Scanout);
     GuestMemory::FlushGpuWrites(buffer.address, bytes);
     const auto keys = DisplayBufferKeys(buffer);
     if (keys == Graphics::DccKeys::Uncompressed) return std::nullopt;
@@ -3407,6 +3408,7 @@ PlaneSource OverlayPlaneSource(const Graphics::Context& context, const DisplayBu
         }
     }
     const auto bytes = DisplayBufferSize(buffer);
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Scanout);
     GuestMemory::FlushGpuWrites(buffer.address, bytes);
     const auto keys = buffer.dccAddress != 0 ? DisplayBufferKeys(buffer) : Graphics::DccKeys::Uncompressed;
     if (keys == Graphics::DccKeys::Uncompressed) {
@@ -5117,6 +5119,7 @@ void VulkanDevice::decideIndirect(RecordedDispatch& record, IndirectOutcome& out
     const auto readStart = std::chrono::steady_clock::now();
     Graphics::FinishLeaseWork();
     std::array<std::uint32_t, 3> groups{};
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::IndirectArguments);
     GuestMemory::Read(arguments, std::as_writable_bytes(std::span(groups)), 4);
     if (threadDimensions) {
         record.threadLimit = groups;

@@ -79,6 +79,7 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnosti
 }
 
 std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ShaderCode);
     const auto drain = [](std::uint64_t first, std::size_t bytes) {
         if (!DrawPipeline::Active()) return;
         auto& pipeline = DrawPipeline::Queue0();
@@ -975,6 +976,7 @@ std::string hexText(std::uint64_t value) {
 }
 
 std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32_t linkRegister) {
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::ShaderCode);
     constexpr std::uint64_t page = 4096u;
     constexpr std::size_t limitWords = 16384u;
     if (address % 4u != 0u) throw std::runtime_error("its callee address " + hexText(address) + " is not dword aligned");

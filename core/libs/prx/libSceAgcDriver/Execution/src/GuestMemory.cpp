@@ -38,6 +38,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include "prx/libSceAgcDriver/Execution/include/StackWalk.hpp"
 #include <windows.h>
 #else
 #include <cerrno>
@@ -451,7 +452,7 @@ PacketTag CurrentPacket() {
 }
 
 const char* ReadSiteName(ReadSite site) {
-    static const char* const names[static_cast<std::size_t>(ReadSite::Count)] = {"unknown", "capture", "dispatch-cache", "texture-compare", "texture-read", "buffer-upload", "index-buffer", "vertex-buffer", "registers", "indirect-args", "wait", "label", "scanout", "store", "mirror-refresh", "draw-cache"};
+    static const char* const names[static_cast<std::size_t>(ReadSite::Count)] = {"unknown", "capture", "dispatch-cache", "texture-compare", "texture-read", "buffer-upload", "index-buffer", "vertex-buffer", "registers", "indirect-args", "wait", "label", "scanout", "store", "mirror-refresh", "draw-cache", "storage-capture", "storage-compare", "storage-upload", "storage-write-back", "metadata", "vertex-descriptors", "depth-surface", "htile", "clear-inputs", "render-target", "cmask", "wait-flush", "shader-words", "capture-check", "shader-code"};
     const auto index = static_cast<std::size_t>(site);
     return index < static_cast<std::size_t>(ReadSite::Count) ? names[index] : "?";
 }
@@ -469,31 +470,49 @@ ReadSite CurrentReadSite() {
 std::size_t CaptureCallerOffsets(std::span<unsigned long long> frames, unsigned skip) {
     if (frames.empty()) return 0;
 #ifdef _WIN32
-    // Walks the x64 unwind tables, so it needs no frame pointers (unlike __builtin_return_address(n)
-    // for n > 0); frame 0 of the capture is this function's caller.
-    void* raw[16];
-    const auto wanted = static_cast<DWORD>(std::min<std::size_t>(frames.size(), std::size(raw)));
-    const auto captured = RtlCaptureStackBackTrace(1 + skip, wanted, raw, nullptr);
-    // The driver's module is resolved once (this function lives in it): a per-frame
-    // GetModuleHandleEx would take the loader lock several times per sync under the GpuMutex.
     static const auto module = [] {
         HMODULE handle = nullptr;
         GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(&CaptureCallerOffsets), &handle);
-        std::uintptr_t size = 0;
-        if (handle != nullptr) {
-            // The image size comes from the mapped PE headers (no psapi dependency).
-            const auto* base = reinterpret_cast<const std::byte*>(handle);
-            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-            const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
-            size = nt->OptionalHeader.SizeOfImage;
+        if (handle == nullptr) return AgcDriver::DwarfFrames(0, 0, nullptr, nullptr);
+        const auto base = reinterpret_cast<std::uint64_t>(handle);
+        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+        const auto* sections = IMAGE_FIRST_SECTION(nt);
+        const AgcDriver::DwarfFrames::Byte* records = nullptr;
+        const AgcDriver::DwarfFrames::Byte* recordsEnd = nullptr;
+        for (unsigned index = 0; index < nt->FileHeader.NumberOfSections; ++index) {
+            if (std::memcmp(sections[index].Name, ".ehfram", 8) != 0) continue;
+            records = reinterpret_cast<const AgcDriver::DwarfFrames::Byte*>(base + sections[index].VirtualAddress);
+            recordsEnd = records + sections[index].Misc.VirtualSize;
         }
-        return std::pair(reinterpret_cast<std::uintptr_t>(handle), size);
+        return AgcDriver::DwarfFrames(base, base + nt->OptionalHeader.SizeOfImage, records, recordsEnd);
     }();
-    for (std::size_t i = 0; i < captured; ++i) {
-        const auto address = reinterpret_cast<std::uintptr_t>(raw[i]);
-        frames[i] = module.first != 0 && address >= module.first && address - module.first < module.second ? address - module.first : 0;
+    const auto* block = reinterpret_cast<const NT_TIB*>(NtCurrentTeb());
+    const auto stackLow = reinterpret_cast<std::uint64_t>(block->StackLimit);
+    const auto stackHigh = reinterpret_cast<std::uint64_t>(block->StackBase);
+    const auto read = [&](std::uint64_t address, std::uint64_t& value) {
+        if (address < stackLow || address > stackHigh - sizeof(value)) return false;
+        std::memcpy(&value, reinterpret_cast<const void*>(address), sizeof(value));
+        return true;
+    };
+    CONTEXT context{};
+    RtlCaptureContext(&context);
+    std::size_t written = 0;
+    for (unsigned frame = 0; written < frames.size() && context.Rip != 0; ++frame) {
+        if (frame > skip) frames[written++] = module.Contains(context.Rip) ? context.Rip - module.Base() : 0;
+        DWORD64 imageBase = 0;
+        if (auto* entry = RtlLookupFunctionEntry(context.Rip, &imageBase, nullptr)) {
+            PVOID handler = nullptr;
+            DWORD64 establisher = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, imageBase, context.Rip, entry, &context, &handler, &establisher, nullptr);
+            continue;
+        }
+        AgcDriver::DwarfFrames::Registers registers{context.Rax, context.Rdx, context.Rcx, context.Rbx, context.Rsi, context.Rdi, context.Rbp, context.Rsp, context.R8, context.R9, context.R10, context.R11, context.R12, context.R13, context.R14, context.R15, context.Rip};
+        if (module.Unwind(registers, false, read) != AgcDriver::DwarfFrames::Step::Stepped) break;
+        DWORD64* columns[] = {&context.Rax, &context.Rdx, &context.Rcx, &context.Rbx, &context.Rsi, &context.Rdi, &context.Rbp, &context.Rsp, &context.R8, &context.R9, &context.R10, &context.R11, &context.R12, &context.R13, &context.R14, &context.R15, &context.Rip};
+        for (std::size_t column = 0; column < registers.size(); ++column) *columns[column] = registers[column];
     }
-    return captured;
+    return written;
 #else
     static_cast<void>(skip);
     frames[0] = ModuleOffset(__builtin_return_address(0));

@@ -353,6 +353,7 @@ void storeSingleTexels(const Context& context, const ColorTarget& color) {
     Require(surface.Bytes() == color.bytes, "comp-to-single DCC keys over a color target whose layout differs from its surface");
     StorageTexture::FlushPending(color.address, color.bytes, nullptr, "comp-to-single expansion");
     std::vector<std::byte> texels(color.bytes);
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::RenderTarget);
     GuestMemory::Read(color.address, texels, surface.Alignment());
     constexpr std::size_t BlockBytes = 256;
     for (std::uint32_t y = 0; y < color.extent.height; ++y) {
@@ -442,6 +443,7 @@ CmaskState readCmask(const ColorTarget& color, const CmaskLayout& layout, std::v
         }
     }
     std::vector<std::byte> mask(bytes);
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Cmask);
     GuestMemory::Read(address, mask, CmaskLayout::Alignment);
     const auto uniform = [&](std::byte value) { return std::all_of(mask.begin(), mask.end(), [&](std::byte entry) { return entry == value; }); };
     if (color.coverageSamples > color.samples) {
@@ -476,6 +478,7 @@ void storeCmaskClearTexels(const ColorTarget& color, const CmaskLayout& layout, 
     const ColorTargetLayout surface(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
     Require(surface.Bytes() == color.bytes, "CMASK fast clear over a color target whose layout differs from its surface");
     std::vector<std::byte> texels(surface.Bytes());
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::RenderTarget);
     GuestMemory::Read(color.address, texels, surface.Alignment());
     const auto fill = [&](std::uint32_t tile) {
         const auto x0 = (tile % layout.TilesX()) * 8u;
@@ -1491,6 +1494,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             }
         };
         if (draw.indexed) {
+            const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::IndexBuffer);
             GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
             GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
             const auto readIndex = [&](std::uint32_t idx) -> std::uint32_t {
@@ -1518,6 +1522,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.expandedIndexCount = outputIndexCount;
         inputs.indices = std::move(indexCopy);
     } else if (draw.indexed) {
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::IndexBuffer);
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         const bool fanGeometry = state.stages.mesh && state.stages.mesh->inputPrimitive == 5;
         const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart) && !fanGeometry;
@@ -1637,6 +1642,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     rangeHandles.reserve(plan.copies.size());
     rangeOffsets.reserve(plan.copies.size());
     for (std::size_t range = 0; range < plan.copies.size(); ++range) {
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::VertexBuffer);
         const auto [begin, end] = plan.copies[range];
         const auto bytes = static_cast<std::size_t>(end - begin);
         GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
@@ -1655,6 +1661,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
     }
     std::vector<VkBuffer> soloHandles(fetches.size(), VK_NULL_HANDLE);
     for (const auto f : soloFetches) {
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::VertexBuffer);
         const auto begin = fetches[f].begin;
         const auto bytes = static_cast<std::size_t>(fetches[f].end - begin);
         auto copy = CopyZeroPaddedDrawInput(context, begin, bytes, fetchValid[f], fetches[f].stride);
@@ -2865,6 +2872,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             binding.tiledDevice = std::make_unique<DeviceBuffer>(context, colorLayout.Bytes(), copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
             binding.linearDevice = std::make_unique<DeviceBuffer>(context, colorLayout.LinearBytes(), copies | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
             binding.original.resize(colorLayout.Bytes());
+            const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::RenderTarget);
             GuestMemory::Read(color.address, binding.original, colorLayout.Alignment());
             std::memcpy(binding.tiled->Bytes().data(), binding.original.data(), binding.original.size());
         } else {
@@ -2880,6 +2888,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
                 const auto bandBytes = colorLayout.Offset(x1 - 1, y1 - 1) + color.elementBytes - binding.bandOffset;
                 binding.transfer = std::make_unique<Buffer>(context, bandBytes, copies);
                 binding.original.resize(bandBytes);
+                const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::RenderTarget);
                 GuestMemory::Read(color.address + binding.bandOffset, binding.original, color.elementBytes);
                 std::memcpy(binding.transfer->Bytes().data(), binding.original.data(), bandBytes);
             } else {

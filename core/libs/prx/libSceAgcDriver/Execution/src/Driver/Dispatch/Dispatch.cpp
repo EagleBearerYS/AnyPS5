@@ -65,6 +65,7 @@ bool CapturedCurrent(std::span<const ShaderRecompiler::MemoryRegion> captured, c
         if (bytes == 0 || (address >= code.codeAddress && address < code.codeAddress + code.code.size() * sizeof(std::uint32_t)) || (!code.header.empty() && address >= code.headerAddress && address < code.headerAddress + code.header.size())) continue;
         if (Driver::QueryPendingSpan(address, bytes, {}) != ShaderMemory::PendingWrite::None || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return false;
         GuestMemory::GuardRead(address, bytes);
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::CaptureCheck);
         GuestMemory::FlushGpuWrites(address, bytes);
         if (std::memcmp(region.bytes.data(), reinterpret_cast<const void*>(address), bytes) != 0) return false;
     }

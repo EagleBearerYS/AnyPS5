@@ -590,6 +590,7 @@ std::optional<std::uint8_t> CurrentUniformMetadataByte(std::uint64_t address, st
         }
     }
     std::vector<std::byte> data(bytes);
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Metadata);
     GuestMemory::Read(address, data);
     const auto first = data.front();
     if (!std::all_of(data.begin(), data.end(), [&](std::byte value) { return value == first; })) return std::nullopt;
@@ -612,6 +613,7 @@ std::optional<std::uint8_t> LandedUniformMetadataByte(std::uint64_t address, std
     if (address == 0 || bytes == 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return std::nullopt;
     if (AnyShadowedOverlaps(address, bytes)) PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
     if (AnyShadowedOverlaps(address, bytes)) return std::nullopt;
+    const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::Metadata);
     GuestMemory::FlushGpuWrites(address, bytes);
     auto* recorder = GuestMemory::GpuMutex().HeldByThisThread() ? Recorder::Active() : nullptr;
     if (recorder != nullptr && recorder->PendingWriteOverlaps(address, bytes)) {

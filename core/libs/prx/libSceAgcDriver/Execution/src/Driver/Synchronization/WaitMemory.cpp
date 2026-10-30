@@ -359,7 +359,10 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
         CheckFailure();
         if (pollService(!spinning)) return;
-        if (storeHeldResults && !spinning && (polls & 31u) == 0) GuestMemory::FlushGpuWrites(awaited, awaitedBytes);
+        if (storeHeldResults && !spinning && (polls & 31u) == 0) {
+            const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::WaitFlush);
+            GuestMemory::FlushGpuWrites(awaited, awaitedBytes);
+        }
         noteAwaitingTitle(queue, awaited);
         if (requireMemory && (polls & 15u) == 0) {
             std::unique_lock settleLock(GuestMemory::GpuMutex(), std::try_to_lock);

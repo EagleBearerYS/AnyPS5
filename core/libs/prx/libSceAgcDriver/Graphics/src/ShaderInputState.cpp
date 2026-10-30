@@ -276,6 +276,7 @@ ShaderRecompiler::ShaderVertexStageInfo DecodeVertexStageInfo(std::span<const st
             lastSemantic = std::max<std::uint32_t>(lastSemantic, semantics[i].semantic);
         }
         const auto readWords = [](std::uint64_t base, std::uint32_t stride, std::uint32_t first, std::uint32_t last, std::vector<std::uint32_t>& words, auto&& wanted) {
+            const AgcDriver::GuestMemory::FallbackReadSiteScope site(AgcDriver::GuestMemory::ReadSite::VertexDescriptors);
             const auto wordsPer = stride / 4u;
             words.assign(static_cast<std::size_t>(last - first + 1u) * wordsPer, 0u);
             const auto begin = base + static_cast<std::uint64_t>(first) * stride;

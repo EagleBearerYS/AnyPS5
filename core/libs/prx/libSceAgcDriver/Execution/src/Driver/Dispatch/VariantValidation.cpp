@@ -59,6 +59,7 @@ bool Driver::syncPendingRuns(std::uint64_t program, std::uint32_t queue, const S
         const auto waitsBefore = Graphics::Recorder::ThreadHookWaits();
         const bool timed = profile || traceCapSync();
         const auto waitedBefore = timed ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
+        const GuestMemory::FallbackReadSiteScope site(GuestMemory::ReadSite::CaptureCheck);
         GuestMemory::FlushGpuWrites(region.guestAddress, region.bytes.size());
         const auto waited = timed ? Graphics::Recorder::ThreadWaitedMs() - waitedBefore : 0.0;
         pending.Load();

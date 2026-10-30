@@ -267,7 +267,7 @@ PacketTag CurrentPacket();
 // DrawCache: a draw entry's per-stage value validation (Driver.cpp drawCache), where a draw
 // capture's hook waits reappear on a hit.
 // Every enumerator needs its name in ReadSiteName's table (GuestMemory.cpp).
-enum class ReadSite : std::uint8_t { Unknown = 0, Capture, DispatchCache, TextureCompare, TextureRead, BufferUpload, IndexBuffer, VertexBuffer, Registers, IndirectArguments, Wait, Label, Scanout, Store, MirrorRefresh, DrawCache, Count };
+enum class ReadSite : std::uint8_t { Unknown = 0, Capture, DispatchCache, TextureCompare, TextureRead, BufferUpload, IndexBuffer, VertexBuffer, Registers, IndirectArguments, Wait, Label, Scanout, Store, MirrorRefresh, DrawCache, StorageCapture, StorageCompare, StorageUpload, StorageWriteBack, Metadata, VertexDescriptors, DepthSurface, Htile, ClearInputs, RenderTarget, Cmask, WaitFlush, ShaderWords, CaptureCheck, ShaderCode, Count };
 const char* ReadSiteName(ReadSite site);
 // Sets the calling thread's read site and returns the previous one (nested scopes restore it).
 ReadSite SetReadSite(ReadSite site);
@@ -278,6 +278,18 @@ public:
     ~ReadSiteScope() { SetReadSite(previous); }
     ReadSiteScope(const ReadSiteScope&) = delete;
     ReadSiteScope& operator=(const ReadSiteScope&) = delete;
+
+private:
+    ReadSite previous;
+};
+class FallbackReadSiteScope {
+public:
+    explicit FallbackReadSiteScope(ReadSite site) : previous(CurrentReadSite()) {
+        if (previous == ReadSite::Unknown) SetReadSite(site);
+    }
+    ~FallbackReadSiteScope() { SetReadSite(previous); }
+    FallbackReadSiteScope(const FallbackReadSiteScope&) = delete;
+    FallbackReadSiteScope& operator=(const FallbackReadSiteScope&) = delete;
 
 private:
     ReadSite previous;
