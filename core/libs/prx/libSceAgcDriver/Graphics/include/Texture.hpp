@@ -543,6 +543,8 @@ private:
     // write-back's stamps of blocks firstBlock..lastBlock are below, unless the layer's other
     // blocks were stamped since the check.
     static void advanceAdjacent(const std::vector<Adjacent>& adjacent, std::uint64_t now, std::uint64_t firstBlock, std::uint64_t lastBlock);
+    std::vector<Adjacent> borrowersUnchanged(const std::vector<bool>& layers, const std::vector<bool>& skipped) const;
+    static void advanceBorrowers(const std::vector<Adjacent>& held, std::uint64_t now);
     // Per 64 KiB tracker block of the surface (block 0 holds the base address): the generation of
     // the tracked layer it belongs to, for GuestMemory::ChangedBlocks.
     void blockGenerations(std::vector<std::uint64_t>& generations) const;
@@ -652,6 +654,7 @@ private:
     // (the resource cache's serial memo) hold only while this image's version does, so the next
     // write here bumps the pending serial although the image was pending already.
     bool lent = false;
+    std::vector<std::weak_ptr<StorageTexture>> borrowers;
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkDeviceSize memoryBytes = 0;
