@@ -113,11 +113,14 @@ public:
     explicit DrawKeySightings(std::size_t keys);
     bool SeenBefore(std::uint64_t key);
     bool Holds(std::uint64_t key) const;
+    void NoteInserted(std::uint64_t key);
+    bool AwaitsInsert(std::uint64_t key) const;
 
 private:
     std::size_t bucketOf(std::uint64_t key) const;
 
     std::vector<std::uint64_t> keys;
+    std::vector<std::uint8_t> inserted;
     std::vector<std::uint8_t> filled;
     std::vector<std::uint8_t> next;
     std::size_t bucketMask = 0;
