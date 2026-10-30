@@ -1810,6 +1810,8 @@ struct SaveDataEvent {
     std::uint8_t reserved[40];
 };
 
+using SaveDataEventCallback = void (APS5_VABI *)(const SaveDataEvent* event, void* userdata);
+
 struct SaveDataBackup {
     std::int32_t user_id;
     std::int32_t pad;

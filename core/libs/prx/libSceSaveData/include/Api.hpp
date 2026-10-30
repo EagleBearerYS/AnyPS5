@@ -65,7 +65,7 @@ int APS5_VABI sceSaveDataMount5();
 int APS5_VABI sceSaveDataMountInternal(void);
 int APS5_VABI sceSaveDataMountSys(void);
 int APS5_VABI sceSaveDataRebuildDatabase(void);
-int APS5_VABI sceSaveDataRegisterEventCallback();
+int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, void* userdata);
 int APS5_VABI sceSaveDataRestoreBackupData(const SaveDataRestoreBackupData* restore);
 int APS5_VABI sceSaveDataRestoreBackupDataForCdlg(void);
 int APS5_VABI sceSaveDataRestoreLoadSaveDataMemory(void);
@@ -77,7 +77,7 @@ int APS5_VABI sceSaveDataSupportedFakeBrokenStatus(void);
 int APS5_VABI sceSaveDataSyncCloudList(void);
 int APS5_VABI sceSaveDataUmountSys(void);
 int APS5_VABI sceSaveDataUmountWithBackup(const SaveDataMountPoint* mount_point);
-int APS5_VABI sceSaveDataUnregisterEventCallback();
+int APS5_VABI sceSaveDataUnregisterEventCallback(void);
 int APS5_VABI sceSaveDataUpload(void);
 
 }

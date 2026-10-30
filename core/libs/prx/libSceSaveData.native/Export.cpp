@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <condition_variable>
 #include <cstddef>
 #include <deque>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <vector>
 #include <chrono>
@@ -30,6 +32,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SaveData.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
 #ifdef _WIN32
@@ -58,6 +61,106 @@ static std::deque<SaveDataEvent> g_events;
 constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP = 1;
 constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_BACKUP = 2;
 constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_CONVERT = 5;
+
+namespace {
+
+struct EventDelivery {
+    SaveDataEvent event;
+    SaveDataEventCallback callback;
+    void* userdata;
+};
+
+struct EventWorker {
+    Pthread thread = nullptr;
+    bool stopping = false;
+};
+
+struct EventCallbacks {
+    std::recursive_mutex calling;
+    std::mutex mutex;
+    std::condition_variable wake;
+    SaveDataEventCallback callback = nullptr;
+    void* userdata = nullptr;
+    std::deque<EventDelivery> pending;
+    EventWorker* worker = nullptr;
+    Pthread delivering = nullptr;
+};
+
+EventCallbacks& Callbacks() {
+    static auto* callbacks = new EventCallbacks;
+    return *callbacks;
+}
+
+void* APS5_VABI DeliverEvents(void* argument) {
+    auto& callbacks = Callbacks();
+    auto* worker = static_cast<EventWorker*>(argument);
+    for (;;) {
+        {
+            std::unique_lock lock(callbacks.mutex);
+            callbacks.wake.wait(lock, [&] { return worker->stopping || !callbacks.pending.empty(); });
+            if (worker->stopping) return nullptr;
+        }
+        std::lock_guard calling(callbacks.calling);
+        EventDelivery delivery{};
+        {
+            std::lock_guard lock(callbacks.mutex);
+            if (worker->stopping) return nullptr;
+            if (callbacks.pending.empty()) continue;
+            delivery = callbacks.pending.front();
+            callbacks.pending.pop_front();
+            callbacks.delivering = scePthreadSelf();
+        }
+        delivery.callback(&delivery.event, delivery.userdata);
+        std::lock_guard lock(callbacks.mutex);
+        callbacks.delivering = nullptr;
+    }
+}
+
+void StartEventDelivery() {
+    auto& callbacks = Callbacks();
+    auto worker = std::make_unique<EventWorker>();
+    std::lock_guard lock(callbacks.mutex);
+    if (callbacks.worker != nullptr) return;
+    if (scePthreadCreate(&worker->thread, nullptr, DeliverEvents, worker.get(), "SceSaveDataEventCallback") != 0) {
+        throw std::runtime_error("sceSaveDataInitialize3: scePthreadCreate failed for the event callback thread");
+    }
+    callbacks.worker = worker.release();
+}
+
+EventWorker* DetachEventDelivery() {
+    auto& callbacks = Callbacks();
+    std::lock_guard lock(callbacks.mutex);
+    callbacks.callback = nullptr;
+    callbacks.userdata = nullptr;
+    callbacks.pending.clear();
+    auto* worker = std::exchange(callbacks.worker, nullptr);
+    if (worker != nullptr) worker->stopping = true;
+    return worker;
+}
+
+void JoinEventDelivery(EventWorker* worker) {
+    std::unique_ptr<EventWorker> owned(worker);
+    Callbacks().wake.notify_all();
+    if (scePthreadJoin(owned->thread, nullptr) != 0) throw std::runtime_error("sceSaveDataTerminate: scePthreadJoin failed for the event callback thread");
+}
+
+bool InEventCallback() {
+    auto& callbacks = Callbacks();
+    std::lock_guard lock(callbacks.mutex);
+    return callbacks.delivering != nullptr && scePthreadEqual(scePthreadSelf(), callbacks.delivering) != 0;
+}
+
+void DeliverEvent(const SaveDataEvent& event) {
+    auto& callbacks = Callbacks();
+    {
+        std::lock_guard lock(callbacks.mutex);
+        if (callbacks.callback == nullptr || callbacks.worker == nullptr) return;
+        callbacks.pending.push_back({event, callbacks.callback, callbacks.userdata});
+    }
+    callbacks.wake.notify_all();
+}
+
+}
 
 static bool dir_name_match(const char* str, const char* pattern) {
     if (pattern == nullptr || pattern[0] == '\0') {
@@ -320,8 +423,11 @@ int APS5_VABI sceSaveDataBackup(const SaveDataBackup* backup) {
     event.user_id = backup->user_id;
     if (backup->title_id != nullptr) event.title_id = *backup->title_id;
     event.dir_name = *backup->dir_name;
-    std::lock_guard lock(g_state_mutex);
-    g_events.push_back(event);
+    {
+        std::lock_guard lock(g_state_mutex);
+        g_events.push_back(event);
+    }
+    DeliverEvent(event);
     return SAVE_DATA_OK;
 }
 
@@ -904,6 +1010,8 @@ int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
 
 int APS5_VABI sceSaveDataInitialize3(const void* init) {
     (void)init;
+    std::lock_guard lock(g_slots_mutex);
+    if (g_initializations == 0) StartEventDelivery();
     ++g_initializations;
     return SAVE_DATA_OK;
 }
@@ -1181,17 +1289,25 @@ int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* sync_param) {
 }
 
 int APS5_VABI sceSaveDataTerminate(void) {
-    std::lock_guard lock(g_slots_mutex);
-    if (g_initializations == 0) {
-        return SAVE_DATA_ERROR_NOT_INITIALIZED;
-    }
-    if (g_initializations == 1 && any_slot_used()) {
+    if (InEventCallback()) {
         return SAVE_DATA_ERROR_BUSY;
     }
-    --g_initializations;
-    if (g_initializations == 0) {
-        g_convertProgress = 0.0f;
+    EventWorker* stopped = nullptr;
+    {
+        std::lock_guard lock(g_slots_mutex);
+        if (g_initializations == 0) {
+            return SAVE_DATA_ERROR_NOT_INITIALIZED;
+        }
+        if (g_initializations == 1 && any_slot_used()) {
+            return SAVE_DATA_ERROR_BUSY;
+        }
+        --g_initializations;
+        if (g_initializations == 0) {
+            g_convertProgress = 0.0f;
+            stopped = DetachEventDelivery();
+        }
     }
+    if (stopped != nullptr) JoinEventDelivery(stopped);
     return SAVE_DATA_OK;
 }
 
@@ -1644,9 +1760,19 @@ int APS5_VABI sceSaveDataRebuildDatabase(void) {
     return 0;
 }
 
-int APS5_VABI sceSaveDataRegisterEventCallback() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, void* userdata) {
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    if (callback == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    auto& callbacks = Callbacks();
+    std::lock_guard calling(callbacks.calling);
+    std::lock_guard lock(callbacks.mutex);
+    callbacks.callback = callback;
+    callbacks.userdata = userdata;
+    return SAVE_DATA_OK;
 }
 
 static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
@@ -1764,8 +1890,11 @@ static int umountWithBackup(const SaveDataMountPoint* mount_point) {
             event.error_code = SAVE_DATA_ERROR_INTERNAL;
         }
     }
-    std::lock_guard lock(g_state_mutex);
-    g_events.push_back(event);
+    {
+        std::lock_guard lock(g_state_mutex);
+        g_events.push_back(event);
+    }
+    DeliverEvent(event);
     return SAVE_DATA_OK;
 }
 
@@ -1775,9 +1904,14 @@ int APS5_VABI sceSaveDataUmountWithBackup(const SaveDataMountPoint* mount_point)
     return rc;
 }
 
-int APS5_VABI sceSaveDataUnregisterEventCallback() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSaveDataUnregisterEventCallback(void) {
+    auto& callbacks = Callbacks();
+    std::lock_guard calling(callbacks.calling);
+    std::lock_guard lock(callbacks.mutex);
+    callbacks.callback = nullptr;
+    callbacks.userdata = nullptr;
+    callbacks.pending.clear();
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataUpload(void) {
