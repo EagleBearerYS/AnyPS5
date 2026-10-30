@@ -11750,7 +11750,7 @@ bool storageAliasRoundTripTests(const Device& device, Recorder& recorder, bool i
         bool handedOver;
     };
     const std::array<Pair, 3> pairs{{
-        {"same format, other dimensions (R32_UINT 256x256 / 512x128, R 64 KiB X)", surfaceOf(256, 256, formatR32, TextureTileMode::kR64KBX), surfaceOf(512, 128, formatR32, TextureTileMode::kR64KBX), false},
+        {"same format, other dimensions (R32_UINT 256x256 / 512x128, R 64 KiB X)", surfaceOf(256, 256, formatR32, TextureTileMode::kR64KBX), surfaceOf(512, 128, formatR32, TextureTileMode::kR64KBX), true},
         {"other format, same bytes per texel (R32_UINT / RGBA8 256x256, R 64 KiB X)", surfaceOf(256, 256, formatR32, TextureTileMode::kR64KBX), surfaceOf(256, 256, formatRgba8, TextureTileMode::kR64KBX), true},
         {"tiled against linear (R32_UINT 256x256, R 64 KiB X / linear)", surfaceOf(256, 256, formatR32, TextureTileMode::kR64KBX), surfaceOf(256, 256, formatR32, TextureTileMode::kLinear), false},
     }};
@@ -12511,6 +12511,247 @@ bool storageAliasBorrowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool storageAliasBlocksTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t bytes = 8 * unit;
+    constexpr std::uint32_t rounds = 2;
+    constexpr std::uint32_t formatR32 = 20;
+    if (!WriteWatched()) {
+        std::cout << "write watching unavailable: per-block storage alias borrows not tested\n";
+        return false;
+    }
+    void* block = AllocateWatched(bytes, unit);
+    Require(block != nullptr, "no watched block although write watching is on");
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* memory = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    auto context = device.GetContext();
+    context.recorder = &recorder;
+    context.hostImportAlignment = 0;
+    context.dmaBufImport = false;
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    TextureCache textureCache(context);
+    context.textureCache = &textureCache;
+    struct Cleanup {
+        const Context& context;
+        Recorder& recorder;
+        void* block;
+        ~Cleanup() {
+            recorder.Sync();
+            ClearCachedTextures(context.device);
+            recorder.Sync();
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block);
+        }
+    } cleanup{context, recorder, block};
+    const bool counted = LookupOutcomes::Profiled();
+    if (!counted) std::cout << "per-block storage alias borrows: storage traffic is counted under APS5_PROFILE_DRAW only, the byte assertions are skipped\n";
+    const auto surface = [&](std::uint32_t width, std::uint32_t height, std::uint32_t mips, std::size_t offset) {
+        GuestTextureResource resource{};
+        resource.baseAddress = address + offset;
+        resource.width = width;
+        resource.height = height;
+        resource.mipCount = mips;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = formatR32;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        return resource;
+    };
+    using Blocks = std::vector<std::size_t>;
+    struct Case {
+        const char* name;
+        GuestTextureResource x;
+        GuestTextureResource y;
+        Blocks yBorrows;
+        Blocks yStores;
+        Blocks xBorrows;
+        Blocks xStores;
+    };
+    const std::array<Case, 4> cases{{
+        {"a 512x128 image two units into a 256x256 one", surface(256, 256, 1, 0), surface(512, 128, 1, 2 * unit), {2, 3}, {}, {2, 3}, {}},
+        {"a 128x128 image at the base of a 256x256 one", surface(256, 256, 1, 0), surface(128, 128, 1, 0), {0}, {}, {0}, {}},
+        {"a 128x64 image at the base of a 256x256 one, a partial tile", surface(256, 256, 1, 0), surface(128, 64, 1, 0), {}, {0}, {}, {0}},
+        {"a 512x128 image over a 256x256 chain of four mips, its tail unit first", surface(256, 256, 4, 0), surface(512, 128, 1, 0), {1, 2, 3}, {0}, {1, 2, 3}, {0}},
+    }};
+    const auto levelExtent = [](const GuestTextureResource& resource, std::uint32_t level) { return std::pair<std::uint32_t, std::uint32_t>{std::max(resource.width >> level, 1u), std::max(resource.height >> level, 1u)}; };
+    const auto texels = [&](const GuestTextureResource& resource) {
+        std::size_t count = 0;
+        for (std::uint32_t level = 0; level < resource.mipCount; ++level) {
+            const auto [width, height] = levelExtent(resource, level);
+            count += static_cast<std::size_t>(width) * height;
+        }
+        return count;
+    };
+    const auto barrierIn = [&](VkCommandBuffer commands, VkAccessFlags to) { RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, to); };
+    const auto write = [&](const std::shared_ptr<StorageTexture>& image, const GuestTextureResource& resource, std::uint32_t id, std::uint32_t round) {
+        Buffer staging(context, texels(resource) * sizeof(std::uint32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::vector<VkBufferImageCopy> copies;
+        std::size_t at = 0;
+        for (std::uint32_t level = 0; level < resource.mipCount; ++level) {
+            const auto [width, height] = levelExtent(resource, level);
+            VkBufferImageCopy copy{};
+            copy.bufferOffset = at * sizeof(std::uint32_t);
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+            copy.imageExtent = {width, height, 1};
+            copies.push_back(copy);
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < width; ++x) {
+                    const std::uint32_t value = id << 28u | round << 24u | level << 20u | (y & 0x3ffu) << 10u | (x & 0x3ffu);
+                    std::memcpy(staging.Bytes().data() + (at++) * sizeof(std::uint32_t), &value, sizeof(value));
+                }
+            }
+        }
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        barrierIn(commands, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, staging.Handle(), image->Image(), VK_IMAGE_LAYOUT_GENERAL, static_cast<std::uint32_t>(copies.size()), copies.data());
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkDirty();
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    const auto readImage = [&](const std::shared_ptr<StorageTexture>& image, const GuestTextureResource& resource) {
+        Buffer readback(context, texels(resource) * sizeof(std::uint32_t), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        std::vector<VkBufferImageCopy> copies;
+        std::size_t at = 0;
+        for (std::uint32_t level = 0; level < resource.mipCount; ++level) {
+            const auto [width, height] = levelExtent(resource, level);
+            VkBufferImageCopy copy{};
+            copy.bufferOffset = at * sizeof(std::uint32_t);
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+            copy.imageExtent = {width, height, 1};
+            copies.push_back(copy);
+            at += static_cast<std::size_t>(width) * height;
+        }
+        const auto commands = recorder.Commands();
+        barrierIn(commands, VK_ACCESS_TRANSFER_READ_BIT);
+        context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), static_cast<std::uint32_t>(copies.size()), copies.data());
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        const auto words = readback.Bytes();
+        return std::vector<std::byte>(words.begin(), words.end());
+    };
+    using Totals = std::map<std::string, std::pair<std::uint64_t, std::uint64_t>>;
+    const auto moved = [](const Totals& before, const Totals& after, const std::string& reason) {
+        const auto now = after.find(reason);
+        const auto was = before.find(reason);
+        const auto a = now != after.end() ? now->second : std::pair<std::uint64_t, std::uint64_t>{};
+        const auto b = was != before.end() ? was->second : std::pair<std::uint64_t, std::uint64_t>{};
+        return std::pair<std::uint64_t, std::uint64_t>{a.first - b.first, a.second - b.second};
+    };
+    const auto describe = [&](const Totals& before, const Totals& after) {
+        std::string line;
+        for (const auto& [reason, totals] : after) {
+            const auto step = moved(before, after, reason);
+            if (step.first != 0) line += " '" + reason + "' " + std::to_string(step.first) + "x " + std::to_string(step.second) + " bytes;";
+        }
+        return line.empty() ? std::string(" none") : line;
+    };
+    for (const auto& item : cases) {
+        const std::string where = std::string("per-block storage alias borrows, ") + item.name;
+        Require(item.x.baseAddress + DescribeSurface(item.x).guestBytes <= address + bytes && item.y.baseAddress + DescribeSurface(item.y).guestBytes <= address + bytes, where + ": a surface leaves the test block");
+        struct Run {
+            std::vector<std::vector<std::byte>> reads;
+            std::vector<std::byte> bytes;
+        };
+        const auto run = [&](bool reference) {
+            Run result;
+            recorder.Sync();
+            for (std::size_t i = 0; i < bytes; ++i) memory[i] = static_cast<std::uint8_t>(i * 131u + 7u);
+            {
+                auto imageX = CachedStorageSurface(context, item.x);
+                auto imageY = CachedStorageSurface(context, item.y);
+                Require(imageX != nullptr && imageY != nullptr && imageX != imageY && imageX->Cached() && imageY->Cached(), where + ": the two descriptors did not make two cached storage images");
+                const auto lookup = [&](const std::shared_ptr<StorageTexture>& image, const GuestTextureResource& resource, const Blocks& borrows, const Blocks& stores, const std::string& at) {
+                    const std::vector<std::uint8_t> held(memory, memory + bytes);
+                    const auto before = StorageTexture::CumulativeTraffic();
+                    image->Refresh();
+                    recorder.Submit();
+                    device.WaitQueue();
+                    recorder.Sync();
+                    const auto after = StorageTexture::CumulativeTraffic();
+                    result.reads.push_back(readImage(image, resource));
+                    if (reference) return;
+                    for (const auto block : borrows) Require(std::memcmp(held.data() + block * unit, memory + block * unit, unit) == 0, at + ": guest block " + std::to_string(block) + ", which the lookup takes from the other image on the device, was stored to guest memory");
+                    for (const auto block : stores) Require(std::memcmp(held.data() + block * unit, memory + block * unit, unit) != 0, at + ": guest block " + std::to_string(block) + ", which no tile of the same extent covers, did not receive the other image's results before the lookup");
+                    if (!counted) return;
+                    std::cout << at << ": uploads" << describe(before.uploads, after.uploads) << " write-backs" << describe(before.writeBacks, after.writeBacks) << "\n";
+                    const auto aliasCopies = moved(before.uploads, after.uploads, "alias");
+                    const auto refreshStores = moved(before.writeBacks, after.writeBacks, "storage refresh");
+                    Require(aliasCopies.second == borrows.size() * unit, at + ": took " + std::to_string(aliasCopies.second) + " bytes from the other image on the device, expected " + std::to_string(borrows.size()) + " units");
+                    if (stores.empty()) {
+                        Require(refreshStores.first == 0, at + ": stored the other image's results (" + std::to_string(refreshStores.second) + " bytes) although every overlapping unit is one tile of the same extent in both");
+                        for (const auto& [reason, totals] : after.uploads) {
+                            const auto step = moved(before.uploads, after.uploads, reason);
+                            Require(step.first == 0 || reason == "alias", at + ": uploaded " + std::to_string(step.second) + " bytes ('" + reason + "') although every overlapping unit is taken on the device");
+                        }
+                    } else {
+                        Require(refreshStores.first == 1, at + ": " + std::to_string(refreshStores.first) + " 'storage refresh' write-backs, expected one of the other image's units the tiles do not cover");
+                    }
+                };
+                for (std::uint32_t round = 0; round < rounds; ++round) {
+                    const std::string at = where + (reference ? ", stored after every write" : "") + ", round " + std::to_string(round);
+                    write(imageX, item.x, 1, round);
+                    if (reference) StorageTexture::FlushPending(address, bytes, nullptr, "storage alias blocks test", PublishScope::Whole);
+                    lookup(imageY, item.y, item.yBorrows, item.yStores, at + ", Y looked up");
+                    write(imageY, item.y, 2, round);
+                    if (reference) StorageTexture::FlushPending(address, bytes, nullptr, "storage alias blocks test", PublishScope::Whole);
+                    lookup(imageX, item.x, item.xBorrows, item.xStores, at + ", X looked up");
+                }
+                StorageTexture::FlushPending(address, bytes, nullptr, "storage alias blocks test", PublishScope::Whole);
+                recorder.Submit();
+                device.WaitQueue();
+                recorder.Sync();
+                result.bytes.assign(reinterpret_cast<const std::byte*>(memory), reinterpret_cast<const std::byte*>(memory) + bytes);
+            }
+            recorder.Sync();
+            ClearCachedTextures(context.device);
+            recorder.Sync();
+            return result;
+        };
+        const auto stored = run(true);
+        const auto borrowed = run(false);
+        Require(stored.reads.size() == borrowed.reads.size(), where + ": the two runs looked up a different number of times");
+        for (std::size_t step = 0; step < stored.reads.size(); ++step) {
+            const auto& expected = stored.reads[step];
+            const auto& seen = borrowed.reads[step];
+            Require(expected.size() == seen.size(), where + ": lookup " + std::to_string(step) + " read a different extent");
+            std::size_t wrong = 0;
+            std::uint32_t first = 0, wanted = 0;
+            for (std::size_t offset = 0; offset < seen.size(); offset += sizeof(std::uint32_t)) {
+                if (std::memcmp(seen.data() + offset, expected.data() + offset, sizeof(std::uint32_t)) == 0) continue;
+                if (wrong++ == 0) {
+                    std::memcpy(&first, seen.data() + offset, sizeof(first));
+                    std::memcpy(&wanted, expected.data() + offset, sizeof(wanted));
+                }
+            }
+            char hex[64];
+            std::snprintf(hex, sizeof(hex), "first 0x%08x where 0x%08x", first, wanted);
+            Require(wrong == 0, where + ": lookup " + std::to_string(step) + " (" + (step % 2 == 0 ? "Y" : "X") + ") holds " + std::to_string(wrong) + " texels other than the store-and-upload path gives (" + hex + ")");
+        }
+        Require(borrowed.bytes == stored.bytes, where + ": guest memory after the final flush differs from the store-and-upload path");
+        std::cout << where << ": ok\n";
+    }
+    std::cout << "per-block storage alias borrows passed\n";
+    return true;
+}
+
 bool storageAliasKeysTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t unit = 65536;
@@ -13116,6 +13357,9 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--storage-alias-borrow-only") {
             return storageAliasBorrowTests(device, recorder) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--storage-alias-blocks-only") {
+            return storageAliasBlocksTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--storage-alias-keys-only") {
             return storageAliasKeysTests(device, recorder) ? 0 : 77;
