@@ -1,0 +1,5 @@
+BASE=08a10d225306ad102b57408e2ef7566bcfb829b2
+REPEAT=1
+EXTRA_TESTS='agc_storage_alias_borrow|agc_driver_storage_one_slice_alias|agc_driver_storage_flush_ordering|agc_driver_pending_exact_surface|agc_driver_store_pending_identity|agc_driver_storage_read_during_idle_store'
+BEFORE_REPEAT=3
+VALIDATION=1
