@@ -344,6 +344,12 @@ public:
         std::uint64_t bytes = 0;
     };
     static CollectRefusals CollectRefusalCounts();
+    struct PendingFails {
+        std::uint64_t foreign = 0;
+        std::uint64_t snapshot = 0;
+        std::uint64_t t1Eligible = 0;
+    };
+    static PendingFails PendingFailCounts();
     static std::array<std::uint64_t, static_cast<std::size_t>(FastFail::Count)> FullWalkNanoseconds();
     // Why a Pending failure was left to the full walk instead of the own-object refresh (T1, see
     // refreshOwnObjects); Count: it was not.

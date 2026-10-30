@@ -2954,7 +2954,7 @@ void countFastFail(FastFail reason) {
 }
 
 void countPendingFail(std::span<const StorageTexture::PendingQuery> pending) {
-    if (!BuildProfiled()) return;
+    if (!BuildProfiled() || indexProof) return;
     auto& profile = Revalidations();
     bool eligible = true;
     for (const auto& query : pending) {
@@ -3167,6 +3167,15 @@ ShaderResources::CollectRefusals ShaderResources::CollectRefusalCounts() {
     std::lock_guard lock(profile.refusedMutex);
     counts.surfaces = profile.refusedSurfaces.size();
     for (const auto& surface : profile.refusedSurfaces) counts.bytes += surface.second;
+    return counts;
+}
+
+ShaderResources::PendingFails ShaderResources::PendingFailCounts() {
+    auto& profile = Revalidations();
+    PendingFails counts;
+    counts.foreign = profile.pendingForeign.load(std::memory_order_relaxed);
+    counts.snapshot = profile.pendingSnapshot.load(std::memory_order_relaxed);
+    counts.t1Eligible = profile.pendingT1Eligible.load(std::memory_order_relaxed);
     return counts;
 }
 
