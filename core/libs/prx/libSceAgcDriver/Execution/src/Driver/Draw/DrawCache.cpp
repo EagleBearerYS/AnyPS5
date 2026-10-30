@@ -130,6 +130,7 @@ DrawKeySightings::DrawKeySightings(std::size_t keyCount) {
     Graphics::Require(keyCount >= Ways, "draw key sightings need at least one bucket");
     const auto buckets = std::bit_ceil(keyCount / Ways);
     keys.assign(buckets * Ways, 0);
+    inserted.assign(buckets * Ways, 0);
     filled.assign(buckets, 0);
     next.assign(buckets, 0);
     bucketMask = buckets - 1;
@@ -148,6 +149,7 @@ bool DrawKeySightings::SeenBefore(std::uint64_t key) {
     auto* ways = keys.data() + bucket * Ways;
     if (std::find(ways, ways + filled[bucket], key) != ways + filled[bucket]) return true;
     ways[next[bucket]] = key;
+    inserted[bucket * Ways + next[bucket]] = 0;
     next[bucket] = static_cast<std::uint8_t>((next[bucket] + 1u) % Ways);
     if (filled[bucket] < Ways) ++filled[bucket];
     return false;
@@ -159,9 +161,23 @@ bool DrawKeySightings::Holds(std::uint64_t key) const {
     return std::find(ways, ways + filled[bucket], key) != ways + filled[bucket];
 }
 
-bool Driver::drawKeySeen(std::uint64_t key) {
+void DrawKeySightings::NoteInserted(std::uint64_t key) {
+    const auto bucket = bucketOf(key);
+    const auto* ways = keys.data() + bucket * Ways;
+    const auto found = std::find(ways, ways + filled[bucket], key);
+    if (found != ways + filled[bucket]) inserted[static_cast<std::size_t>(found - keys.data())] = 1;
+}
+
+bool DrawKeySightings::AwaitsInsert(std::uint64_t key) const {
+    const auto bucket = bucketOf(key);
+    const auto* ways = keys.data() + bucket * Ways;
+    const auto found = std::find(ways, ways + filled[bucket], key);
+    return found != ways + filled[bucket] && inserted[static_cast<std::size_t>(found - keys.data())] == 0;
+}
+
+bool Driver::drawKeyAwaitsInsert(std::uint64_t key) {
     std::lock_guard cacheLock(drawCacheMutex);
-    return drawKeySightings && drawKeySightings->Holds(key);
+    return drawKeySightings && drawKeySightings->AwaitsInsert(key);
 }
 
 bool Driver::admitDrawKey(std::uint64_t key, std::uint64_t shape) {
@@ -237,6 +253,7 @@ void Driver::insertDrawEntry(std::uint64_t key, std::vector<std::shared_ptr<Disp
     }
     replacement->touched = drawCacheHits;
     if (replacement->decode != nullptr && shape != 0) drawShapes[shape] = key;
+    if (drawKeySightings) drawKeySightings->NoteInserted(key);
     if (found == drawCache.end()) {
         drawOrder.push_front(key);
         replacement->order = drawOrder.begin();

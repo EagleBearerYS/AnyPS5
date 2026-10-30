@@ -337,6 +337,33 @@ void ColdScenesKeepTheCacheLookedUp() {
     std::cout << mode << ": scenes of 1000, 2048 and 4096 new draws repeated every frame hit the draw cache by their fourth frame\n";
 }
 
+void EvictedScenesBypassTheCache() {
+    constexpr std::size_t Window = 2048, Frames = 4;
+    const char* budget = std::getenv("APS5_DRAW_CACHE_BYTES");
+    Require(budget != nullptr && std::strtoull(budget, nullptr, 10) != 0, "the evicted scene needs a draw cache byte budget in APS5_DRAW_CACHE_BYTES");
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    std::vector<float> scene(Window);
+    float scale = 3000.0f;
+    for (auto& value : scene) value = scale += 0.25f;
+    auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    Require(before.lookups == 0, "the evicted scene did not start at the first window of draw-cache lookups");
+    for (std::size_t frame = 1; frame <= Frames; ++frame) {
+        const auto after = Submit(ScaledDraws(scene));
+        Require(after.lookups - before.lookups == Window && (frame < 3 || after.hits == before.hits), "frame " + std::to_string(frame) + " of a scene of 2048 draws under a " + budget + "-byte draw cache made " + std::to_string(after.lookups - before.lookups) + " lookups with " + std::to_string(after.hits - before.hits) + " hits, expected 2048 lookups and, from the third frame on, no hit");
+        before = after;
+    }
+    Require(before.byteEvictions >= Window, "a scene of 2048 draws repeated for four frames under a " + std::string(budget) + "-byte draw cache evicted " + std::to_string(before.byteEvictions) + " entries over the byte budget, expected every entry it inserted");
+    const auto bypassed = Submit(ScaledDraws(scene));
+    Require(bypassed.lookups == before.lookups && bypassed.inserts == before.inserts, "two windows of draws whose entries were evicted before they could hit did not bypass the next 2048 draws: " + std::to_string(bypassed.lookups - before.lookups) + " of them were looked up and " + std::to_string(bypassed.inserts - before.inserts) + " inserted");
+    const auto hits = Submit(ScaledDraws(std::vector<float>(Window, 32.0f)));
+    Require(hits.lookups == bypassed.lookups + Window, "the bypass did not end after 2048 draws: " + std::to_string(hits.lookups - bypassed.lookups) + " of the next 2048 draws were looked up");
+    Require(hits.hits - bypassed.hits == Window - 2, "a window of one repeated draw after the bypass hit the draw cache " + std::to_string(hits.hits - bypassed.hits) + " times, expected 2046");
+    const auto kept = Submit(ScaledDraws(std::vector<float>(10, 32.0f)));
+    Require(kept.lookups == hits.lookups + 10 && kept.hits == hits.hits + 10, "a window of 2046 hits after the bypass did not end it");
+    std::cout << "a scene whose entries were evicted before they could hit bypassed the draw cache after two windows, and a window of hits ended the bypass\n";
+}
+
 void StageHitsKeepTheCacheLookedUp() {
     constexpr std::size_t Window = 2048;
     const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
@@ -456,6 +483,8 @@ int main(int argc, char** argv) {
             LowWindowsLengthenTheBypass();
         } else if (argc > 1 && std::string(argv[1]) == "--cold-scene") {
             ColdScenesKeepTheCacheLookedUp();
+        } else if (argc > 1 && std::string(argv[1]) == "--evicted-scene") {
+            EvictedScenesBypassTheCache();
         } else if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
             RefreshedStageDataVerifies();
         } else {
