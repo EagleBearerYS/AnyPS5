@@ -2,7 +2,9 @@
 #include "prx/libSceVdecCore/include/Decoder.hpp"
 #include "H264Fixture.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -404,6 +406,31 @@ void CheckDestinations() {
     Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the destination decoder");
 }
 
+void CheckOutputStaysInItsDestination() {
+    void* decoder = CreateAvc(static_cast<std::int32_t>(H264Fixture::Width));
+    FeedAll(decoder, 1000, 2000, 3000);
+    Require(Flush(decoder) == H264Fixture::PictureHashes.size(), "a flush holds every picture for the destination bounds");
+    constexpr std::uint8_t Guard = 0x5a;
+    std::vector<std::uint8_t> memory(SlotSize * 2, Guard);
+    const VdecCoreMemoryBlock block{memory.data(), SlotSize, 256, 0};
+    Require(sceVdecCoreMapMemoryBlock(decoder, &block, 1) == 0, "map one slot followed by guard bytes");
+    VdecCoreFrameBuffer larger{nullptr, SlotSize * 2};
+    const VdecCoreOutputInfo slot = Output(decoder, &larger);
+    Require(slot.frameBuffer == memory.data(), "a frame buffer with no address and a larger size goes to the slot");
+    RequirePicture(slot, 0, SlotSize, 1000, 3000, "a picture in a slot under a larger caller size");
+    Require(std::all_of(memory.begin() + static_cast<std::ptrdiff_t>(SlotSize), memory.end(), [](std::uint8_t byte) { return byte == Guard; }), "a picture in a slot under a larger caller size wrote past the slot");
+    const std::uint32_t pictureSize = OutputPitch * H264Fixture::CodedHeight * 3 / 2;
+    std::vector<std::uint8_t> tight(pictureSize + 0x200, Guard);
+    VdecCoreFrameBuffer small{tight.data(), tight.size()};
+    const VdecCoreOutputInfo caller = Output(decoder, &small);
+    Require(caller.frameBuffer == tight.data(), "a caller frame buffer with room for the picture only");
+    const auto unit = H264Fixture::DisplayOrderUnits[1];
+    Require(caller.pictures[0].pts == 1000 + unit && caller.pictures[0].userData == 3000 + unit, "the picture in a caller frame buffer with room for the picture only");
+    Require(VisibleHash(tight.data(), caller.framePitch, caller.frameHeight) == VisiblePictureHashes[1] && ExtendsLastRows(tight.data(), caller.framePitch, caller.frameHeight), "picture information too large for the room after a picture overwrote the picture");
+    Require(std::all_of(tight.begin() + static_cast<std::ptrdiff_t>(pictureSize), tight.end(), [](std::uint8_t byte) { return byte == Guard; }), "picture information was written into a caller frame buffer with no room for it after the picture");
+    Require(sceVdecCoreDeleteDecoder(decoder) == 0, "delete the bounds decoder");
+}
+
 void CheckFlushResetAndSync() {
     void* decoder = CreateAvc(static_cast<std::int32_t>(H264Fixture::Width));
     std::vector<std::uint8_t> memory(SlotSize * 3);
@@ -470,6 +497,7 @@ int main() {
     CheckDecodeIntoSlots();
     CheckInvalidPts();
     CheckDestinations();
+    CheckOutputStaysInItsDestination();
     CheckFlushResetAndSync();
     CheckDeleteWithQueuedInput();
     return 0;
