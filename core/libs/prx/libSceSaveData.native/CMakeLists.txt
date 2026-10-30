@@ -43,7 +43,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_savedata_event_callback_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataEventCallback.cpp)
     target_include_directories(guest_savedata_event_callback_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_savedata_event_callback_tests PRIVATE libSceSaveData.native libc)
+    target_link_libraries(guest_savedata_event_callback_tests PRIVATE libSceSaveData.native libkernel libc)
     configure_windows_unwind(guest_savedata_event_callback_tests)
     add_test(NAME guest_savedata_event_callback COMMAND guest_savedata_event_callback_tests)
     set_tests_properties(guest_savedata_event_callback PROPERTIES TIMEOUT 60)

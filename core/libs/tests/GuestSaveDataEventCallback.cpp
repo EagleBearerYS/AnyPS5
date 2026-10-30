@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -56,6 +57,20 @@ void Record(int callback, const SaveDataEvent* event, void* userdata, int termin
 void APS5_VABI First(const SaveDataEvent* event, void* userdata) { Record(1, event, userdata); }
 void APS5_VABI Second(const SaveDataEvent* event, void* userdata) { Record(2, event, userdata); }
 void APS5_VABI Terminating(const SaveDataEvent* event, void* userdata) { Record(3, event, userdata, sceSaveDataTerminate()); }
+void APS5_VABI Stale(const SaveDataEvent* event, void* userdata) { Record(4, event, userdata); }
+void APS5_VABI Fence(const SaveDataEvent* event, void* userdata) { Record(5, event, userdata); }
+
+std::mutex holdMutex;
+std::condition_variable holdChanged;
+bool holding = false;
+bool released = false;
+
+void APS5_VABI Holding(const SaveDataEvent*, void*) {
+    std::unique_lock lock(holdMutex);
+    holding = true;
+    holdChanged.notify_all();
+    holdChanged.wait(lock, [] { return released; });
+}
 
 std::size_t CallCount() {
     std::lock_guard lock(callsMutex);
@@ -70,6 +85,23 @@ bool WaitForCalls(std::size_t count) {
 Call CallAt(std::size_t index) {
     std::lock_guard lock(callsMutex);
     return calls.at(index);
+}
+
+std::size_t CallsOf(int callback, std::size_t from) {
+    std::lock_guard lock(callsMutex);
+    std::size_t count = 0;
+    for (std::size_t index = from; index < calls.size(); ++index) count += calls[index].callback == callback ? 1u : 0u;
+    return count;
+}
+
+bool WaitForCallback(int callback, std::size_t from) {
+    std::unique_lock lock(callsMutex);
+    return callsChanged.wait_for(lock, std::chrono::seconds(5), [&] {
+        for (std::size_t index = from; index < calls.size(); ++index) {
+            if (calls[index].callback == callback) return true;
+        }
+        return false;
+    });
 }
 
 class Watchdog {
@@ -244,6 +276,115 @@ void CheckIdleTerminateAndRestart(int* firstTag) {
     }
 }
 
+struct Race {
+    std::atomic<bool> start{false};
+    int staleTag = 0;
+    int registered = 0;
+    int terminated = 0;
+};
+
+struct RaceOutcomes {
+    int notInitialized = 0;
+    int registered = 0;
+};
+
+void* APS5_VABI RaceRegister(void* argument) {
+    auto& race = *static_cast<Race*>(argument);
+    while (!race.start.load(std::memory_order_acquire)) std::this_thread::yield();
+    race.registered = sceSaveDataRegisterEventCallback(Stale, &race.staleTag);
+    return nullptr;
+}
+
+void* APS5_VABI RaceTerminate(void* argument) {
+    auto& race = *static_cast<Race*>(argument);
+    while (!race.start.load(std::memory_order_acquire)) std::this_thread::yield();
+    race.terminated = sceSaveDataTerminate();
+    return nullptr;
+}
+
+Pthread Spawn(PthreadEntry entry, Race& race, const char* name) {
+    Pthread thread = nullptr;
+    if (scePthreadCreate(&thread, nullptr, entry, &race, name) != 0) {
+        std::fprintf(stderr, "savedata event callback check failed: scePthreadCreate failed for %s\n", name);
+        std::_Exit(1);
+    }
+    return thread;
+}
+
+bool WaitForFinalTerminate() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (sceSaveDataDeleteTransactionResource(0) != SaveDataErrorNotInitialized) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::yield();
+    }
+    return sceSaveDataTerminate() == SaveDataErrorNotInitialized;
+}
+
+bool RaceRegisterWithFinalTerminate(int iteration, bool hold, RaceOutcomes& outcomes) {
+    const auto failuresBefore = failures;
+    const auto label = "iteration " + std::to_string(iteration) + (hold ? " with the delivery thread held" : " without a held delivery thread");
+    Check(sceSaveDataInitialize3(nullptr) == 0, label + ": SaveData initializes");
+    int holdTag = 0;
+    if (hold) {
+        {
+            std::lock_guard lock(holdMutex);
+            holding = false;
+            released = false;
+        }
+        Check(sceSaveDataRegisterEventCallback(Holding, &holdTag) == 0, label + ": the holding callback registers");
+        Check(BackUp("held") == 0, label + ": the backup for the holding callback succeeds");
+        std::unique_lock lock(holdMutex);
+        Check(holdChanged.wait_for(lock, std::chrono::seconds(5), [] { return holding; }), label + ": the holding callback runs within 5 s");
+    }
+    Race race;
+    const auto registering = Spawn(RaceRegister, race, "SaveDataRaceRegister");
+    const auto terminating = Spawn(RaceTerminate, race, "SaveDataRaceTerminate");
+    race.start.store(true, std::memory_order_release);
+    if (hold) {
+        Check(WaitForFinalTerminate(), label + ": the racing terminate reaches zero initializations within 5 s");
+        {
+            std::lock_guard lock(holdMutex);
+            released = true;
+        }
+        holdChanged.notify_all();
+    }
+    Check(scePthreadJoin(registering, nullptr) == 0, label + ": the registering thread joins");
+    Check(scePthreadJoin(terminating, nullptr) == 0, label + ": the terminating thread joins");
+    Check(race.terminated == 0, label + ": the racing final terminate succeeds, got " + std::to_string(race.terminated));
+    Check(race.registered == 0 || race.registered == SaveDataErrorNotInitialized, label + ": the racing registration is OK or NOT_INITIALIZED, got " + std::to_string(race.registered));
+    if (race.registered == SaveDataErrorNotInitialized) ++outcomes.notInitialized;
+    if (race.registered == 0) ++outcomes.registered;
+    const auto before = CallCount();
+    Check(sceSaveDataInitialize3(nullptr) == 0, label + ": SaveData initializes again");
+    Check(BackUp("raced") == 0, label + ": the backup after the race succeeds");
+    int fenceTag = 0;
+    Check(sceSaveDataRegisterEventCallback(Fence, &fenceTag) == 0, label + ": the fence callback registers");
+    Check(BackUp("fenced") == 0, label + ": the fenced backup succeeds");
+    Check(WaitForCallback(5, before), label + ": the fenced backup reaches the fence callback within 5 s");
+    Check(CallsOf(4, before) == 0, label + ": the callback whose registration returned " + std::to_string(race.registered) + " beside the final terminate is called after Initialize3, " + std::to_string(CallsOf(4, before)) + " time(s)");
+    Check(sceSaveDataUnregisterEventCallback() == 0, label + ": the fence callback unregisters");
+    SaveDataEvent drained{};
+    while (sceSaveDataGetEventResult(nullptr, &drained) == 0) {
+    }
+    Check(sceSaveDataTerminate() == 0, label + ": SaveData terminates after the race");
+    return failures == failuresBefore;
+}
+
+void CheckRegisterRacingFinalTerminate() {
+    constexpr int Iterations = 200;
+    RaceOutcomes held;
+    RaceOutcomes plain;
+    int ran = 0;
+    while (ran < Iterations) {
+        Watchdog watchdog("a registration racing the final terminate");
+        const bool hold = ran % 2 == 0;
+        const bool passed = RaceRegisterWithFinalTerminate(ran, hold, hold ? held : plain);
+        ++ran;
+        if (!passed) break;
+    }
+    std::printf("register against the final terminate: %d of %d iterations; held delivery thread: %d NOT_INITIALIZED, %d OK; plain race: %d NOT_INITIALIZED, %d OK\n", ran, Iterations, held.notInitialized, held.registered, plain.notInitialized, plain.registered);
+}
+
 }
 
 int main() {
@@ -259,6 +400,7 @@ int main() {
     CheckUnregister(&firstTag, &secondTag);
     CheckTerminateFromCallback();
     CheckIdleTerminateAndRestart(&firstTag);
+    CheckRegisterRacingFinalTerminate();
     std::filesystem::current_path(previous);
     std::error_code error;
     std::filesystem::remove_all(root, error);

@@ -1761,14 +1761,15 @@ int APS5_VABI sceSaveDataRebuildDatabase(void) {
 }
 
 int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, void* userdata) {
+    auto& callbacks = Callbacks();
+    std::lock_guard calling(callbacks.calling);
+    std::lock_guard slots(g_slots_mutex);
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     if (callback == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    auto& callbacks = Callbacks();
-    std::lock_guard calling(callbacks.calling);
     std::lock_guard lock(callbacks.mutex);
     callbacks.callback = callback;
     callbacks.userdata = userdata;
