@@ -1,0 +1,4 @@
+BASE=f4781de1f79f53c7f42ce2b1e6f566204a0c3c04
+REPEAT=10
+EXTRA_TESTS='agc_shader_nested_sampler_snapshot_retry|agc_shader_nested_snapshot_retry|agc_driver_nested_sampler_table'
+BEFORE_REPEAT=3
