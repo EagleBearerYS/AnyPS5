@@ -6117,7 +6117,7 @@ std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::AddressRanges() 
                         piece.begin = at;
                         piece.end = next;
                         piece.deviceAddress = range.deviceAddress + (at - range.begin);
-                        if (!bound) piece.permissions |= ShaderRecompiler::BdaAbi::Spill;
+                        if (!bound) piece.permissions |= ShaderRecompiler::BdaAbi::Spill | ShaderRecompiler::BdaAbi::Masked;
                         merged.push_back(piece);
                         at = next;
                     }
@@ -6458,6 +6458,14 @@ void GuestBufferMemory::WriteBack() {
                     if (mirror.sparse) storeSparse(mirror, first, current, original, runs);
                     else storeChanged(first, current, original, runs);
                 };
+                const auto maskedOriginal = [](const StorePage& entry, std::uint64_t at, std::uint64_t first, std::span<const std::byte> current) {
+                    std::vector<std::byte> original(current.begin(), current.end());
+                    for (std::size_t index = 0; index < current.size(); ++index) {
+                        const auto bit = static_cast<std::size_t>(first - at) + index;
+                        if (((entry.mask[bit / 32u] >> (bit % 32u)) & 1u) != 0u) original[index] = ~current[index];
+                    }
+                    return original;
+                };
                 if (mirror.resident != nullptr) {
                     auto& resident = *mirror.resident;
                     const auto exact = [&](std::uint64_t first, std::span<const std::byte> current) {
@@ -6486,7 +6494,7 @@ void GuestBufferMemory::WriteBack() {
                             if (found) std::memcpy(current.data(), entry->data.data() + (first - at), current.size());
                             if (resident.Block(first) == nullptr) {
                                 Require(found, "a page stored through an address into an unbound heap mirror block has no store page");
-                                store(first, current, std::vector<std::byte>(current.size()));
+                                store(first, current, maskedOriginal(*entry, at, first, current));
                                 tally.spilledBytes.fetch_add(current.size(), std::memory_order_relaxed);
                                 tally.comparedBytes.fetch_add(current.size(), std::memory_order_relaxed);
                                 continue;
@@ -6518,12 +6526,7 @@ void GuestBufferMemory::WriteBack() {
                             const auto entry = std::lower_bound(storePageEntries.begin(), storePageEntries.end(), at, [](const StorePage& candidate, std::uint64_t address) { return candidate.address < address; });
                             Require(entry != storePageEntries.end() && entry->address == at, "a page stored through an address into a copy-backed heap mirror has no store mask");
                             const auto current = mapped(first, last);
-                            std::vector<std::byte> original(current.begin(), current.end());
-                            for (auto byte = first; byte < last; ++byte) {
-                                const auto bit = static_cast<std::size_t>(byte - at);
-                                if (((entry->mask[bit / 32u] >> (bit % 32u)) & 1u) != 0u) original[static_cast<std::size_t>(byte - first)] = ~current[static_cast<std::size_t>(byte - first)];
-                            }
-                            store(first, current, original);
+                            store(first, current, maskedOriginal(*entry, at, first, current));
                             tally.maskedBytes.fetch_add(current.size(), std::memory_order_relaxed);
                             tally.comparedBytes.fetch_add(current.size(), std::memory_order_relaxed);
                         }

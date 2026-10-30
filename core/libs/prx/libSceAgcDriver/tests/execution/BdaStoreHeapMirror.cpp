@@ -60,6 +60,10 @@ alignas(256) constexpr std::array<std::uint32_t, 7> LoadCode{0x34020082, 0xdc308
 
 alignas(256) constexpr std::array<std::uint32_t, 6> StoreByteCode{0x34020082, 0x380402ff, Marker, 0xdc608000, 0x00000201, 0xbf810000};
 
+alignas(256) constexpr std::array<std::uint32_t, 5> ZeroStoreCode{0x34020082, 0x7e040280, 0xdc708000, 0x00000201, 0xbf810000};
+
+alignas(256) constexpr std::array<std::uint32_t, 5> ZeroByteStoreCode{0x34020082, 0x7e040280, 0xdc608000, 0x00000201, 0xbf810000};
+
 class OutputBlock {
 public:
     OutputBlock() {
@@ -530,6 +534,32 @@ void CpuByteTests(AgcDriver::VulkanDevice& device) {
     }
 }
 
+void ZeroStoreTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t At = 11 * Block + 0x500;
+    constexpr std::uint64_t Span = Threads * sizeof(std::uint32_t);
+    for (const bool byte : {false, true}) {
+        GuestHeap heap(true);
+        const std::string what = std::string(byte ? "byte" : "dword") + " stores of zero into a zero block";
+        const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+        const auto code = byte ? std::span<const std::uint32_t>(ZeroByteStoreCode) : std::span<const std::uint32_t>(ZeroStoreCode);
+        std::string log;
+        const auto counted = CountCompared([&] {
+            log = Run(device, code, AddressData(heap.Address() + At), [&] {
+                for (std::uint64_t offset = 0; offset < Span + sizeof(std::uint32_t); ++offset) heap.StoreByte(At + offset, 0x77);
+            });
+        });
+        RequireAccepted(log, what);
+        const std::uint32_t expected = byte ? 0x77777700u : 0u;
+        for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+            const auto value = heap.Load(At + thread * sizeof(std::uint32_t));
+            Require(value == expected, "BDA store heap mirror: after " + what + " over bytes the CPU made non-zero during the dispatch, the dword of thread " + std::to_string(thread) + " reads " + Hex(value) + ", expected " + Hex(expected));
+        }
+        Require(heap.Load(At + Span) == 0x77777777u, "BDA store heap mirror: " + what + " changed the CPU's dword after them");
+        if (Resident(heap)) Require(counted.spilled == Page && counted.gathered == 0 && counted.readback == 0, "BDA store heap mirror: " + what + " spilled " + std::to_string(counted.spilled) + " bytes and gathered " + std::to_string(counted.gathered) + ", expected one page spilled");
+        else Require(counted.masked == Page, "BDA store heap mirror: " + what + " wrote back " + std::to_string(counted.masked) + " bytes by store masks, expected one page");
+    }
+}
+
 void TwoDispatchTests(AgcDriver::VulkanDevice& device) {
     GuestHeap heap(true);
     constexpr std::uint64_t First = 2 * Block + 0x100;
@@ -666,6 +696,7 @@ int main(int argc, char** argv) {
             SparseRunEndTests(*device);
             UnboundBlockTests(*device);
             CpuByteTests(*device);
+            ZeroStoreTests(*device);
             TwoDispatchTests(*device);
             ChainedDispatchTests(*device);
         }
