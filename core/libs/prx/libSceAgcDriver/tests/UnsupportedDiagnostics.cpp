@@ -19,32 +19,25 @@ int main(int argc, char** argv) {
         const char* name;
     };
     const Export exports[] = {
-        {sceAgcDriverAcquireRazorACQ, "sceAgcDriverAcquireRazorACQ"},
         {sceAgcDriverCreateQueue, "sceAgcDriverCreateQueue"},
         {sceAgcDriverCwsrResumeAcq, "sceAgcDriverCwsrResumeAcq"},
         {sceAgcDriverCwsrSuspendAcq, "sceAgcDriverCwsrSuspendAcq"},
         {sceAgcDriverDebugHardwareStatus, "sceAgcDriverDebugHardwareStatus"},
         {sceAgcDriverDestroyQueue, "sceAgcDriverDestroyQueue"},
-        {sceAgcDriverGetPaDebugInterfaceVersion, "sceAgcDriverGetPaDebugInterfaceVersion"},
         {sceAgcDriverGetRegShadowInfo, "sceAgcDriverGetRegShadowInfo"},
         {sceAgcDriverGetRegShadowInfoAgr, "sceAgcDriverGetRegShadowInfoAgr"},
         {sceAgcDriverGetReservedDmemForAgc, "sceAgcDriverGetReservedDmemForAgc"},
         {sceAgcDriverGetWorkloadStreamInfo, "sceAgcDriverGetWorkloadStreamInfo"},
         {sceAgcDriverIDHSSubmit, "sceAgcDriverIDHSSubmit"},
-        {sceAgcDriverModuleRegistration, "sceAgcDriverModuleRegistration"},
         {sceAgcDriverNotifyDefaultStates, "sceAgcDriverNotifyDefaultStates"},
         {sceAgcDriverPassInfoDownward, "sceAgcDriverPassInfoDownward"},
         {sceAgcDriverPatchClearState, "sceAgcDriverPatchClearState"},
-        {sceAgcDriverSetHsOffchipParamDirect, "sceAgcDriverSetHsOffchipParamDirect"},
         {sceAgcDriverSetWorkloadComplete, "sceAgcDriverSetWorkloadComplete"},
         {sceAgcDriverSetWorkloadsActive, "sceAgcDriverSetWorkloadsActive"},
         {sceAgcDriverSetupAsyncGraphics, "sceAgcDriverSetupAsyncGraphics"},
         {sceAgcDriverSetupRegisterShadow, "sceAgcDriverSetupRegisterShadow"},
-        {sceAgcDriverSubmitMultiCommandBuffersDirect, "sceAgcDriverSubmitMultiCommandBuffersDirect"},
         {sceAgcDriverSubmitToHDRScopesACQ, "sceAgcDriverSubmitToHDRScopesACQ"},
-        {sceAgcDriverSubmitToRazorACQ, "sceAgcDriverSubmitToRazorACQ"},
         {sceAgcDriverSuspendPointSubmit, "sceAgcDriverSuspendPointSubmit"},
-        {sceAgcDriverSuspendPointSubmitDirect, "sceAgcDriverSuspendPointSubmitDirect"},
         {sceAgcDriverSysEnableSubmitDone45Exception, "sceAgcDriverSysEnableSubmitDone45Exception"},
         {sceAgcDriverSysGetClientNumber, "sceAgcDriverSysGetClientNumber"},
         {sceAgcDriverSysIsGameClosed, "sceAgcDriverSysIsGameClosed"},
@@ -54,6 +47,6 @@ int main(int argc, char** argv) {
         {sceAgcDriverUserDataWritePushMarker, "sceAgcDriverUserDataWritePushMarker"},
         {sceAgcDriverUserDataWriteSetMarker, "sceAgcDriverUserDataWriteSetMarker"},
     };
-    if (!ExportsResolveByName(argc > 1 ? argv[1] : nullptr, exports, "sceAgcDriverNotExported")) return 5;
+    if (!ExportsResolveByName(argc > 1 ? argv[1] : nullptr, exports, "sceAgcDriverNotExported")) return 11;
     return 0;
 }
