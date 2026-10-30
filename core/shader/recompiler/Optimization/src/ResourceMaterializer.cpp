@@ -707,7 +707,10 @@ public:
         for (const auto& image : plan.info.images) {
             if (image.table != NoTable) {
                 count = std::max(count, image.table + 1u);
-                if (image.source < plan.descriptorSources.size() && plan.descriptorSources[image.source].tableColumn.has_value() && plan.descriptorSources[image.source].tableColumn->indirect) hasIndirect = true;
+                if (image.source < plan.descriptorSources.size() && plan.descriptorSources[image.source].tableColumn.has_value()) {
+                    const auto& column = *plan.descriptorSources[image.source].tableColumn;
+                    hasIndirect |= column.indirect || plan.descriptorSources.at(column.heapSource).tableColumn.has_value();
+                }
             }
         }
         for (const auto& sampler : plan.info.samplers) {
@@ -726,6 +729,8 @@ public:
         const bool checkEpoch = (count > 1u || hasIndirect) && runtime.descriptorScope != nullptr;
         bool completed = false;
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            parentKeysRemaining = ImageTableAbi::MaxParentKeys;
+            nestedKeysRemaining = ImageTableAbi::MaxNestedKeys;
             if (attempt != 0u) {
                 columns.clear();
                 pages.clear();
