@@ -1,0 +1,4 @@
+BASE=2b1ae87c69bff8ba1df7a708ed7d6b099d416a08
+REPEAT=10
+EXTRA_TESTS='agc_device_image_keys|agc_driver_device_image_table|agc_driver_device_image_path|agc_shader_device_image_tables|^agc_driver_bda_'
+NO_BEFORE=1
