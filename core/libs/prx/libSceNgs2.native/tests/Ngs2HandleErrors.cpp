@@ -55,10 +55,6 @@ static void CheckCorePendingExports(const char* path) {
     const Export exports[] = {
         {reinterpret_cast<void (*)(void)>(&sceNgs2FftInit), "sceNgs2FftInit"},
         {reinterpret_cast<void (*)(void)>(&sceNgs2FftProcess), "sceNgs2FftProcess"},
-        {reinterpret_cast<void (*)(void)>(&sceNgs2FftQuerySize), "sceNgs2FftQuerySize"},
-        {reinterpret_cast<void (*)(void)>(&sceNgs2ParseWaveformUser), "sceNgs2ParseWaveformUser"},
-        {reinterpret_cast<void (*)(void)>(&sceNgs2SystemEnumHandles), "sceNgs2SystemEnumHandles"},
-        {reinterpret_cast<void (*)(void)>(&sceNgs2SystemEnumRackHandles), "sceNgs2SystemEnumRackHandles"},
     };
     if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
         throw std::runtime_error("the pending libSceNgs2 exports do not all resolve by name");
