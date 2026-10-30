@@ -1,0 +1,4 @@
+BASE=c0fb4a6aad1012b7e2abecaf2949e3d26c0e525d
+REPEAT=10
+EXTRA_TESTS='agc_driver_partially_resident_snapshot|agc_driver_partially_resident_pending_stores|agc_driver_large_tracked_snapshot|^agc_driver_partially_committed_'
+NO_BEFORE=1
