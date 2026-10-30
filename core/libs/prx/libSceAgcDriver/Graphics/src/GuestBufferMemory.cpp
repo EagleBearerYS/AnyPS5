@@ -5607,7 +5607,7 @@ void GuestBufferMemory::UploadFinish(bool addressable) {
                 runImport = entry != nullptr;
             }
             region.copySpans.clear();
-            if (entry == nullptr && recorder != nullptr && spanCopyEligible(region)) region.copySpans = importSpans(context, state, region.begin, region.end, importRanges());
+            if (entry == nullptr && recorder != nullptr && (spanCopyEligible(region) || copyBehindGpuWork(region, true))) region.copySpans = importSpans(context, state, region.begin, region.end, importRanges());
             // A staged region (see stagingEligible) is copied out of the import even when aligned;
             // without a recorder to record the copies it binds in place like any other.
             const bool staged = recorder != nullptr && stagingEligible(region, addressable);

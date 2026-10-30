@@ -4323,6 +4323,133 @@ bool pendingUploadGpuCopyTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool spanUploadGpuCopyTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    constexpr std::size_t window = 16u << 20u;
+    constexpr std::size_t bytes = 2 * window;
+    void* block = context.hostImportAlignment != 0 ? AllocateWatched(bytes, window) : nullptr;
+    if (block == nullptr) {
+        std::cout << "host imports or write watching unavailable: uploads spanning two host imports not tested\n";
+        return false;
+    }
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    auto* guest = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto boundary = address + window;
+    for (std::size_t at = 0; at < bytes; ++at) guest[at] = static_cast<std::uint8_t>(at * 5u + 1u);
+    SetHostImportWindow(window);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, window, true, true, true);
+        mutation.Add(guest + window, window, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+                mutation.Remove(static_cast<std::uint8_t*>(block) + window);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+            SetHostImportWindow(0);
+        }
+    } unregister{context, block};
+    if (HostImportFor(context, address, window) == nullptr || HostImportFor(context, boundary, window) == nullptr) {
+        std::cout << "host import of the two ranges refused: uploads spanning two host imports not tested\n";
+        return false;
+    }
+    constexpr std::size_t producedOffset = window - (512u << 10u);
+    constexpr std::size_t producedBytes = 1u << 20u;
+    const auto produced = address + producedOffset;
+    const auto check = [&](const char* name, std::size_t viewOffset, std::size_t viewBytes, bool written, std::uint8_t seed) {
+        const auto* low = HostImportFor(context, address, window);
+        const auto* high = HostImportFor(context, boundary, window);
+        Require(low != nullptr && high != nullptr && low != high && low->base <= address && low->base + low->bytes == boundary && high->base == boundary && high->base + high->bytes >= boundary + window, "the two adjacent ranges were not imported apart");
+        const auto view = address + viewOffset;
+        std::vector<std::uint8_t> expected(guest + viewOffset, guest + viewOffset + viewBytes);
+        auto source = std::make_shared<Buffer>(context, producedBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        auto* pattern = reinterpret_cast<std::uint8_t*>(source->Bytes().data());
+        for (std::size_t at = 0; at < producedBytes; ++at) {
+            pattern[at] = static_cast<std::uint8_t>(((at * 7u + 3u) ^ 0xa5u) + seed);
+            expected[producedOffset - viewOffset + at] = pattern[at];
+        }
+        const auto lowBytes = static_cast<std::size_t>(boundary - produced);
+        {
+            std::lock_guard lock(GpuMutex());
+            recorder.Sync();
+            const auto commands = recorder.Commands();
+            CopyBuffer(context, commands, source->Handle(), 0, low->buffer, HostImportOffset(*low, produced), lowBytes);
+            CopyBuffer(context, commands, source->Handle(), lowBytes, high->buffer, HostImportOffset(*high, boundary), producedBytes - lowBytes);
+            recorder.Keep(source);
+            recorder.NotePendingWrite(produced, producedBytes);
+        }
+        Require(recorder.OpenWriteOverlaps(produced, producedBytes), std::string("the producer's GPU write is not pending in the open batch (") + name + ")");
+        GuestBufferMemory memory(context);
+        if (written) memory.AddWritable(view, viewBytes);
+        else memory.AddReadable(view, viewBytes);
+        const auto waitsBefore = Recorder::ThreadHookWaits();
+        const auto submissionsBefore = recorder.Submissions();
+        {
+            std::lock_guard lock(GpuMutex());
+            memory.Upload(false);
+        }
+        const auto waits = Recorder::ThreadHookWaits() - waitsBefore;
+        const auto submissions = recorder.Submissions() - submissionsBefore;
+        Require(waits == 0 && submissions == 0 && recorder.OpenWriteOverlaps(produced, producedBytes), std::string("the upload of a ") + name + " region spanning two host imports over a pending GPU write waited for it on the CPU (" + std::to_string(waits) + " flush-hook waits, " + std::to_string(submissions) + " submissions)");
+        auto readback = std::make_shared<Buffer>(context, viewBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        constexpr std::size_t storedBytes = 512u << 10u;
+        const auto storedOffset = window - storedBytes / 2;
+        auto stores = std::make_shared<Buffer>(context, storedBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memset(stores->Bytes().data(), 0x5a, storedBytes);
+        {
+            std::lock_guard lock(GpuMutex());
+            std::uint32_t adjustment = 0;
+            const auto info = memory.Descriptor(view, viewBytes, adjustment);
+            const auto commands = recorder.Commands();
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            CopyBuffer(context, commands, info.buffer, info.offset + adjustment, readback->Handle(), 0, viewBytes);
+            if (written) {
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                CopyBuffer(context, commands, stores->Handle(), 0, info.buffer, info.offset + adjustment + (storedOffset - viewOffset), storedBytes);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+                recorder.Keep(stores);
+                memory.RecordCopyBacks(recorder);
+            }
+            RecordMemoryBarrier(context, recorder.Commands(), VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            recorder.Keep(readback);
+            recorder.Submit();
+        }
+        device.WaitQueue();
+        {
+            std::lock_guard lock(GpuMutex());
+            recorder.Sync();
+        }
+        const auto* read = reinterpret_cast<const std::uint8_t*>(readback->Bytes().data());
+        const auto mismatch = std::mismatch(expected.begin(), expected.end(), read);
+        Require(mismatch.first == expected.end(), std::string("the ") + name + " region uploaded across two host imports behind the pending GPU write misses the producer's bytes at byte " + std::to_string(mismatch.first - expected.begin()) + " of the view");
+        if (written) {
+            std::fill(expected.begin() + static_cast<std::ptrdiff_t>(storedOffset - viewOffset), expected.begin() + static_cast<std::ptrdiff_t>(storedOffset - viewOffset + storedBytes), std::uint8_t{0x5a});
+            const auto stored = std::mismatch(expected.begin(), expected.end(), guest + viewOffset);
+            Require(stored.first == expected.end(), std::string("the copy-back of the ") + name + " region across two host imports left the wrong guest byte at byte " + std::to_string(stored.first - expected.begin()) + " of the view");
+            std::lock_guard lock(GpuMutex());
+            memory.MarkDirectWrites();
+            memory.WriteBack();
+        } else {
+            Require(std::memcmp(guest + producedOffset, pattern, producedBytes) == 0, std::string("the producer's GPU write did not reach guest memory (") + name + ")");
+        }
+    };
+    check("2 MiB", window - (1u << 20u) + 4, (2u << 20u) - 4, false, 1);
+    check("20 MiB", window / 2 + 4, (20u << 20u) - 4, false, 2);
+    check("written 2 MiB", window - (1u << 20u) + 4, (2u << 20u) - 4, true, 3);
+    std::cout << "uploads spanning two host imports behind a pending GPU write tests passed\n";
+    return true;
+}
+
 void misalignedRegionTests(const Device& device, Recorder& recorder) {
     const auto& context = device.GetContext();
     const auto alignment = context.limits.minStorageBufferOffsetAlignment;
@@ -12505,6 +12632,9 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--pending-upload-gpu-copy-only") {
             return pendingUploadGpuCopyTests(device, recorder) ? 0 : 77;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--span-upload-gpu-copy-only") {
+            return spanUploadGpuCopyTests(device, recorder) ? 0 : 77;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--integer-clear-only") {
             integerClearTests(device);
             return 0;
@@ -12760,6 +12890,7 @@ int main(int argc, char** argv) {
         misalignedSnapshotTests(device, recorder);
         misalignedRegionTests(device, recorder);
         pendingUploadGpuCopyTests(device, recorder);
+        spanUploadGpuCopyTests(device, recorder);
         drawSnapshotReuseTests(device, recorder);
         drawDescriptorWriteTests(device, recorder);
         drawSnapshotTableSetTests(device, recorder);
