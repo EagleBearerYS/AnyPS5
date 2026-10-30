@@ -1,13 +1,2 @@
-BUSY BF-290
+READY 2026-10-30T05:01:29Z: BF-290 done
 machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 20 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at diag/village-draw-key-census-v2-on-103015a9ca c9fed6627b); origin and upstream fetched, upstream main 40a8faf90a; lavapipe only, no GPU, no IPv6
-setup report:
-RESULT:
-- Host: `vm`, Intel Xeon Processor @ 2.10 GHz, 4 vCPUs (AVX2, AVX-512F), 15.7 GiB RAM, no swap, ~28 GB free disk allowance (252 GB volume). Ubuntu 24.04.5 LTS x86_64, kernel 6.18.44, booted with ipv6.disable=1, glibc 2.39.
-- Toolchain: gcc/g++ 13.3.0, binutils 2.42, CMake 3.28.3, Ninja 1.11.1, ccache 4.9.1, Python 3.13.16, git 2.43.0, wild 0.10.0 (CI's release tarball, sha256 641265506a...d105283 checked, readelf probe "Linker: Wild 0.10.0", /opt/wild/0.10.0/bin, used through -B as in CI). Vulkan: libvulkan1 1.3.275, lavapipe from mesa-vulkan-drivers 25.2.8-0ubuntu0.24.04.4 (llvmpipe, LLVM 20.1.2, 256 bits), API 1.4.318.
-- Packages: apt-get install -y --no-install-recommends ccache libvulkan1 libvulkan-dev mesa-vulkan-drivers vulkan-tools libpipewire-0.3-dev libpulse-dev libasound2-dev libx11-dev libxext-dev libxrandr-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev pkg-config (release.yml's Linux list plus BUILD.md's X11 headers, ccache and vulkan-tools; build.yml's linux job runs on a self-hosted runner and has no apt line).
-- Repo: /home/user/AnyPS5, detached at upstream main e0e57a327 (Merge pull request #8263), submodules recursive (incl. 3rdparty/mimalloc). origin = EagleBearerYS/AnyPS5, upstream = boykopovar/AnyPS5 and fable-void = fable-void/AnyPS5 (both fetch only, push URL disabled).
-- Builds and tests run as the unprivileged user `runner` (uid 30033), which owns the checkout and build/. ctest runs with stdin from /dev/null.
-- Mirror: /home/user/ci-linux.sh <src> <build> [configure|build|test|all] = build.yml's linux job (CONFIGURE + -DANYPS5_ENABLE_SPIRV_TOOLS=ON + wild -B linker flags; CCACHE_DIR=/var/cache/anyps5/ccache, CCACHE_COMPILERCHECK=content, MESA_SHADER_CACHE_DIR=/var/cache/anyps5/mesa; build -l 4 then --target libs; tools/select_tests.py ctest --test-load 4 --output-on-failure --timeout 120 with ANYPS5_REQUIRE_VULKAN=1 GALLIUM_OVERRIDE_CPU_CAPS=avx; tools/check_skips.py).
-- Configure: 23 s. check_test_registration: "1157 test executable(s), 0 built and not run as recorded, none new".
-- Cold build of build/ (empty ccache, 4 jobs): [5137/5137] in 1349 s, 0 errors, 17 warning lines. --target libs: up to date.
-- Worktrees: /home/user/board (cloud-tasks, branch board-local), /home/user/results (cloud-results, branch results-local).
