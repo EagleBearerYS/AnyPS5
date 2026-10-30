@@ -388,6 +388,7 @@ int APS5_VABI sceKernelGetModuleList(KernelModule* handles, std::size_t count, s
 int APS5_VABI sceKernelGetModuleList2(KernelModule* handles, std::size_t count, std::size_t* actual);
 int APS5_VABI sceKernelGetModuleInfo(KernelModule handle, ModuleInfo* info);
 int APS5_VABI sceKernelGetModuleInfo2(KernelModule handle, ModuleInfo* info);
+KernelModule APS5_VABI sceKernelGetExecutableModuleHandle();
 std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** address, std::size_t* size);
 std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo* result);
 int APS5_VABI pthread_attr_destroy_nid_postfix(PthreadAttr* attr);
@@ -488,6 +489,7 @@ int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime
 int APS5_VABI sem_reltimedwait_np_nid_postfix(void* sem, uint32_t usec);
 int APS5_VABI sem_post_nid_postfix(void* sem);
 int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value);
+int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name);
 void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...);
 int APS5_VABI sem_close_nid_postfix(void* sem);
 int APS5_VABI sem_unlink_nid_postfix(const char* name);
