@@ -367,9 +367,8 @@ int APS5_VABI sceVdecCoreGetDecodeOutput(void* decoder, VdecCoreFrameBuffer* fra
     const std::uint32_t pictureSize = pitch * alignedHeight * 3 / 2;
     const std::uint32_t sarWidth = frame->sample_aspect_ratio.num > 0 ? static_cast<std::uint32_t>(frame->sample_aspect_ratio.num) : 1;
     const std::uint32_t sarHeight = frame->sample_aspect_ratio.den > 0 ? static_cast<std::uint32_t>(frame->sample_aspect_ratio.den) : 1;
-    const std::uint64_t allocatedSize = frameBuffer != nullptr && frameBuffer->frameBufferSize > 0 ? frameBuffer->frameBufferSize : target.geometry.frameBufferSize;
     std::uint8_t* destination = nullptr;
-    bool fallback = false;
+    std::uint64_t capacity = 0;
     std::int64_t lastPts = 0;
     std::int64_t lastDts = 0;
     {
@@ -378,23 +377,25 @@ int APS5_VABI sceVdecCoreGetDecodeOutput(void* decoder, VdecCoreFrameBuffer* fra
         lastDts = target.lastDts;
         if (frameBuffer != nullptr && frameBuffer->frameBuffer != nullptr) {
             destination = static_cast<std::uint8_t*>(frameBuffer->frameBuffer);
+            capacity = frameBuffer->frameBufferSize > 0 ? frameBuffer->frameBufferSize : target.geometry.frameBufferSize;
         } else if (!target.frameBufferSlots.empty()) {
             destination = static_cast<std::uint8_t*>(target.frameBufferSlots[target.currentSlot % target.frameBufferSlots.size()]);
             ++target.currentSlot;
+            capacity = target.geometry.frameBufferSize;
         } else {
-            const std::uint64_t fallbackSize = std::max<std::uint64_t>(pictureSize, allocatedSize);
-            if (target.fallbackFrameBuffer.size() < fallbackSize) target.fallbackFrameBuffer.resize(static_cast<std::size_t>(fallbackSize));
+            const std::uint64_t requested = frameBuffer != nullptr && frameBuffer->frameBufferSize > 0 ? frameBuffer->frameBufferSize : target.geometry.frameBufferSize;
+            capacity = std::max<std::uint64_t>(std::uint64_t{pictureSize} + sizeof(VdecCoreHwPictureInfo), requested);
+            if (target.fallbackFrameBuffer.size() < capacity) target.fallbackFrameBuffer.resize(static_cast<std::size_t>(capacity));
             destination = target.fallbackFrameBuffer.data();
-            fallback = true;
         }
     }
-    if (!fallback && pictureSize > allocatedSize) throw std::runtime_error("VdecCore: a decoded picture is larger than its frame buffer");
+    if (pictureSize > capacity) throw std::runtime_error("VdecCore: a decoded picture is larger than its frame buffer");
     CopyNv12(destination, *frame);
     const std::uint64_t pts = PictureTime(frame->pts, lastPts);
     const std::uint64_t dts = PictureTime(frame->pkt_dts, lastDts);
     const auto userData = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(frame->opaque));
-    if (allocatedSize >= sizeof(VdecCoreHwPictureInfo)) {
-        auto* info = reinterpret_cast<VdecCoreHwPictureInfo*>(destination + allocatedSize - sizeof(VdecCoreHwPictureInfo));
+    if (capacity - pictureSize >= sizeof(VdecCoreHwPictureInfo)) {
+        auto* info = reinterpret_cast<VdecCoreHwPictureInfo*>(destination + capacity - sizeof(VdecCoreHwPictureInfo));
         std::memset(info, 0, sizeof(*info));
         info->codecType = target.codecType == CodecHevc ? 1 : 0;
         info->userData = userData;
