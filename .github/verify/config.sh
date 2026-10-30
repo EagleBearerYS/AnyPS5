@@ -1,0 +1,4 @@
+BASE=4bc9e779aa7abb2109c65ee3bca19e1b85df3be8
+REPEAT=10
+EXTRA_TESTS='public_headers|guest_system_service_status_suspend|guest_system_service_status_sessions|guest_system_service_status_shell|guest_system_service_status_devices|guest_system_service|^guest_system_service|^public_headers_compile_'
+NO_BEFORE=1
