@@ -556,6 +556,15 @@ private:
     void blockGenerations(std::vector<std::uint64_t>& generations) const;
     std::uint64_t unitBlockGeneration(std::uint32_t unit, std::uint64_t at) const;
     static constexpr std::uint32_t NoUnit = ~0u;
+    struct UnitTile {
+        std::uint32_t layer;
+        std::uint32_t level;
+        std::uint32_t x;
+        std::uint32_t y;
+        std::uint32_t width;
+        std::uint32_t height;
+    };
+    std::optional<UnitTile> unitTile(std::uint32_t unit) const;
     struct AliasPlan {
         std::shared_ptr<StorageTexture> alias;
         bool sameShape = false;

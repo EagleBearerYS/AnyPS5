@@ -16,6 +16,7 @@
 // For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -5907,6 +5908,41 @@ void StorageTexture::supersedeHandedOver(std::uint32_t first, std::uint32_t coun
     if (std::none_of(handedUnits.begin(), handedUnits.end(), [](bool handed) { return handed; })) handedUnits.clear();
 }
 
+namespace {
+
+bool swizzleWithinBlock(TextureTileMode tileMode, std::uint32_t elementBytes) {
+    const auto* equation = FindTextureSwizzleEquation(EquationSwizzleMode(tileMode), elementBytes);
+    if (equation == nullptr) return false;
+    const auto block = ThinBlockLayout(tileMode, elementBytes);
+    if (block[0] != 65536u) return false;
+    return std::all_of(equation->bits.begin(), equation->bits.end(), [&](std::uint32_t bits) { return ((bits & 0xfffu) & ~(block[1] - 1u)) == 0 && (((bits >> 12u) & 0xfffu) & ~(block[2] - 1u)) == 0; });
+}
+
+}
+
+std::optional<StorageTexture::UnitTile> StorageTexture::unitTile(std::uint32_t unit) const {
+    if (!blockUnits || geometry.thick || unit >= trackedLayers || layerBytes(unit) != 65536) return std::nullopt;
+    const auto elementBytes = BytesPerElement(descriptor.format);
+    const auto offset = static_cast<std::uint64_t>(unit) * trackedLayerBytes;
+    for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
+        for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+            if (!geometry.HasLayer(level, layer)) continue;
+            const auto& mip = mips[level];
+            const auto sliceBegin = geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+            if (offset < sliceBegin || offset - sliceBegin >= mip.tiledSize) continue;
+            if (mip.tail || mip.blocksPerRow == 0) return std::nullopt;
+            const auto block = ThinBlockLayout(descriptor.tileMode, elementBytes);
+            if (block[0] != 65536u || (offset - sliceBegin) % block[0] != 0) return std::nullopt;
+            const auto index = (offset - sliceBegin) / block[0];
+            const auto x = static_cast<std::uint32_t>(index % mip.blocksPerRow) * block[1];
+            const auto y = static_cast<std::uint32_t>(index / mip.blocksPerRow) * block[2];
+            if (x >= mip.width || y >= mip.height) return std::nullopt;
+            return UnitTile{layer, level, x, y, std::min(block[1], mip.width - x), std::min(block[2], mip.height - y)};
+        }
+    }
+    return std::nullopt;
+}
+
 std::vector<StorageTexture::AliasPlan> StorageTexture::pendingAliases() const {
     static const bool disabled = std::getenv("APS5_NO_ALIAS_BORROW") != nullptr;
     std::vector<AliasPlan> plans;
@@ -5916,10 +5952,13 @@ std::vector<StorageTexture::AliasPlan> StorageTexture::pendingAliases() const {
         auto& pending = Pending();
         std::lock_guard lock(pending.mutex);
         for (auto* texture : pending.textures) {
-            if (texture == this || texture->descriptor.baseAddress != descriptor.baseAddress || texture->guestBytes != guestBytes || !texture->blockUnits) continue;
+            if (texture == this || !texture->overlaps(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) || !texture->blockUnits) continue;
             if (auto alive = texture->weak_from_this().lock()) candidates.push_back(std::move(alive));
         }
     }
+    std::stable_partition(candidates.begin(), candidates.end(), [&](const std::shared_ptr<StorageTexture>& candidate) { return candidate->descriptor.baseAddress == descriptor.baseAddress && candidate->guestBytes == guestBytes; });
+    const auto elementBytes = BytesPerElement(descriptor.format);
+    bool wholeTaken = false;
     for (const auto& candidate : candidates) {
         const auto& mine = descriptor;
         const auto& theirs = candidate->descriptor;
@@ -5928,11 +5967,25 @@ std::vector<StorageTexture::AliasPlan> StorageTexture::pendingAliases() const {
         const auto oneSlice = [](const GuestTextureResource& resource) { return resource.dimension == TextureDimension::k2D || (resource.dimension == TextureDimension::k2DArray && resource.depthOrLastArray == 0); };
         const bool sameDimension = mine.dimension == theirs.dimension || (oneSlice(mine) && oneSlice(theirs));
         const bool sameShape = mine.width == theirs.width && mine.height == theirs.height && mine.depthOrLastArray == theirs.depthOrLastArray && mine.baseArray == theirs.baseArray && mine.mipCount == theirs.mipCount && mine.tileMode == theirs.tileMode && sameDimension && BytesPerElement(mine.format) == BytesPerElement(theirs.format) && geometry.imageLayers == candidate->geometry.imageLayers && geometry.imageDepth == candidate->geometry.imageDepth && trackedLayers == candidate->trackedLayers;
-        if (!sameShape || !candidate->Cached() || candidate->uploadedKeys != DccKeys::Uncompressed) continue;
-        AliasPlan plan{candidate, true, std::vector<std::uint32_t>(trackedLayers, NoUnit), std::vector<bool>(trackedLayers, true)};
-        for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) plan.units[unit] = unit;
+        if (!candidate->Cached() || candidate->uploadedKeys != DccKeys::Uncompressed) continue;
+        const bool whole = sameShape && theirs.baseAddress == mine.baseAddress && candidate->guestBytes == guestBytes;
+        if (whole && wholeTaken) continue;
+        const bool tiles = !whole && theirs.tileMode == mine.tileMode && theirs.pipeBankXor == mine.pipeBankXor && BytesPerElement(theirs.format) == elementBytes && BlockWidth(theirs.format) == 1 && BlockWidth(mine.format) == 1 && swizzleWithinBlock(mine.tileMode, elementBytes);
+        AliasPlan plan{candidate, whole, std::vector<std::uint32_t>(trackedLayers, NoUnit), std::vector<bool>(trackedLayers, false)};
+        bool any = false;
+        for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+            const auto at = layerBegin(unit);
+            if (at < theirs.baseAddress || at - theirs.baseAddress >= candidate->guestBytes) continue;
+            plan.units[unit] = static_cast<std::uint32_t>((at - theirs.baseAddress) / candidate->trackedLayerBytes);
+            if (!whole && !tiles) continue;
+            const auto mineTile = whole ? std::optional<UnitTile>{} : unitTile(unit);
+            const auto theirTile = whole ? std::optional<UnitTile>{} : candidate->unitTile(plan.units[unit]);
+            plan.copyable[unit] = whole || (mineTile && theirTile && mineTile->layer == theirTile->layer && mineTile->width == theirTile->width && mineTile->height == theirTile->height);
+            any = any || plan.copyable[unit];
+        }
+        if (!any) continue;
+        wholeTaken = wholeTaken || whole;
         plans.push_back(std::move(plan));
-        break;
     }
     return plans;
 }
@@ -6030,8 +6083,19 @@ std::uint64_t StorageTexture::borrowUnits(const std::vector<AliasPlan>& plans, c
         for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) units[unit] = lenders[unit] == static_cast<std::int32_t>(index);
         const auto runs = unitRuns(units);
         for (const auto& [begin, end] : runs) bytes += end - begin;
-        for (const auto& window : sliceWindows(runs)) {
-            for (const auto& region : window.regions) regions[index].push_back({region.imageSubresource, region.imageOffset, region.imageSubresource, region.imageOffset, region.imageExtent});
+        if (plan.sameShape) {
+            for (const auto& window : sliceWindows(runs)) {
+                for (const auto& region : window.regions) regions[index].push_back({region.imageSubresource, region.imageOffset, region.imageSubresource, region.imageOffset, region.imageExtent});
+            }
+            continue;
+        }
+        const auto& source = *plan.alias;
+        for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+            if (!units[unit]) continue;
+            const auto mine = unitTile(unit);
+            const auto theirs = source.unitTile(plan.units[unit]);
+            Require(mine.has_value() && theirs.has_value() && mine->width == theirs->width && mine->height == theirs->height, "storage image borrows a unit that is not one tile of the same extent in both images");
+            regions[index].push_back({{VK_IMAGE_ASPECT_COLOR_BIT, theirs->level, source.geometry.CopyLayer(theirs->layer), 1}, {static_cast<std::int32_t>(theirs->x), static_cast<std::int32_t>(theirs->y), source.geometry.CopyDepth(theirs->layer)}, {VK_IMAGE_ASPECT_COLOR_BIT, mine->level, geometry.CopyLayer(mine->layer), 1}, {static_cast<std::int32_t>(mine->x), static_cast<std::int32_t>(mine->y), geometry.CopyDepth(mine->layer)}, {mine->width, mine->height, 1u}});
         }
     }
     Require(std::any_of(regions.begin(), regions.end(), [](const std::vector<VkImageCopy>& list) { return !list.empty(); }), "storage image borrows no unit");
