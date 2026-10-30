@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 #include "prx/libSceVdecCore/include/Api.hpp"
 #include "prx/libSceVdecCore/include/Decoder.hpp"
 #include <algorithm>
