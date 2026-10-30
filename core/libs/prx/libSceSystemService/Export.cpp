@@ -401,7 +401,7 @@ int APS5_VABI sceSystemServiceDisableSuspendNotification() {
 }
 
 int APS5_VABI sceShellCoreUtilGetRemotePlayStatus(bool* active) {
-    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_NULL_OUTPUT);
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 int APS5_VABI sceSystemServiceGetRemoteplayStatus(bool* active) {
@@ -409,7 +409,7 @@ int APS5_VABI sceSystemServiceGetRemoteplayStatus(bool* active) {
 }
 
 int APS5_VABI sceShellCoreUtilGetSharePlayStatus(bool* active) {
-    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_NULL_OUTPUT);
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 bool APS5_VABI sceShellCoreUtilIsGameLiveStreamingOnAir() {
@@ -421,7 +421,7 @@ bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir() {
 }
 
 int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active) {
-    return WriteStatusOrRefuse(active, sceShellCoreUtilIsGameLiveStreamingOnAir(), SHELL_CORE_UTIL_ERROR_NULL_OUTPUT);
+    return WriteStatusOrRefuse(active, sceShellCoreUtilIsGameLiveStreamingOnAir(), SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
@@ -479,7 +479,7 @@ bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress() {
 }
 
 int APS5_VABI sceLncUtilIsPs2Emu(bool* emulated) {
-    return WriteStatusOrRefuse(emulated, false, LNC_UTIL_ERROR_NULL_OUTPUT);
+    return WriteStatusOrRefuse(emulated, false, LNC_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 int APS5_VABI sceSystemServiceHideSplashScreen(void) {
