@@ -1764,6 +1764,7 @@ bool FillClearColor(VkFormat format, std::uint32_t elementBytes, std::span<const
 // The image being validated by Refresh: its own pending results are what the next dispatch wants,
 // so the comparison with guest memory must not flush them.
 thread_local const StorageTexture* refreshing = nullptr;
+thread_local const StorageTexture* refreshingAlias = nullptr;
 
 void FlushHook(std::uint64_t address, std::size_t bytes) {
     StorageTexture::FlushPending(address, bytes);
@@ -2193,7 +2194,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // stamped); an untracked unit is stored whole by that write-back, and a unit pending in both
     // images takes the old order (store, then this image re-uploads it).
     auto alias = scoped ? std::shared_ptr<StorageTexture>{} : pendingAlias();
-    if (alias != nullptr && !(ProvedClearKeys(descriptor, guestBytes, keyProof) == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr)) alias = nullptr;
+    if (alias != nullptr && ProvedClearKeys(descriptor, guestBytes, keyProof) != DccKeys::Uncompressed) alias = nullptr;
     if (alias != nullptr) {
         std::vector<std::uint8_t> aliasStamped(trackedLayers);
         if (!GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped)) alias = nullptr;
@@ -2211,6 +2212,10 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     handedOver.clear();
     handedUnits.clear();
     const auto handOverKeys = alias == nullptr && !scoped ? clearHandOver() : std::nullopt;
+    struct ExemptAlias {
+        const StorageTexture* previous;
+        ~ExemptAlias() { refreshingAlias = previous; }
+    } exemptAlias{std::exchange(refreshingAlias, alias.get())};
     const bool flushed = !handOverKeys.has_value() && FlushPending(scopeBegin, scopeBytes, alias.get(), "storage refresh", PublishScope::None);
     if (profile && flushed) start = LookupOutcomes::Add(LookupOutcomes::PendingFlush, start);
     // `original` holds the guest bytes the image was last uploaded from or written back as; while the
@@ -2236,6 +2241,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     std::vector<bool> outside;
     // Units taken from the alias's image instead of guest memory.
     std::vector<bool> borrowed;
+    std::vector<bool> heldBorrows;
     bool anyBorrowed = false;
     bool unchanged = true;
     bool stamped = true;
@@ -2340,7 +2346,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             if (!scoped) outside.clear();
         }
         direct = keys == DccKeys::Uncompressed && HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
-        if (alias != nullptr && direct) {
+        if (alias != nullptr && keys == DccKeys::Uncompressed) {
             // The alias's pending units that nothing stamped since its generation (a CPU store or a
             // driver store there wins over its results, as at its own write-back) are taken from
             // its image: every one of them, since its write-back would have stamped them all. Units
@@ -2349,9 +2355,13 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             std::vector<std::uint8_t> aliasStamped(trackedLayers);
             const bool aliasTracked = GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), alias->layerGeneration, aliasStamped);
             borrowed.assign(trackedLayers, false);
+            heldBorrows.assign(trackedLayers, false);
             for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
                 if (!aliasTracked || !alias->layerPending[unit] || aliasStamped[unit] != 0 || alias->layerGeneration[unit] == 0 || layerPending[unit]) continue;
-                if (sameBorrow && borrowedUnits[unit]) continue;
+                if (sameBorrow && borrowedUnits[unit]) {
+                    heldBorrows[unit] = true;
+                    continue;
+                }
                 borrowed[unit] = true;
                 anyBorrowed = true;
                 changed[unit] = false;
@@ -2459,6 +2469,17 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     } else if (dropped) {
         reconcilePending();
     }
+    if (std::any_of(changed.begin(), changed.end(), [](bool selected) { return selected; })) {
+        uploadReason = keysChanged ? "keys" : cpuWrote ? "cpu" : generation == 0 ? "untracked" : flushed ? "flushed" : "store";
+        upload(&changed);
+    } else {
+        uploadedKeys = keys;
+    }
+    for (std::uint32_t unit = 0; unit < heldBorrows.size(); ++unit) {
+        if (!heldBorrows[unit] || (unit < borrowedUnits.size() && borrowedUnits[unit])) continue;
+        borrowed[unit] = true;
+        anyBorrowed = true;
+    }
     if (anyBorrowed) {
         uploadReason = "alias";
         borrowUnits(*alias, borrowed);
@@ -2466,12 +2487,6 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             if (borrowed[unit]) layerGeneration[unit] = currentFor(unit);
         }
         refreshGeneration();
-    }
-    if (std::any_of(changed.begin(), changed.end(), [](bool selected) { return selected; })) {
-        uploadReason = keysChanged ? "keys" : cpuWrote ? "cpu" : generation == 0 ? "untracked" : flushed ? "flushed" : "store";
-        upload(&changed);
-    } else {
-        uploadedKeys = keys;
     }
     return false;
 }
@@ -4197,6 +4212,7 @@ void waitForIdlePublish(const char* reason) {
 
 bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited) {
     static_cast<void>(FlushDepthPlanes(address, bytes));
+    if (except == nullptr) except = refreshingAlias;
     if (published != nullptr) *published = false;
     const auto nothingToStore = [&] {
         auto& pending = Pending();

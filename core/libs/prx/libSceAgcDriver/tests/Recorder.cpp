@@ -12009,6 +12009,156 @@ void Run(Context context) {
 }
 #endif
 
+bool storageAliasBorrowTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t units = 4;
+    constexpr std::size_t bytes = unit * units;
+    constexpr std::uint32_t side = 256;
+    constexpr std::uint32_t written = 0x80402010u;
+    constexpr std::uint32_t second = 0x01020304u;
+    constexpr std::uint32_t stored = 0x66666666u;
+    if (!WriteWatched()) {
+        std::cout << "write watching unavailable: taking an aliased storage image's units without a host import not tested\n";
+        return false;
+    }
+    void* block = AllocateWatched(bytes, unit);
+    Require(block != nullptr, "no watched block although write watching is on");
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, bytes); }
+    } release{block};
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    std::memset(block, 0x11, bytes);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    auto context = device.GetContext();
+    context.recorder = &recorder;
+    context.hostImportAlignment = 0;
+    context.dmaBufImport = false;
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    TextureCache textureCache(context);
+    context.textureCache = &textureCache;
+    struct Cleanup {
+        const Context& context;
+        Recorder& recorder;
+        void* block;
+        ~Cleanup() {
+            recorder.Sync();
+            ClearCachedTextures(context.device);
+            recorder.Sync();
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block);
+        }
+    } cleanup{context, recorder, block};
+    const auto surface = [&](std::uint32_t format) {
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = format;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == bytes, "the aliased surface is not four 64 KiB units");
+        return resource;
+    };
+    const auto color = CachedStorageSurface(context, surface(56));
+    const auto words = CachedStorageSurface(context, surface(20));
+    Require(color != nullptr && words != nullptr && color != words && color->Cached() && words->Cached(), "the RGBA8 and R32 descriptors of the surface did not make two cached storage images");
+    Require(words->ImageFormat() == VK_FORMAT_R32_UINT, "the R32 descriptor's storage image is not R32_UINT");
+    Require(ExistingHostImportFor(context, address, bytes) == nullptr, "the aliased surface was imported although host imports are off");
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkClearColorValue value{};
+    value.uint32[0] = written;
+    const auto commands = recorder.Commands();
+    recorder.Keep(words);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, words->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    words->MarkDirty();
+    Require(StorageTexture::FindPending(address, bytes) == words, "the cleared R32 image is not the pending image over the surface");
+    color->Refresh();
+    Require(StorageTexture::FindPending(address, bytes) == words, "refreshing the RGBA8 image over the surface wrote the pending R32 image back instead of taking its units on the device");
+    SampleProgram program(context, recorder);
+    const auto red = program.Red(color->View(), VK_IMAGE_LAYOUT_GENERAL, 0.0f);
+    Require(std::abs(red - 16.0f / 255.0f) < 0.5f / 255.0f, "the RGBA8 image sampled " + std::to_string(red * 255.0f) + " after taking the R32 image's units, expected 16");
+    words->WriteBack();
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    Require(StorageTexture::FindPending(address, bytes) == nullptr, "the R32 image is still pending after its write-back");
+    const std::vector<bool> upper{false, true, true, true};
+    const auto rects = words->UnitRects(upper);
+    Require(std::any_of(rects.begin(), rects.end(), [&](const VkRect2D& rect) { return rect.offset.x <= static_cast<std::int32_t>(side / 2) && static_cast<std::int32_t>(side / 2) < rect.offset.x + static_cast<std::int32_t>(rect.extent.width) && rect.offset.y <= static_cast<std::int32_t>(side / 2) && static_cast<std::int32_t>(side / 2) < rect.offset.y + static_cast<std::int32_t>(rect.extent.height); }), "the texel the sample reads is not in units 1-3 of the surface");
+    std::size_t texels = 0;
+    for (const auto& rect : rects) texels = std::max<std::size_t>(texels, static_cast<std::size_t>(rect.extent.width) * rect.extent.height);
+    const std::vector<std::uint32_t> fillWords(texels, second);
+    Buffer staging(context, texels * sizeof(std::uint32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::memcpy(staging.Bytes().data(), fillWords.data(), texels * sizeof(std::uint32_t));
+    std::vector<VkBufferImageCopy> copies;
+    for (const auto& rect : rects) {
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageOffset = {rect.offset.x, rect.offset.y, 0};
+        copy.imageExtent = {rect.extent.width, rect.extent.height, 1};
+        copies.push_back(copy);
+    }
+    const auto fill = recorder.Commands();
+    RecordMemoryBarrier(context, fill, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+    context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(fill, staging.Handle(), words->Image(), VK_IMAGE_LAYOUT_GENERAL, static_cast<std::uint32_t>(copies.size()), copies.data());
+    RecordMemoryBarrier(context, fill, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+    words->MarkUnitsWritten(upper);
+    Require(StorageTexture::FindPending(address, bytes) == words, "the R32 image written over units 1-3 is not the pending image over the surface");
+    const auto storeOverFirstUnit = [&](std::byte value) {
+        std::vector<std::byte> store(unit, value);
+        Write(address, store);
+    };
+    storeOverFirstUnit(std::byte{0x55});
+    color->Refresh();
+    Require(StorageTexture::FindPending(address, bytes) == words, "refreshing the RGBA8 image after a driver store over unit 0 wrote back the R32 image pending over units 1-3");
+    const auto taken = program.Red(color->View(), VK_IMAGE_LAYOUT_GENERAL, 0.0f);
+    Require(std::abs(taken - 4.0f / 255.0f) < 0.5f / 255.0f, "the RGBA8 image sampled " + std::to_string(taken * 255.0f) + " after a refresh that uploaded unit 0 from guest memory and took units 1-3 from the R32 image, expected 4");
+    storeOverFirstUnit(std::byte{0x66});
+    color->Refresh();
+    const auto held = program.Red(color->View(), VK_IMAGE_LAYOUT_GENERAL, 0.0f);
+    Require(std::abs(held - 4.0f / 255.0f) < 0.5f / 255.0f, "the RGBA8 image sampled " + std::to_string(held * 255.0f) + " in a unit it held from the R32 image after a second driver store over unit 0 and refresh, expected 4");
+    color->MarkDirty();
+    color->WriteBack();
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    Require(StorageTexture::FindPending(address, bytes) == nullptr, "the R32 image stayed pending after the RGBA8 image took over its units and stored them");
+    std::vector<std::byte> read(bytes);
+    Read(address, read);
+    for (std::size_t at = 0; at < units; ++at) {
+        const auto expected = at == 0 ? stored : second;
+        std::size_t wrong = 0;
+        std::uint32_t seen = 0;
+        for (std::size_t offset = at * unit; offset < (at + 1) * unit; offset += 4) {
+            std::uint32_t word = 0;
+            std::memcpy(&word, read.data() + offset, sizeof(word));
+            if (word == expected) continue;
+            if (wrong++ == 0) seen = word;
+        }
+        const auto hex = [](std::uint32_t word) {
+            char text[16];
+            std::snprintf(text, sizeof(text), "0x%08x", word);
+            return std::string(text);
+        };
+        Require(wrong == 0, "unit " + std::to_string(at) + " of the surface held " + std::to_string(wrong) + " words other than " + hex(expected) + " after the RGBA8 image's write-back (first " + hex(seen) + (seen == written ? ", the R32 image's earlier results" : "") + ")");
+    }
+    std::cout << "storage alias borrow without a host import passed\n";
+    return true;
+}
+
 int main(int argc, char** argv) {
     _ZSt13set_terminatePFvvE_nid_postfix([] {
         std::fflush(nullptr);
@@ -12467,6 +12617,9 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-epoch-only") {
             drawSnapshotEpochTests(device);
             return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--storage-alias-borrow-only") {
+            return storageAliasBorrowTests(device, recorder) ? 0 : 77;
         }
 
         if (argc == 2 && (std::string_view(argv[1]) == "--vertex-target-range-copied" || std::string_view(argv[1]) == "--vertex-target-range-imported")) {
