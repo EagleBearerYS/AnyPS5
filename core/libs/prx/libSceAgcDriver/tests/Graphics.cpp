@@ -1060,18 +1060,13 @@ void MsaaEnableSingleSampleTests() {
     queue = enabled();
     queue.context[0x313] = 0x6001;
     refused(queue, "MSAA_ENABLE on a single-sample target with conservative rasterization");
-    for (const auto primitive : {2u, 3u}) {
-        queue = enabled();
-        queue.userConfig[0x242] = primitive;
-        refused(queue, "primitives other than triangles and rectangles");
-    }
     queue = enabled();
     queue.userConfig[0x242] = 1;
-    Require(DrawRejection(queue, false).find("primitives other than triangles and rectangles") != std::string::npos, "the precheck accepted MSAA_ENABLE on a single-sample target for points");
-    for (const auto primitive : {5u, 6u, 7u, 17u, 21u}) {
+    Require(DrawRejection(queue, false).find("primitives other than triangles, lines and rectangles") != std::string::npos, "the precheck accepted MSAA_ENABLE on a single-sample target for points");
+    for (const auto primitive : {2u, 3u, 5u, 6u, 7u, 17u, 21u}) {
         queue = enabled();
         queue.userConfig[0x242] = primitive;
-        Require(DecodeState(queue).samples == 1 && DrawRejection(queue, false).empty(), "MSAA_ENABLE on a single-sample target was refused for a filled triangle or rectangle primitive");
+        Require(DecodeState(queue).samples == 1 && DrawRejection(queue, false).empty(), "MSAA_ENABLE on a single-sample target was refused for a triangle, line or rectangle primitive");
     }
     queue = enabled();
     queue.context[0x292] = 7;
@@ -1838,14 +1833,23 @@ void UnclampedNormalizedColorTests() {
     const auto pass = AgcDriver::Graphics::DecodeColorMetadataPass(eliminate);
     Require(pass.has_value() && pass->mode == AgcDriver::Graphics::ColorMetadataPass::Mode::EliminateFastClear && pass->targets.size() == 1 && pass->targets[0].format == VK_FORMAT_R8G8_UNORM, "a fast-clear eliminate over an unclamped UNORM target was refused");
     queue.context[0x1e0] = blending;
-    expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented (CB_COLOR_INFO 0x0000000c, CB_BLEND0_CONTROL 0x40000504)");
+    state = DecodeState(queue);
+    Require(state.colors.at(0).partialWriteMask == AgcDriver::Graphics::UnclampedBlendMask && state.blends.at(0).blendEnable && state.blends.at(0).colorWriteMask != 0, "an 8_8 UNORM target that blends with BLEND_CLAMP clear (CB_COLOR_INFO 0x0000000c, CB_BLEND0_CONTROL 0x40000504) was not routed to the pixel shader");
+    const auto merge = AgcDriver::Graphics::ExportTargetMerge(state);
+    Require(merge.blend.enabled && !merge.blend.snorm && merge.mask == AgcDriver::Graphics::UnclampedBlendMask && merge.samples == 1u && merge.blend.colorSource == VK_BLEND_FACTOR_SRC_ALPHA && merge.blend.colorDestination == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA && merge.blend.colorOperation == VK_BLEND_OP_ADD && merge.blend.writeMask == state.blends.at(0).colorWriteMask, "the unclamped blend of an 8_8 UNORM target was not described to the pixel shader");
     queue.context[0x31c] |= 0x10000u;
     state = DecodeState(queue);
     Require(!state.blends.at(0).blendEnable && state.blends.at(0).colorWriteMask != 0, "an unclamped UNORM target with BLEND_BYPASS was refused or blended");
     queue = target(0x0000010cu);
     Require(DecodeState(queue).colors.at(0).format == VK_FORMAT_R8G8_SNORM, "an unclamped SNORM target that does not blend was refused");
     queue.context[0x1e0] = blending;
-    expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented");
+    state = DecodeState(queue);
+    Require(state.colors.at(0).partialWriteMask == AgcDriver::Graphics::UnclampedBlendMask && AgcDriver::Graphics::ExportTargetMerge(state).blend.snorm, "an unclamped SNORM target that blends was not routed to the pixel shader as signed");
+    auto unsignedMasked = target(0x0000000cu);
+    unsignedMasked.context[0x1e0] = blending;
+    unsignedMasked.context[0x8e] = 0x1u;
+    state = DecodeState(unsignedMasked);
+    Require(state.colors.at(0).partialWriteMask == AgcDriver::Graphics::UnclampedBlendMask && state.blends.at(0).colorWriteMask == VK_COLOR_COMPONENT_R_BIT, "an unclamped UNORM target that blends with a write mask that skips a component was not routed to the pixel shader");
     queue = target(0x00000604u);
     expectFailure([&] { DecodeState(queue); }, "unclamped normalized color is unsupported");
     queue = target(0x0000800cu);
@@ -5058,6 +5062,18 @@ void TwoSampleDitheredAlphaToCoverageTests() {
     }
     expectFailure([&] { AgcDriver::Graphics::DecodeState(dithered); }, "DB_EQAA");
     Require(AgcDriver::Graphics::DrawRejection(dithered, false).find("DB_EQAA") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0xe701 with eight samples");
+    auto singleSample = makeState();
+    singleSample.context[0x1b3] = 2;
+    singleSample.context[0x1b4] = 2;
+    singleSample.context[0x2dc] = 0xe701;
+    singleSample.context[0x2f8] = 0;
+    singleSample.context[0x292] = 2;
+    singleSample.context[0x203] &= ~0x800u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(singleSample); }, "requires two matched raster/DB_EQAA samples");
+    Require(AgcDriver::Graphics::DrawRejection(singleSample, false).find("requires two matched raster/DB_EQAA samples") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0xe701 on a single-sample target");
+    singleSample.context[0x2dc] = 0x18701;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(singleSample); }, "requires eight matched raster/DB_EQAA samples");
+    Require(AgcDriver::Graphics::DrawRejection(singleSample, false).find("requires eight matched raster/DB_EQAA samples") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0x18701 on a single-sample target");
 }
 
 void AlphaToCoverageTests() {
@@ -11627,6 +11643,20 @@ void highestDrawIndexTests() {
     Require(HighestDrawIndex(std::span<const std::byte>(shifted).subspan(1, 2 * 1000 + 1), 2, false) == 0x8001u, "an unaligned 16-bit range with a trailing byte");
 }
 
+void compactListRestartTests() {
+    using AgcDriver::Graphics::CompactListRestart;
+    std::array<std::uint16_t, 9> triangles{0, 1, 2, 3, 4, 0xffff, 5, 6, 7};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(triangles)), 2, 3) == 6 && triangles[0] == 0 && triangles[2] == 2 && triangles[3] == 5 && triangles[5] == 7, "a restart did not drop the incomplete triangle before it");
+    std::array<std::uint32_t, 7> lines{0, 1, 0xffffffffu, 2, 0xffffffffu, 3, 4};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(lines)), 4, 2) == 4 && lines[2] == 3 && lines[3] == 4, "a restart between whole lines changed them");
+    std::array<std::uint16_t, 4> points{0xffff, 6, 0xffff, 9};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(points)), 2, 1) == 2 && points[0] == 6 && points[1] == 9, "restart indices were drawn as points");
+    std::array<std::uint16_t, 5> tail{0, 1, 2, 3, 4};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(tail)), 2, 3) == 3, "the incomplete last triangle was kept");
+    std::array<std::uint16_t, 2> restartOnly{0xffff, 0xffff};
+    Require(CompactListRestart(std::as_writable_bytes(std::span(restartOnly)), 2, 3) == 0, "a draw of only restart indices kept an index");
+}
+
 void storeAtFlipTests() {
     using AgcDriver::Graphics::StorageTexture;
     Require(!StorageTexture::StoreAtFlipRequested(nullptr), "an unset APS5_STORE_AT_FLIP stored at each flip");
@@ -12631,7 +12661,7 @@ int main(int argc, char** argv) {
             Require(mock.live == 0, "the heap mirror run unwatch test leaked Vulkan objects");
             return 0;
         }
-        if (argc == 2 && (std::string_view(argv[1]) == "--address-copy-cap" || std::string_view(argv[1]) == "--address-copy-cap-remembered")) {
+        if (argc == 2 && (std::string_view(argv[1]) == "--address-copy-cap" || std::string_view(argv[1]) == "--address-copy-cap-remembered" || std::string_view(argv[1]) == "--address-copy-cap-mirror" || std::string_view(argv[1]) == "--unwatched-mirror-import")) {
 #ifdef _WIN32
             _putenv_s("APS5_ADDRESS_COPY_MAX_MIB", "1");
 #else
@@ -12642,7 +12672,7 @@ int main(int argc, char** argv) {
                 auto context = mockContext();
                 context.bufferDeviceAddress = true;
                 context.limits.maxStorageBufferRange = 1u << 27;
-                RunAddressCopyCapTests(context, {
+                const BdaTestAccess access{
                     [](VkBuffer buffer) -> std::span<std::byte> { return mockBufferMemory(buffer); },
                     {},
                     [](VkDeviceAddress address) {
@@ -12652,7 +12682,10 @@ int main(int argc, char** argv) {
                     },
                     {},
                     {}
-                }, std::string_view(argv[1]) == "--address-copy-cap-remembered", frames);
+                };
+                if (std::string_view(argv[1]) == "--address-copy-cap-mirror") RunAddressCopyCapMirrorTests(context, access, frames);
+                else if (std::string_view(argv[1]) == "--unwatched-mirror-import") RunUnwatchedMirrorImportTests(context, access, frames);
+                else RunAddressCopyCapTests(context, access, std::string_view(argv[1]) == "--address-copy-cap-remembered", frames);
                 Require(mock.live == 0, "the address copy cap test leaked Vulkan objects");
             }
             return 0;
@@ -12894,6 +12927,7 @@ int main(int argc, char** argv) {
         validationTests();
         vertexCopyTests();
         highestDrawIndexTests();
+        compactListRestartTests();
         storeAtFlipTests();
         storeAtLabelTests();
         nullVertexDescriptorTests();
