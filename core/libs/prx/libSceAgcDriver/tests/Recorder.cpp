@@ -5760,14 +5760,23 @@ struct WalkStore {
     std::size_t storeBytes = 0;
     std::size_t hintBytes = 0;
     bool done = true;
+    std::uint8_t value = 0x45;
+    bool threaded = false;
 };
 WalkStore walkStore;
 
 void storeDuringWalk(std::uint64_t address, std::size_t bytes) {
     if (walkStore.done || address >= walkStore.trigger + walkStore.triggerBytes || walkStore.trigger >= address + bytes) return;
     walkStore.done = true;
-    std::memset(walkStore.target, 0x45, walkStore.storeBytes);
-    static_cast<void>(AgcDriver::GuestMemory::UntrackedHint(reinterpret_cast<std::uint64_t>(walkStore.target), walkStore.hintBytes));
+    const auto store = [] {
+        std::memset(walkStore.target, walkStore.value, walkStore.storeBytes);
+        static_cast<void>(AgcDriver::GuestMemory::UntrackedHint(reinterpret_cast<std::uint64_t>(walkStore.target), walkStore.hintBytes));
+    };
+    if (walkStore.threaded) {
+        std::thread(store).join();
+    } else {
+        store();
+    }
 }
 
 void untrackedHintProofTests(const Device& device, Recorder& recorder) {
@@ -5906,6 +5915,50 @@ void untrackedHintProofTests(const Device& device, Recorder& recorder) {
     AgcDriver::GuestMemory::BumpCollectEpoch();
     Require(!fast(), "a CPU store made after the first surface was compared and before its stamp was recorded kept the fast proof");
     Require(version(first) != before, "the walk after a store made during the previous walk kept the old content");
+
+    before = version(first);
+    walkStore = {second, surface, block, 4096, bytes, false, 0x46, true};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::GuestMemory::MarkWritten(second, 4096);
+    AgcDriver::GuestMemory::SetFlushHook(&storeDuringWalk);
+    const bool threadWalked = !fast();
+    recorder.Activate();
+    Require(walkStore.done, "the walk did not compare the second surface before the store from another thread");
+    Require(threadWalked, "a driver store over the second surface kept the fast proof before the store from another thread");
+    Require(version(first) == before, "the first surface was read again after another thread stored into it while the second was compared");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!fast(), "a store from another thread right after the first surface was compared kept the fast proof");
+    Require(version(first) != before, "the walk after a store from another thread during the previous walk kept the old content");
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(fast());
+    Require(fast(), "a second proof in one collect epoch was not fast before the store from another thread");
+    before = version(first);
+    std::thread([&] { std::memset(block, 0x47, 4096); }).join();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!fast(), "a store from another thread after a fast proof kept the fast proof in the next collect epoch");
+    Require(version(first) != before, "the walk after a store from another thread kept the old content");
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(fast());
+    Require(fast(), "a second proof in one collect epoch was not fast before the check on another thread");
+    before = version(first);
+    std::memset(block, 0x48, 4096);
+    bool checked = false;
+    ShaderResources::ProofReport threadReport;
+    std::exception_ptr threadError;
+    std::thread([&] {
+        try {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            checked = sampled->Revalidate(std::span(&imageCompute, 1), &threadReport);
+        } catch (...) {
+            threadError = std::current_exception();
+        }
+    }).join();
+    if (threadError) std::rethrow_exception(threadError);
+    Require(checked, "a sampled template over untracked memory did not revalidate on another thread");
+    Require(threadReport.path != ShaderResources::ProofPath::Fast, "a check on another thread after a store on the proving thread kept the fast proof");
+    Require(version(first) != before, "the walk on another thread after a store kept the old content");
     sampled.reset();
     std::cout << "untracked proofs across collect epochs: ok\n";
 }
