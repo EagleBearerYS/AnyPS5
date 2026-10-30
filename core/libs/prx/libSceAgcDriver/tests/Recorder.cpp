@@ -11558,6 +11558,231 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     return true;
 }
 
+bool storageAliasRoundTripTests(const Device& device, Recorder& recorder, bool imported, bool cached) {
+    const auto& base = device.GetContext();
+    const std::string what = std::string("storage alias round trip, ") + (imported ? "imported" : "copied") + " guest memory" + (cached ? ", cached images" : "");
+    if (imported && base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: " << what << " not tested\n";
+        return false;
+    }
+    constexpr std::size_t surface = 256 * 256 * 4;
+    constexpr std::size_t bytes = surface + 65536;
+    constexpr std::uint32_t rounds = 4;
+    PrepareImportWatch(base);
+    void* block = AllocateWatched(bytes, 65536);
+    if (block == nullptr) {
+        std::cout << "no write watching: " << what << " not tested\n";
+        return false;
+    }
+    auto* memory = static_cast<std::uint8_t*>(block);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        bool imported;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            if (imported) HostImportFor(context, address, bytes);
+            ReleaseWatched(block, bytes);
+        }
+    } unregister{base, block, address, imported};
+    if (imported && HostImportFor(base, address, bytes) == nullptr) {
+        std::cout << "host import of the round-trip block refused: " << what << " not tested\n";
+        return false;
+    }
+    if (!LookupOutcomes::Profiled()) std::cout << what << ": storage traffic is counted under APS5_PROFILE_DRAW only\n";
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    if (!imported) context.hostImportAlignment = 0;
+    std::optional<TextureCache> textureCache;
+    if (cached) {
+        textureCache.emplace(context);
+        context.textureCache = &*textureCache;
+    }
+    const auto surfaceOf = [&](std::uint32_t width, std::uint32_t height, std::uint32_t format, TextureTileMode tileMode) {
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = width;
+        resource.height = height;
+        resource.mipCount = 1;
+        resource.tileMode = tileMode;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = format;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        return resource;
+    };
+    constexpr std::uint32_t formatR32 = 20;
+    constexpr std::uint32_t formatRgba8 = 56;
+    struct Pair {
+        const char* name;
+        GuestTextureResource x;
+        GuestTextureResource y;
+        bool handedOver;
+    };
+    const std::array<Pair, 3> pairs{{
+        {"same format, other dimensions (R32_UINT 256x256 / 512x128, R 64 KiB X)", surfaceOf(256, 256, formatR32, TextureTileMode::kR64KBX), surfaceOf(512, 128, formatR32, TextureTileMode::kR64KBX), false},
+        {"other format, same bytes per texel (R32_UINT / RGBA8 256x256, R 64 KiB X)", surfaceOf(256, 256, formatR32, TextureTileMode::kR64KBX), surfaceOf(256, 256, formatRgba8, TextureTileMode::kR64KBX), true},
+        {"tiled against linear (R32_UINT 256x256, R 64 KiB X / linear)", surfaceOf(256, 256, formatR32, TextureTileMode::kR64KBX), surfaceOf(256, 256, formatR32, TextureTileMode::kLinear), false},
+    }};
+    using Texel = std::array<std::uint8_t, 4>;
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const auto write = [&](const std::shared_ptr<StorageTexture>& image, const GuestTextureResource& resource, const Texel& texel) {
+        VkClearColorValue value{};
+        if (resource.format == formatRgba8) {
+            for (std::size_t i = 0; i < texel.size(); ++i) value.float32[i] = static_cast<float>(texel[i]) / 255.0f;
+        } else {
+            value.uint32[0] = static_cast<std::uint32_t>(texel[0]) | static_cast<std::uint32_t>(texel[1]) << 8u | static_cast<std::uint32_t>(texel[2]) << 16u | static_cast<std::uint32_t>(texel[3]) << 24u;
+        }
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkDirty();
+    };
+    const auto readImage = [&](const std::shared_ptr<StorageTexture>& image, const GuestTextureResource& resource) {
+        Buffer readback(context, static_cast<std::size_t>(resource.width) * resource.height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        const auto commands = recorder.Commands();
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {resource.width, resource.height, 1};
+        context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        const auto pixels = readback.Bytes();
+        return std::vector<std::byte>(pixels.begin(), pixels.end());
+    };
+    const auto filled = [](std::span<const std::byte> read, const Texel& texel) {
+        for (std::size_t i = 0; i < read.size(); ++i) {
+            if (std::to_integer<std::uint8_t>(read[i]) != texel[i % texel.size()]) return false;
+        }
+        return !read.empty();
+    };
+    const auto memoryHolds = [&](const Texel& texel) {
+        PublishShadow(address, surface, PublishScope::Whole, PublishReason::Hook);
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+        for (std::size_t i = 0; i < surface; ++i) {
+            if (memory[i] != texel[i % texel.size()]) return false;
+        }
+        return true;
+    };
+    using Totals = std::map<std::string, std::pair<std::uint64_t, std::uint64_t>>;
+    const auto since = [](const Totals& before, const Totals& after, const std::string& reason) {
+        const auto now = after.find(reason);
+        const auto was = before.find(reason);
+        const auto at = [](const Totals& totals, Totals::const_iterator it) { return it != totals.end() ? it->second : std::pair<std::uint64_t, std::uint64_t>{}; };
+        const auto a = at(after, now);
+        const auto b = at(before, was);
+        return std::pair<std::uint64_t, std::uint64_t>{a.first - b.first, a.second - b.second};
+    };
+    const auto describe = [&](const StorageTexture::TrafficTotals& before, const StorageTexture::TrafficTotals& after) {
+        std::string line;
+        const auto part = [&](const char* kind, const Totals& was, const Totals& now) {
+            for (const auto& [reason, totals] : now) {
+                const auto moved = since(was, now, reason);
+                if (moved.first == 0) continue;
+                line += std::string(" ") + kind + " '" + reason + "' " + std::to_string(moved.first) + "x " + std::to_string(moved.second) + " bytes;";
+            }
+        };
+        part("upload", before.uploads, after.uploads);
+        part("write-back", before.writeBacks, after.writeBacks);
+        if (!LookupOutcomes::Profiled()) return std::string(" not counted");
+        return line.empty() ? std::string(" no storage traffic") : line;
+    };
+    for (const auto& pair : pairs) {
+        const std::string where = what + ", " + pair.name;
+        Require(DescribeSurface(pair.x).guestBytes == surface && DescribeSurface(pair.y).guestBytes == surface, where + ": the two surfaces do not cover the same guest bytes");
+        StorageTexture::TrafficTotals start;
+        StorageTexture::TrafficTotals end;
+        for (const bool flushing : {false, true}) {
+            recorder.Sync();
+            constexpr Texel initial{0x5a, 0x5a, 0x5a, 0x5a};
+            std::memset(memory, initial[0], surface);
+            const auto before = StorageTexture::CumulativeTraffic();
+            {
+                auto imageX = cached ? CachedStorageSurface(context, pair.x) : StorageTexture::Create(context, detiler, pair.x, 0);
+                auto imageY = cached ? CachedStorageSurface(context, pair.y) : StorageTexture::Create(context, detiler, pair.y, 0);
+                auto lastX = initial;
+                for (std::uint32_t round = 0; round < rounds; ++round) {
+                    const std::string at = where + (flushing ? ", flushing" : "") + ", round " + std::to_string(round);
+                    const Texel fromY{static_cast<std::uint8_t>(0x10 + round), 0x21, 0x32, static_cast<std::uint8_t>(0x43 + round)};
+                    const Texel fromX{static_cast<std::uint8_t>(0x80 + round), 0x91, 0xa2, static_cast<std::uint8_t>(0xb3 + round)};
+                    const auto step = [&](const char* name, const auto& action) {
+                        const auto stepStart = StorageTexture::CumulativeTraffic();
+                        action();
+                        if (!flushing) std::cout << at << ", " << name << ":" << describe(stepStart, StorageTexture::CumulativeTraffic()) << "\n";
+                    };
+                    const auto flushedHolds = [&](const Texel& texel, const std::string& failure) {
+                        if (!flushing) return;
+                        StorageTexture::FlushPending(address, surface, nullptr, "storage alias round trip test", PublishScope::Whole);
+                        Require(memoryHolds(texel), at + ": " + failure);
+                    };
+                    step("Y looked up", [&] { imageY->Refresh(); });
+                    Require(filled(readImage(imageY, pair.y), lastX), at + ": Y does not hold X's last results after its lookup");
+                    flushedHolds(lastX, "guest memory does not hold X's last results after Y's lookup and a flush");
+                    step("Y written", [&] { write(imageY, pair.y, fromY); });
+                    step("X looked up", [&] { imageX->Refresh(); });
+                    Require(filled(readImage(imageX, pair.x), fromY), at + ": X does not hold Y's results after its lookup");
+                    flushedHolds(fromY, "guest memory does not hold Y's results after X's lookup and a flush");
+                    step("X written", [&] { write(imageX, pair.x, fromX); });
+                    lastX = fromX;
+                }
+                Require(StorageTexture::FlushPending(address, surface, nullptr, "storage alias round trip test", PublishScope::Whole), where + ": X's last results were not pending at the end");
+                Require(memoryHolds(lastX), where + ": guest memory does not hold X's last results after the final flush");
+                Require(filled(readImage(imageX, pair.x), lastX), where + ": X lost its last results");
+            }
+            if (!flushing) {
+                start = before;
+                end = StorageTexture::CumulativeTraffic();
+            }
+            if (cached) {
+                recorder.Sync();
+                ClearCachedTextures(context.device);
+            }
+        }
+        const auto refreshed = since(start.writeBacks, end.writeBacks, "storage refresh");
+        const auto flushed = since(start.uploads, end.uploads, "flushed");
+        std::cout << where << ": " << rounds << " rounds, 'storage refresh' write-backs " << refreshed.first << "x " << refreshed.second << " bytes, 'flushed' uploads " << flushed.first << "x " << flushed.second << " bytes, guest memory " << (AgcDriver::GuestMemory::Watched(address, surface) ? "write-watched" : "compared") << "; all traffic:" << describe(start, end) << "\n";
+        if (pair.handedOver && cached && !imported && LookupOutcomes::Profiled()) {
+            const auto copied = since(start.uploads, end.uploads, "alias");
+            std::cout << where << ": device copies (upload path 3, 'alias') " << copied.first << "x " << copied.second << " bytes\n";
+            Require(refreshed.first == 0 && refreshed.second == 0, where + ": 'storage refresh' write-backs " + std::to_string(refreshed.first) + "x " + std::to_string(refreshed.second) + " bytes, although the device handoff covers this pair");
+            Require(flushed.first == 0 && flushed.second == 0, where + ": 'flushed' uploads " + std::to_string(flushed.first) + "x " + std::to_string(flushed.second) + " bytes, although the device handoff covers this pair");
+            for (const auto& [reason, totals] : end.uploads) {
+                const auto moved = since(start.uploads, end.uploads, reason);
+                if (moved.first == 0 || reason == "alias") continue;
+                Require(reason == "first" && moved.first == 2 && moved.second == 2 * surface, where + ": upload '" + reason + "' " + std::to_string(moved.first) + "x " + std::to_string(moved.second) + " bytes took the place of the round trip; only the two creations upload from guest memory");
+            }
+            for (const auto& [reason, totals] : end.writeBacks) {
+                const auto moved = since(start.writeBacks, end.writeBacks, reason);
+                if (moved.first == 0) continue;
+                Require(reason == "storage alias round trip test" && moved.first == 1 && moved.second == surface, where + ": write-back '" + reason + "' " + std::to_string(moved.first) + "x " + std::to_string(moved.second) + " bytes took the place of the round trip; only the test's final flush stores to guest memory");
+            }
+            Require(copied.first == 2 * rounds - 1 && copied.second == copied.first * surface, where + ": " + std::to_string(copied.first) + " device copies of " + std::to_string(copied.second) + " bytes, expected one whole surface for each of the " + std::to_string(2 * rounds - 1) + " lookups after a write");
+        }
+        recorder.Sync();
+    }
+    std::cout << what << ": ok\n";
+    return true;
+}
+
 void denormalClearTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -12516,6 +12741,17 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--storage-alias-round-trip-only") {
+            const bool copied = storageAliasRoundTripTests(device, recorder, false, false);
+            const bool imported = storageAliasRoundTripTests(device, recorder, true, false);
+            const bool copiedCached = storageAliasRoundTripTests(device, recorder, false, true);
+            const bool importedCached = storageAliasRoundTripTests(device, recorder, true, true);
+            if (!copied && !imported && !copiedCached && !importedCached) {
+                std::cout << "skipped, the device has no write-watched memory for the storage alias round trip\n";
+                return 77;
+            }
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--integer-clear-only") {
             integerClearTests(device);
             return 0;
@@ -12800,6 +13036,10 @@ int main(int argc, char** argv) {
         keysFillTests(device, recorder);
         clearHandOverTests(device, recorder, false);
         clearHandOverTests(device, recorder, true);
+        storageAliasRoundTripTests(device, recorder, false, false);
+        storageAliasRoundTripTests(device, recorder, true, false);
+        storageAliasRoundTripTests(device, recorder, false, true);
+        storageAliasRoundTripTests(device, recorder, true, true);
         integerClearTests(device);
         denormalClearTests(device, recorder);
         unitShadowTests(device, recorder);

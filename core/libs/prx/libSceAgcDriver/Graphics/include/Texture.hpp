@@ -18,6 +18,7 @@
 #include <optional>
 #include <functional>
 #include <span>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -388,6 +389,11 @@ public:
     static std::uint64_t HandedOverSuperseded();
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
+    struct TrafficTotals {
+        std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> uploads;
+        std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> writeBacks;
+    };
+    static TrafficTotals CumulativeTraffic();
     std::uint64_t GuestBytes() const;
     std::uint64_t BudgetBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
