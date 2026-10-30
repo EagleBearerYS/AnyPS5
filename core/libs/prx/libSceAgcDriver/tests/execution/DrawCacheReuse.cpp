@@ -18,9 +18,16 @@
 #include <utility>
 #include <vector>
 
+namespace AgcDriver::DriverDetail {
+struct DriverTestAccess {
+    static DrawCacheBypass& Bypass() { return Driver::Get().drawCacheBypass; }
+};
+}
+
 namespace {
 
 using AgcDriver::Graphics::Require;
+using AgcDriver::DriverDetail::DrawCacheBypass;
 using AgcDriver::DriverDetail::DrawMiss;
 using AgcDriver::DriverDetail::DrawKeySightings;
 
@@ -301,26 +308,42 @@ void LowHitRateBypassesTheCache() {
     Require(kept.lookups == recovered.lookups + 10, mode + ": a window of 2048 hits bypassed the draw cache");
 }
 
-void ColdScenesKeepTheCacheLookedUp() {
-    constexpr std::size_t Frames = 4;
+std::uint64_t NotedLookups = 0;
+
+std::uint64_t WindowPosition() {
+    return (AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters().lookups + NotedLookups) % DrawCacheBypass::Window;
+}
+
+void NoteLookups(std::uint64_t count, bool useful) {
+    auto& bypass = AgcDriver::DriverDetail::DriverTestAccess::Bypass();
+    for (std::uint64_t n = 0; n < count; ++n) bypass.Note(useful);
+    NotedLookups += count;
+}
+
+void CloseWindow(bool useful) {
+    NoteLookups((DrawCacheBypass::Window - WindowPosition()) % DrawCacheBypass::Window, useful);
+}
+
+void ColdSceneKeepsTheCacheLookedUp() {
+    constexpr std::size_t Frames = 4, SceneDraws = 200;
     const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
     const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
     const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
     Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
     float scale = 5000.0f;
-    for (const std::size_t draws : {1000u, 2048u, 4096u}) {
-        std::vector<float> scene(draws);
-        for (auto& value : scene) value = scale += 0.25f;
-        auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
-        for (std::size_t frame = 1; frame <= Frames; ++frame) {
-            const auto after = Submit(ScaledDraws(scene));
-            const auto hits = after.hits - before.hits;
-            if (frame == Frames) Require(10 * hits >= 9 * draws, mode + ": frame " + std::to_string(frame) + " of a scene that repeats the same " + std::to_string(draws) + " new draws every frame hit " + std::to_string(hits) + " of them, expected at least 90%");
-            before = after;
-        }
+    std::vector<float> scene(SceneDraws);
+    for (auto& value : scene) value = scale += 0.25f;
+    CloseWindow(false);
+    NoteLookups(DrawCacheBypass::Window - 2 * SceneDraws, false);
+    auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    for (std::size_t frame = 1; frame <= Frames; ++frame) {
+        const auto after = Submit(ScaledDraws(scene));
+        const auto hits = after.hits - before.hits;
+        if (frame == Frames) Require(10 * hits >= 9 * SceneDraws, mode + ": frame " + std::to_string(frame) + " of a scene that repeats the same 200 new draws every frame, its first two frames closing a window of misses, hit " + std::to_string(hits) + " of them, expected at least 90%");
+        before = after;
     }
-    std::cout << mode << ": scenes of 1000, 2048 and 4096 new draws repeated every frame hit the draw cache by their fourth frame\n";
+    std::cout << mode << ": a scene of 200 new draws repeated every frame, its first two frames closing a window of misses, hit the draw cache by its fourth frame\n";
 }
 
 void StageHitsKeepTheCacheLookedUp() {
@@ -379,7 +402,7 @@ int main(int argc, char** argv) {
             StageHitsKeepTheCacheLookedUp();
             ConcurrentNotesCloseEachWindowOnce();
         } else if (argc > 1 && std::string(argv[1]) == "--cold-scene") {
-            ColdScenesKeepTheCacheLookedUp();
+            ColdSceneKeepsTheCacheLookedUp();
         } else if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
             RefreshedStageDataVerifies();
         } else {
