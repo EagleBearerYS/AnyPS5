@@ -1,0 +1,4 @@
+BASE=08a10d225306ad102b57408e2ef7566bcfb829b2
+REPEAT=3
+EXTRA_TESTS='agc_driver_depth_clear_hle|agc_driver_depth_fast_clear|agc_driver_depth_fast_clear_submit'
+VALIDATION=1
