@@ -389,6 +389,35 @@ void ConcurrentNotesCloseEachWindowOnce() {
     Require(drained.load() == 2 * DrawCacheBypass::FirstBypassDraws && counted == skipped + drained.load() && bypass.TakeBypassed() == 0, "the bypass counted " + std::to_string(counted) + " bypassed draws for " + std::to_string(skipped + drained.load()) + " skipped by one and then four threads");
 }
 
+void ConcurrentClosesKeepTheirOrder() {
+    using AgcDriver::DriverDetail::DrawCacheBypass;
+    constexpr std::size_t Rounds = 256, Threads = 3;
+    for (std::size_t round = 0; round < Rounds; ++round) {
+        DrawCacheBypass bypass(5);
+        for (std::uint32_t n = 0; n < 2 * DrawCacheBypass::Window - 1; ++n) bypass.Note(false);
+        std::atomic<bool> go{false};
+        std::vector<std::thread> threads;
+        for (std::uint32_t t = 0; t < Threads; ++t) {
+            threads.emplace_back([&bypass, &go, t] {
+                while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+                for (std::uint32_t n = t; n < DrawCacheBypass::Window; n += Threads) bypass.Note(true);
+            });
+        }
+        go.store(true, std::memory_order_release);
+        bypass.Note(false);
+        for (auto& thread : threads) thread.join();
+        std::size_t skipped = 0;
+        while (bypass.Skip()) ++skipped;
+        Require(skipped == DrawCacheBypass::FirstBypassDraws, "round " + std::to_string(round) + ": a second low window whose close raced a useful window bypassed " + std::to_string(skipped) + " draws, expected 2048");
+        for (std::uint32_t n = 0; n < DrawCacheBypass::Window; ++n) bypass.Note(false);
+        Require(!bypass.Skip(), "round " + std::to_string(round) + ": one low window after a useful window that closed while the low window before it was closing started a bypass");
+        for (std::uint32_t n = 0; n < DrawCacheBypass::Window; ++n) bypass.Note(false);
+        skipped = 0;
+        while (bypass.Skip()) ++skipped;
+        Require(skipped == DrawCacheBypass::FirstBypassDraws, "round " + std::to_string(round) + ": two low windows after a useful window bypassed " + std::to_string(skipped) + " draws, expected 2048");
+    }
+}
+
 void LowWindowsLengthenTheBypass() {
     using AgcDriver::DriverDetail::DrawCacheBypass;
     DrawCacheBypass bypass(5);
@@ -423,6 +452,7 @@ int main(int argc, char** argv) {
             LowHitRateBypassesTheCache();
             StageHitsKeepTheCacheLookedUp();
             ConcurrentNotesCloseEachWindowOnce();
+            ConcurrentClosesKeepTheirOrder();
             LowWindowsLengthenTheBypass();
         } else if (argc > 1 && std::string(argv[1]) == "--cold-scene") {
             ColdScenesKeepTheCacheLookedUp();

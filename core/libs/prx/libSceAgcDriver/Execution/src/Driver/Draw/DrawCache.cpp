@@ -37,9 +37,9 @@ std::uint32_t Driver::drawCacheBypassPercent() {
 DrawCacheBypass::DrawCacheBypass(std::uint32_t percent) : percent(std::min(percent, 100u)), minimumHits((Window * std::min(percent, 100u) + 99u) / 100u) {}
 
 bool DrawCacheBypass::Skip() {
-    auto remaining = left.load(std::memory_order_relaxed);
-    while (remaining != 0) {
-        if (left.compare_exchange_weak(remaining, remaining - 1, std::memory_order_relaxed)) {
+    auto current = state.load(std::memory_order_relaxed);
+    while ((current >> LeftShift) != 0) {
+        if (state.compare_exchange_weak(current, current - (std::uint64_t{1} << LeftShift), std::memory_order_relaxed)) {
             bypassed.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
@@ -53,20 +53,19 @@ std::uint64_t DrawCacheBypass::TakeBypassed() {
 
 void DrawCacheBypass::Note(bool useful) {
     if (minimumHits == 0) return;
-    auto current = window.load(std::memory_order_relaxed);
-    std::uint32_t lookups = 0, usefulLookups = 0;
+    auto current = state.load(std::memory_order_relaxed);
+    std::uint64_t next = 0;
     do {
-        lookups = static_cast<std::uint32_t>(current) + 1u;
-        usefulLookups = static_cast<std::uint32_t>(current >> 32u) + (useful ? 1u : 0u);
-    } while (!window.compare_exchange_weak(current, lookups < Window ? (std::uint64_t{usefulLookups} << 32u) | lookups : 0u, std::memory_order_relaxed));
-    if (lookups != Window) return;
-    if (usefulLookups >= minimumHits) {
-        lowWindows.store(0, std::memory_order_relaxed);
-        return;
-    }
-    const auto low = std::min(lowWindows.load(std::memory_order_relaxed) + 1u, LowWindowsToBypass + 3u);
-    lowWindows.store(low, std::memory_order_relaxed);
-    if (low >= LowWindowsToBypass) left.store(std::min(BypassDraws, FirstBypassDraws << (low - LowWindowsToBypass)), std::memory_order_relaxed);
+        const auto lookups = (current & CountMask) + 1u;
+        const auto usefulLookups = ((current >> CountBits) & CountMask) + (useful ? 1u : 0u);
+        if (lookups < Window) {
+            next = (current & ~((CountMask << CountBits) | CountMask)) | (usefulLookups << CountBits) | lookups;
+            continue;
+        }
+        const auto low = usefulLookups >= minimumHits ? 0u : std::min<std::uint64_t>(((current >> LowShift) & LowMask) + 1u, LowWindowsToBypass + 3u);
+        const auto remaining = low >= LowWindowsToBypass ? std::uint64_t{std::min(BypassDraws, FirstBypassDraws << (low - LowWindowsToBypass))} : current >> LeftShift;
+        next = (remaining << LeftShift) | (low << LowShift);
+    } while (!state.compare_exchange_weak(current, next, std::memory_order_relaxed));
 }
 
 bool Driver::drawDataHits() {
