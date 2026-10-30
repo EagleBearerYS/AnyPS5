@@ -1,6 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
-#include "prx/libSceSystemService/include/SystemService.hpp"
+#include "prx/libSceSystemService/libSceSystemService.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstdint>
