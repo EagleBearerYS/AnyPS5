@@ -1,0 +1,4 @@
+BASE=d4de5943f6890884107de9388d9654bf30841bac
+REPEAT=10
+EXTRA_TESTS='test_registration|player_invitation_dialog|ngs2_pcm|ngs2_core_pcm|ngs2_handleerrors|unbuilt_exports|agc_driver_unsupported_diagnostics|guest_audiodec_native|guest_avplayer_native|guest_nptrophy2|guest_np_trophy_data'
+NO_BEFORE=1
