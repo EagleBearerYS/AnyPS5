@@ -526,7 +526,6 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.samplerSlotDword);
     writer.Value(result.bufferAddressDword);
     writer.Value(result.bufferAddressCount);
-    writer.Value(result.deviceImageTables);
     writer.Value(result.dataAddressPush);
     writer.Value(result.bdaStores);
     writer.List(result.vertexInputPatches, [](Writer& out, const VertexInputPatch& patch) {
@@ -597,7 +596,6 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.samplerSlotDword);
     reader.Value(result.bufferAddressDword);
     reader.Value(result.bufferAddressCount);
-    reader.Value(result.deviceImageTables);
     reader.Value(result.dataAddressPush);
     reader.Value(result.bdaStores);
     reader.List(result.vertexInputPatches, 20, [](Reader& in, VertexInputPatch& patch) {
@@ -699,8 +697,6 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
     writer.Value(invocation.userDataRegisterReads);
-    writer.List(invocation.deviceImageInterfaces, [](Writer& out, std::uint64_t id) { out.Value(id); });
-    writer.List(invocation.deviceSamplerClasses, [](Writer& out, std::uint32_t bits) { out.Value(bits); });
 }
 
 void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
@@ -748,8 +744,6 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
     reader.Value(invocation.userDataRegisterReads);
-    reader.List(invocation.deviceImageInterfaces, 8, [](Reader& in, std::uint64_t& id) { in.Value(id); });
-    reader.List(invocation.deviceSamplerClasses, 4, [](Reader& in, std::uint32_t& bits) { in.Value(bits); });
 }
 
 void encodeLayout(Writer& writer, const IrBindingLayout& layout) {
@@ -857,7 +851,6 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.table);
         out.Value(image.tableOperation);
         out.Value(image.targetMerge);
-        out.Value(image.deviceTable);
     });
     writer.Value(!info.runtimeImageModes.empty());
     writer.List(info.samplers, [](Writer& out, const SamplerResource& sampler) {
@@ -974,7 +967,6 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.table);
         in.Value(image.tableOperation);
         in.Value(image.targetMerge);
-        in.Value(image.deviceTable);
     });
     bool preparedImageModes = false;
     reader.Value(preparedImageModes);
