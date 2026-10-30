@@ -5709,6 +5709,32 @@ void StorageTexture::advanceAdjacent(const std::vector<Adjacent>& adjacent, std:
     }
 }
 
+std::vector<StorageTexture::Adjacent> StorageTexture::borrowersUnchanged(const std::vector<bool>& layers, const std::vector<bool>& skipped) const {
+    std::vector<Adjacent> held;
+    for (const auto& entry : borrowers) {
+        const auto borrower = entry.lock();
+        if (borrower == nullptr || borrower->borrowedFrom.lock().get() != this || borrower->borrowedVersion != version || borrower->trackedLayers != trackedLayers || borrower->borrowedUnits.size() != trackedLayers) continue;
+        for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+            if (!layers[unit] || skipped[unit] || !borrower->borrowedUnits[unit] || borrower->layerGeneration[unit] == 0) continue;
+            const auto begin = borrower->layerBegin(unit);
+            const auto bytes = static_cast<std::size_t>(borrower->layerBytes(unit));
+            GuestMemory::CollectWritesUncached(begin, bytes);
+            if (GuestMemory::UnchangedSince(begin, bytes, borrower->layerGeneration[unit])) held.push_back({borrower, unit, borrower->layerGeneration[unit]});
+        }
+    }
+    return held;
+}
+
+void StorageTexture::advanceBorrowers(const std::vector<Adjacent>& held, std::uint64_t now) {
+    for (const auto& [texture, unit, seen] : held) {
+        if (texture->layerGeneration[unit] != seen || now <= seen) continue;
+        texture->layerGeneration[unit] = now;
+        texture->layerOriginal[unit] = false;
+        texture->cancelStoredSave(unit);
+        texture->refreshGeneration();
+    }
+}
+
 void StorageTexture::blockGenerations(std::vector<std::uint64_t>& generations) const {
     constexpr std::uint64_t block = 65536;
     const auto spanBegin = descriptor.baseAddress & ~(block - 1);
@@ -5915,6 +5941,8 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
     }
     borrowedVersion = source.version;
     source.lent = true;
+    std::erase_if(source.borrowers, [&](const std::weak_ptr<StorageTexture>& entry) { return entry.expired() || entry.lock().get() == this; });
+    source.borrowers.push_back(weak_from_this());
     for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
         if (units[unit]) borrowedUnits[unit] = true;
     }
@@ -6095,6 +6123,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     const auto firstBlock = stampBegin / block;
     const auto lastBlock = (stampEnd - 1) / block;
     const auto adjacent = adjacentPendingUnchanged(firstBlock, lastBlock);
+    const auto held = drawn.rect ? std::vector<Adjacent>{} : borrowersUnchanged(layers, skippedLayer);
     // After the store: the stored layers are in sync at a fresh generation unless blocks were kept
     // for the CPU (then the layer is stale there, keeps its old generation and re-uploads at its
     // next use); their results are no longer pending either way. The collect covers the stored
@@ -6121,13 +6150,14 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         }
         bool advances = false;
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) advances = advances || (layers[layer] && !skippedLayer[layer]);
-        if (!advances && adjacent.empty() && shadowed.empty()) return;
+        if (!advances && adjacent.empty() && held.empty() && shadowed.empty()) return;
         const auto now = memoizedCollect ? GuestMemory::CollectWrites(firstStored, static_cast<std::size_t>(lastStored - firstStored)) : GuestMemory::CollectWritesUncached(firstStored, static_cast<std::size_t>(lastStored - firstStored));
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
             if (layers[layer] && !skippedLayer[layer]) layerGeneration[layer] = collectedLayerGeneration(layer, now, !memoizedCollect);
         }
         refreshGeneration();
         advanceAdjacent(adjacent, now, firstBlock, lastBlock);
+        advanceBorrowers(held, now);
         if (!shadowed.empty()) markShadowed(now);
     };
     if (stores.empty()) {
