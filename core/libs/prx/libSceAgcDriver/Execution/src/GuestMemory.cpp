@@ -2206,7 +2206,7 @@ std::uint64_t UntrackedHint(std::uint64_t address, std::size_t bytes) {
     const auto unwatched = unwatchSerial.load(std::memory_order_relaxed);
     const auto mapping = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     const bool memoized = collectMemoEnabled() && std::any_of(threadHintMemo.entries.begin(), threadHintMemo.entries.end(), [&](const WriteTracker::Memo& entry) {
-        return entry.epoch == epoch && entry.unwatched == unwatched && entry.mapping == mapping && entry.begin <= first && stop <= entry.end;
+        return entry.unwatched == unwatched && entry.mapping == mapping && entry.begin <= first && stop <= entry.end;
     });
     if (memoized) {
         collectMemoHits.fetch_add(1, std::memory_order_relaxed);
