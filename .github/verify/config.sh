@@ -1,0 +1,4 @@
+BASE=f7f03daf52f11191174b1be089a56e268390a707
+REPEAT=1
+EXTRA_TESTS='agc_buffer_upload_pending_gpu_copy|agc_driver_small_copy_sync|agc_storage_written_buffer_order|agc_read_written_staging|agc_copied_direct_ordering'
+VALIDATION=1
