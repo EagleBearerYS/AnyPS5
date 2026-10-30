@@ -186,11 +186,6 @@ int APS5_VABI _ZN3sce2np10EventQueue4ctorEv(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np20BufferedStreamReaderD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -346,11 +341,6 @@ int APS5_VABI _ZN3sce2np7RingBuf14CheckinForReadEm(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPKvmPm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np6ThreadD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -467,11 +457,6 @@ int APS5_VABI _ZN3sce2np10MemoryFileD1Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np9HttpTrans21GetResponseStatusCodeEPNS0_6HandleEPi(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -612,11 +597,6 @@ int APS5_VABI _ZN3sce2np7RingBufD2Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np4PathD2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

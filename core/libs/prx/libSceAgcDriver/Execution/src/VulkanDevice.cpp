@@ -839,6 +839,7 @@ struct VulkanDevice::State {
             }
             const double gapMs = stamped ? (lastNs - firstNs) / 1e6 - busyMs : 0;
             if (auto* frame = PerformanceContext::Current()) frame->NoteRetired(0, busyMs, gapMs);
+            if (stamped && missing == 0) Graphics::Recorder::NoteFrameGpuBusy(busyMs);
             presentCounters.gpuBusyMs += busyMs;
             presentCounters.gpuGapMs += gapMs;
             presentCounters.gpuUnread += missing;

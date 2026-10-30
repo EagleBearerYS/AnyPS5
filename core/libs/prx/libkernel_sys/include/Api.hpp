@@ -370,7 +370,7 @@ int APS5_VABI sceKernelIsKratos(void);
 int APS5_VABI sceKernelIsM2DeviceAttached(void);
 int APS5_VABI sceKernelIsMainOnStanbyMode(void);
 int APS5_VABI sceKernelIsMainOnStandbyMode(void);
-int APS5_VABI sceKernelIsModuleLoaded(void);
+int APS5_VABI sceKernelIsModuleLoaded(const char* name);
 int APS5_VABI sceKernelIsNeoMode(void);
 int APS5_VABI sceKernelIsProspero(void);
 int APS5_VABI sceKernelIsPs4Process(void);

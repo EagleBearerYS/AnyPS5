@@ -34,6 +34,7 @@ constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
 constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
 constexpr int NpTitleIdBufferTooSmall = static_cast<int>(0x80559E0D);
+constexpr int NpStreamShort = static_cast<int>(0x80559E10);
 constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
 constexpr int KernelNoSuchObject = static_cast<int>(0x80020003);
 constexpr std::uint32_t EventFlagWaitAnd = 1;
@@ -634,6 +635,130 @@ void TestMemoryStreams() {
     Require(writer.data == nullptr && writer.size == 2 && writer.position == 8, "the writer destructors leave the object untouched");
 }
 
+struct ChunkReader {
+    NpStreamReader base;
+    const std::uint8_t* data;
+    std::size_t size;
+    std::size_t position;
+    std::size_t chunk;
+    int failAt;
+    int calls;
+};
+
+int APS5_VABI ChunkRead(NpStreamReader* self, void*, void* out, std::size_t size, std::size_t* read) {
+    auto* reader = reinterpret_cast<ChunkReader*>(self);
+    if (++reader->calls == reader->failAt) {
+        *read = 0;
+        return -1;
+    }
+    const std::size_t count = std::min({size, reader->chunk, reader->size - reader->position});
+    std::memcpy(out, reader->data + reader->position, count);
+    reader->position += count;
+    *read = count;
+    return 0;
+}
+
+struct CollectWriter {
+    NpStreamWriter base;
+    std::array<std::uint8_t, 1024> data;
+    std::size_t size;
+    std::size_t chunk;
+};
+
+int APS5_VABI CollectWrite(NpStreamWriter* self, void*, const void* data, std::size_t size, std::size_t* written) {
+    auto* writer = reinterpret_cast<CollectWriter*>(self);
+    const std::size_t count = std::min(size, writer->chunk);
+    std::memcpy(writer->data.data() + writer->size, data, count);
+    writer->size += count;
+    *written = count;
+    return 0;
+}
+
+struct SumContext {
+    NpStreamCtx base;
+    std::size_t bytes;
+    std::uint32_t sum;
+    int result;
+};
+
+int APS5_VABI SumNotify(NpStreamCtx* self, const void* data, std::size_t size) {
+    auto* context = reinterpret_cast<SumContext*>(self);
+    for (std::size_t i = 0; i < size; ++i) context->sum += static_cast<const std::uint8_t*>(data)[i];
+    context->bytes += size;
+    return context->result;
+}
+
+const void* const ChunkReaderVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&ChunkRead)};
+const void* const CollectWriterVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&CollectWrite)};
+const void* const SumContextVtable[] = {nullptr, nullptr, reinterpret_cast<const void*>(&SumNotify)};
+
+void TestStreamHelpers() {
+    std::array<std::uint8_t, 600> source {};
+    std::uint32_t total = 0;
+    for (std::size_t i = 0; i < source.size(); ++i) total += source[i] = static_cast<std::uint8_t>(i * 7 + 3);
+    auto reader = [&](std::size_t size, std::size_t chunk) { return ChunkReader {{ChunkReaderVtable}, source.data(), size, 0, chunk, 0, 0}; };
+    std::array<std::uint8_t, 600> out {};
+    std::size_t count = 0;
+
+    ChunkReader stream = reader(600, 70);
+    SumContext context {{SumContextVtable}, 0, 0, 0};
+    Require(_ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(&stream.base, nullptr, &context.base, out.data(), 600, &count) == 0 &&
+                count == 600 && out == source && context.bytes == 600 && context.sum == total,
+        "ReadData gathers short reads and shows every byte to the context");
+    stream = reader(100, 70);
+    Require(_ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPvmPm(&stream.base, nullptr, out.data(), 150, &count) == NpStreamShort && count == 100,
+        "ReadData reports a stream that ends early");
+    stream = reader(100, 30);
+    Require(_ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(&stream.base, nullptr, out.data(), 150, &count) == 0 && count == 100,
+        "ReadAll accepts a stream shorter than the buffer");
+    stream = reader(100, 30);
+    count = 7;
+    Require(_ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(&stream.base, nullptr, out.data(), 99, &count) == NpStreamBufferTooSmall && count == 7,
+        "ReadAll refuses a stream longer than the buffer");
+    stream = reader(100, 30);
+    Require(_ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(&stream.base, nullptr, out.data(), 100, &count) == 0 && count == 100,
+        "ReadAll accepts a stream that fills the buffer exactly");
+
+    stream = reader(600, 100);
+    std::int64_t skipped = 5;
+    Require(_ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(&stream.base, nullptr, 550, &skipped) == 0 && skipped == 555 && stream.position == 550,
+        "SkipData adds what it skipped");
+    skipped = 0;
+    context = {{SumContextVtable}, 0, 0, 0};
+    Require(_ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPNS0_9StreamCtxEPl(&stream.base, nullptr, &context.base, &skipped) == 0 && skipped == 50 &&
+                context.bytes == 50,
+        "SkipAll skips to the end");
+    stream = reader(600, 100);
+    stream.failAt = 3;
+    skipped = 0;
+    Require(_ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPl(&stream.base, nullptr, &skipped) == -1 && skipped == 200,
+        "SkipAll stops at a failed read");
+    stream = reader(600, 100);
+    context = {{SumContextVtable}, 0, 0, -5};
+    Require(_ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(&stream.base, nullptr, &context.base, out.data(), 10, &count) == -5 &&
+                count == 10,
+        "a failing context fails the read");
+    context.result = 3;
+    Require(_ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(&stream.base, nullptr, &context.base, out.data(), 10, &count) == 0,
+        "a positive context result counts as success");
+
+    CollectWriter writer {{CollectWriterVtable}, {}, 0, 90};
+    context = {{SumContextVtable}, 0, 0, 0};
+    Require(_ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(&writer.base, nullptr, &context.base, source.data(), 600, &count) == 0 &&
+                count == 600 && writer.size == 600 && std::memcmp(writer.data.data(), source.data(), 600) == 0 && context.sum == total,
+        "WriteData pushes everything through short writes");
+    writer = {{CollectWriterVtable}, {}, 0, 1000};
+    Require(_ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEcl(&writer.base, nullptr, 'x', 600) == 0 && writer.size == 600 &&
+                std::all_of(writer.data.begin(), writer.data.begin() + 600, [](std::uint8_t b) { return b == 'x'; }),
+        "WriteFilledData writes the fill byte in chunks");
+    writer = {{CollectWriterVtable}, {}, 0, 1000};
+    Require(_ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEPNS0_9StreamCtxEcl(&writer.base, nullptr, nullptr, 'x', -4) == 0 && writer.size == 0,
+        "WriteFilledData of a negative size writes nothing");
+    writer = {{CollectWriterVtable}, {}, 0, 4};
+    Require(_ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(&writer.base, nullptr, nullptr, source.data(), 10, &count) == 0 && count == 4,
+        "Write makes a single stream call");
+}
+
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
@@ -644,6 +769,7 @@ int main() {
     TestObjectsThroughStoredAllocator();
     TestMemoryStreams();
     TestTitleIdObjects();
+    TestStreamHelpers();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();
