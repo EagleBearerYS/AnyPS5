@@ -12159,6 +12159,119 @@ bool storageAliasBorrowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+bool storageAliasKeysTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    constexpr std::size_t unit = 65536;
+    constexpr std::size_t units = 4;
+    constexpr std::size_t bytes = unit * units;
+    constexpr std::size_t keyBytes = bytes / 256;
+    constexpr std::size_t allocation = bytes + unit;
+    constexpr std::uint32_t side = 256;
+    constexpr std::uint32_t written = 0x80402030u;
+    constexpr std::uint32_t singleKeys = 0x10101010u;
+    if (!WriteWatched()) {
+        std::cout << "write watching unavailable: a kept storage alias under keys a refresh's flush changed not tested\n";
+        return false;
+    }
+    void* block = AllocateWatched(allocation, unit);
+    Require(block != nullptr, "no watched block although write watching is on");
+    struct Release {
+        void* block;
+        ~Release() { ReleaseWatched(block, allocation); }
+    } release{block};
+    const auto address = reinterpret_cast<std::uint64_t>(block) + unit;
+    const auto keysAddress = address - keyBytes;
+    std::memset(block, 0xff, unit);
+    std::memset(reinterpret_cast<void*>(address), 0x11, bytes);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, allocation, true, true, true);
+    }
+    auto context = device.GetContext();
+    context.recorder = &recorder;
+    context.hostImportAlignment = 0;
+    context.dmaBufImport = false;
+    TextureDetiler detiler(context);
+    context.detiler = &detiler;
+    TextureCache textureCache(context);
+    context.textureCache = &textureCache;
+    struct Cleanup {
+        const Context& context;
+        Recorder& recorder;
+        void* block;
+        ~Cleanup() {
+            recorder.Sync();
+            ClearCachedTextures(context.device);
+            recorder.Sync();
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(block);
+        }
+    } cleanup{context, recorder, block};
+    const auto selectors = [](GuestTextureResource& resource) {
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+    };
+    const auto surface = [&](std::uint32_t format, std::uint64_t dccAddress) {
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.dccAddress = dccAddress;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = format;
+        selectors(resource);
+        Require(DescribeSurface(resource).guestBytes == bytes, "the aliased surface is not four 64 KiB units");
+        return resource;
+    };
+    GuestTextureResource keyWriter{};
+    keyWriter.baseAddress = keysAddress;
+    keyWriter.width = side;
+    keyWriter.height = static_cast<std::uint32_t>((unit + keyBytes) / (side * 4));
+    keyWriter.mipCount = 1;
+    keyWriter.tileMode = TextureTileMode::kLinear;
+    keyWriter.dimension = TextureDimension::k2D;
+    keyWriter.format = 20;
+    selectors(keyWriter);
+    const auto keyWriterBytes = DescribeSurface(keyWriter).guestBytes;
+    Require(keyWriterBytes >= unit + keyBytes && keyWriterBytes <= 2 * unit, "the linear image does not cover the surface's DCC keys and its first unit");
+    const auto color = CachedStorageSurface(context, surface(56, keysAddress));
+    const auto words = CachedStorageSurface(context, surface(20, 0));
+    const auto keys = CachedStorageSurface(context, keyWriter);
+    Require(color != nullptr && words != nullptr && keys != nullptr && color != words && color->Cached() && words->Cached() && keys->Cached(), "the RGBA8, R32 and linear descriptors did not make three cached storage images");
+    Require(ExistingHostImportFor(context, address, allocation) == nullptr, "the surface was imported although host imports are off");
+    const auto first = color->UnitRects({true, false, false, false});
+    const auto center = static_cast<std::int32_t>(side / 2);
+    Require(std::none_of(first.begin(), first.end(), [&](const VkRect2D& rect) { return rect.offset.x <= center && center < rect.offset.x + static_cast<std::int32_t>(rect.extent.width) && rect.offset.y <= center && center < rect.offset.y + static_cast<std::int32_t>(rect.extent.height); }), "the texel the sample reads is in the unit the linear image covers");
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    const auto clear = [&](const std::shared_ptr<StorageTexture>& image, std::uint32_t word) {
+        VkClearColorValue value{};
+        value.uint32[0] = word;
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkDirty();
+    };
+    clear(words, written);
+    clear(keys, singleKeys);
+    Require(StorageTexture::FindPending(address, bytes) == words, "the cleared R32 image is not the pending image over the surface");
+    color->Refresh();
+    std::vector<std::byte> stored(keyBytes);
+    Read(keysAddress, stored);
+    Require(std::all_of(stored.begin(), stored.end(), [](std::byte key) { return key == std::byte{0x10}; }), "the refresh's flush of the linear image did not store single-key DCC keys over the RGBA8 image's keys");
+    SampleProgram program(context, recorder);
+    const auto red = program.Red(color->View(), VK_IMAGE_LAYOUT_GENERAL, 0.0f);
+    Require(std::abs(red - 48.0f / 255.0f) < 0.5f / 255.0f, "the RGBA8 image sampled " + std::to_string(red * 255.0f) + " after a refresh whose flush turned its keys single over the R32 image's pending results, expected 48");
+    Require(StorageTexture::FindPending(address, bytes) == nullptr, "the R32 image stayed pending after a refresh that could not take its units on the device");
+    std::cout << "storage alias under keys a refresh's flush changed passed\n";
+    return true;
+}
+
 int main(int argc, char** argv) {
     _ZSt13set_terminatePFvvE_nid_postfix([] {
         std::fflush(nullptr);
@@ -12620,6 +12733,9 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--storage-alias-borrow-only") {
             return storageAliasBorrowTests(device, recorder) ? 0 : 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--storage-alias-keys-only") {
+            return storageAliasKeysTests(device, recorder) ? 0 : 77;
         }
 
         if (argc == 2 && (std::string_view(argv[1]) == "--vertex-target-range-copied" || std::string_view(argv[1]) == "--vertex-target-range-imported")) {
