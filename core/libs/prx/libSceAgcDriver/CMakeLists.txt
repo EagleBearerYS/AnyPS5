@@ -3384,8 +3384,10 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_draw_cache_cold_scene PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 FAIL_REGULAR_EXPRESSION "FATAL:")
     add_test(NAME agc_driver_draw_cache_cold_scene_off COMMAND agc_driver_draw_cache_reuse_tests --cold-scene)
     set_tests_properties(agc_driver_draw_cache_cold_scene_off PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_CACHE_BYPASS_PERCENT=0" SKIP_RETURN_CODE 77 FAIL_REGULAR_EXPRESSION "FATAL:")
+    add_test(NAME agc_driver_draw_cache_evicted_scene COMMAND agc_driver_draw_cache_reuse_tests --evicted-scene)
+    set_tests_properties(agc_driver_draw_cache_evicted_scene PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_CACHE_BYTES=65536" SKIP_RETURN_CODE 77 FAIL_REGULAR_EXPRESSION "FATAL:")
     if(WIN32)
-        set_tests_properties(agc_driver_draw_cache_low_hit_bypass agc_driver_draw_cache_low_hit_bypass_off agc_driver_draw_cache_cold_scene agc_driver_draw_cache_cold_scene_off PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_draw_cache_low_hit_bypass agc_driver_draw_cache_low_hit_bypass_off agc_driver_draw_cache_cold_scene agc_driver_draw_cache_cold_scene_off agc_driver_draw_cache_evicted_scene PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_draw_cache_reuse_inline COMMAND agc_driver_draw_cache_reuse_tests)
