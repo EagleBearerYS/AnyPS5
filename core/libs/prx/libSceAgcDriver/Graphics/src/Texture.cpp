@@ -2337,6 +2337,13 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         for (std::size_t k = 0; k < cpuBlocks.size(); ++k) {
             if (cpuBlocks[k] != 0 && (compared || (tracked && generations[k] != 0))) cpuWrote = true;
         }
+        static const bool traceStamps = std::getenv("APS5_TRACE_REFRESH_STAMPS") != nullptr;
+        if (traceStamps && (cpuWrote || keysChanged)) {
+            const auto count = [](const std::vector<std::uint8_t>& blocks) { return static_cast<std::size_t>(std::count_if(blocks.begin(), blocks.end(), [](std::uint8_t value) { return value != 0; })); };
+            const auto pendingUnits = static_cast<std::size_t>(std::count(layerPending.begin(), layerPending.end(), true));
+            const auto imported = HostImportFor(context, descriptor.baseAddress, static_cast<std::size_t>(guestBytes)) != nullptr;
+            ProfilePrint_nid_no_patch("[refresh-stamps] refresh 0x%llx+0x%llx generation %llu: keys %s -> %s (filled %s), tracked %d compared %d watched %d imported %d, blocks %zu stamped %zu cpu %zu, pending units %zu of %u, newest stamp %llu, write generation %llu, unwatch serial %llu\n", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(generation), DccKeysName(uploadedKeys), DccKeysName(keys), DccKeysName(filledKeys), tracked, compared, GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)), imported, stampedBlocks.size(), count(stampedBlocks), count(cpuBlocks), pendingUnits, trackedLayers, static_cast<unsigned long long>(GuestMemory::NewestStamp(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))), static_cast<unsigned long long>(GuestMemory::WriteGeneration()), static_cast<unsigned long long>(GuestMemory::UnwatchSerial()));
+        }
         // Unchanged bytes rescue an upload only when nothing else moved: with the keys changed
         // the same bytes read differently, and a changed unit holding pending results must take
         // the drop rule below (the image holds the results, `original` what the CPU wrote back).

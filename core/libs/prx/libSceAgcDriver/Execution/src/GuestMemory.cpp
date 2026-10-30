@@ -1379,6 +1379,11 @@ TrackerLock lockTracker(WriteTracker& tracker) {
     return TrackerLock(tracker);
 }
 
+bool traceRefreshStamps() {
+    static const bool trace = std::getenv("APS5_TRACE_REFRESH_STAMPS") != nullptr;
+    return trace;
+}
+
 #ifdef _WIN32
 void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_t generation) {
     auto& tracker = Tracker();
@@ -1392,6 +1397,7 @@ void watchPrivateMapping(std::uintptr_t address, std::size_t bytes, std::uint64_
         if (const auto found = tracker.driverPieces.find(block); found != tracker.driverPieces.end()) found->second.dropped = std::max<std::uint32_t>(found->second.dropped, tracker.generation);
         tracker.stamp(block, tracker.generation, StampKind::Cpu);
     }
+    if (traceRefreshStamps()) AgcDriver::ProfilePrint_nid_no_patch("[refresh-stamps] private mapping 0x%llx+0x%zx stamped cpu at generation %llu\n", static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(tracker.generation.load()));
     unwatchSerial.fetch_add(1, std::memory_order_release);
 }
 #endif
@@ -1500,6 +1506,7 @@ void stampWindowRuns(StampRuns& runs) {
         noteWrittenRun(runs, static_cast<std::uintptr_t>(begin), static_cast<std::uintptr_t>(end), generation);
         for (auto page = begin; page < end; page += WritePageBytes) tracker.stamp(tracker.blockOf(page), generation, held[index++] != 0 ? StampKind::ImportWindow : runs.kind);
     }
+    if (traceRefreshStamps() && !runs.windowRuns.empty()) AgcDriver::ProfilePrint_nid_no_patch("[refresh-stamps] import window 0x%llx..0x%llx: %zu written pages, %zu held by the window (cpu only) at generation %llu\n", static_cast<unsigned long long>(runs.windowRuns.front().first), static_cast<unsigned long long>(runs.windowRuns.back().second), held.size(), static_cast<std::size_t>(std::count(held.begin(), held.end(), std::uint8_t{1})), static_cast<unsigned long long>(generation));
 }
 
 #ifdef _WIN32
@@ -1545,6 +1552,7 @@ void noteRefusedWalk(WriteTracker& tracker, std::uint64_t first, std::uint64_t s
     };
     StampRuns runs{tracker, StampKind::Cpu};
     pagesOf(&GuestArena::GuestArenaTakeUnreportedPages_nid_no_patch, [&](std::uintptr_t page) { stampWrittenRun(&runs, page, page + WritePageBytes); });
+    if (traceRefreshStamps() && runs.stamped != 0) AgcDriver::ProfilePrint_nid_no_patch("[refresh-stamps] refused walk 0x%llx..0x%llx: %zu unreported pages stamped cpu at generation %llu\n", static_cast<unsigned long long>(first), static_cast<unsigned long long>(stop), static_cast<std::size_t>(runs.stamped), static_cast<unsigned long long>(tracker.generation.load()));
     const auto generation = tracker.generation.load(std::memory_order_relaxed);
     pagesOf(&GuestArena::GuestArenaComparedPages_nid_no_patch, [&](std::uintptr_t page) { tracker.refused[tracker.blockOf(page)] = generation; });
 }
@@ -1834,6 +1842,7 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
             tracker.driverPieces.erase(block);
             tracker.stamp(block, tracker.generation, StampKind::Cpu);
         }
+        if (traceRefreshStamps()) AgcDriver::ProfilePrint_nid_no_patch("[refresh-stamps] rewatch 0x%llx+0x%zx stamped cpu at generation %llu\n", static_cast<unsigned long long>(begin), bytes, static_cast<unsigned long long>(tracker.generation.load()));
         restored = true;
     }
     if (restored) unwatchSerial.fetch_add(1, std::memory_order_release);
