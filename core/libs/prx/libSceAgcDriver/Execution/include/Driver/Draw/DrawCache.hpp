@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <list>
+#include <map>
 #include <memory>
 #include <span>
 #include <utility>
@@ -105,6 +106,10 @@ struct DrawEntryCounters {
     std::uint64_t dataHits = 0, dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
     std::uint64_t stageDataHits = 0, stageDataWords = 0, stageDataVerified = 0, stageDataInserts = 0, stageDataPositions = 0;
     std::uint64_t recordWordsForwarded = 0, recordStagesRecompiled = 0, recordWordsRefused = 0, recordWordsVerified = 0;
+    std::uint64_t addressIndirectDataHits = 0, addressCandidatesExact = 0, addressCandidatesStale = 0, addressCandidatesUnvalidated = 0, addressCandidatesRefused = 0, addressCandidatesInaccessible = 0;
+    std::uint64_t addressStagesExact = 0, addressStagesStale = 0, addressStagesUnvalidated = 0, addressDraws = 0, addressInsertsSkipped = 0;
+    std::array<std::uint64_t, 4> addressWords{};
+    std::map<std::uint32_t, std::array<std::uint64_t, 4>> addressRegisters;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 

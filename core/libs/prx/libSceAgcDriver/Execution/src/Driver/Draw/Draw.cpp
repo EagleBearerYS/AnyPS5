@@ -464,12 +464,13 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 else if (traceShapes.contains(shapeKey)) ++counters.absentUserWords;
                 else ++counters.absentNewRegisters;
             }
-            if (decode == nullptr && drawDataHits() && !drawParameters.indirect) {
+            if (decode == nullptr && drawDataHits() && (!drawParameters.indirect || diagStageReuseAddressWords())) {
                 if (const auto shape = drawShapes.find(shapeKey); shape != drawShapes.end()) {
                     const auto kept = drawCache.find(shape->second);
                     if (kept != drawCache.end() && kept->second->decode != nullptr && kept->second->shape == shapeKey) dataEntry = kept->second;
                 }
                 if (dataEntry != nullptr) ++drawEntryCounters.dataHits;
+                if (dataEntry != nullptr && drawParameters.indirect) ++drawEntryCounters.addressIndirectDataHits;
             }
         }
         if (traceDrawCache()) traceDrawKeyLookup(drawKeyComponents, found == drawCache.end());
@@ -828,6 +829,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     auto& reused = tail.reused;
     auto& stageData = tail.stageData;
     std::uint64_t dataStagesReused = 0, dataStagesCompiled = 0, dataVerified = 0;
+    std::array<std::uint64_t, 4> addressStages{};
     auto& drawHit = tail.drawHit;
     auto& verifyHit = tail.verifyHit;
     const bool stageEntries = tail.stageEntries;
@@ -932,6 +934,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
                 matched[i] = candidate->first;
                 matchedRegions[i] = std::move(candidate->second);
                 reused[i] = true;
+                ++addressStages[matched[i]->addressReuse];
                 programResults[i] = stageData[i].compiled != nullptr ? stageData[i].compiled.get() : matched[i]->compiled.get();
                 memory.insert(memory.end(), matchedRegions[i].begin(), matchedRegions[i].end());
             } else {
@@ -979,6 +982,10 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
         drawEntryCounters.dataStagesReused += dataStagesReused;
         drawEntryCounters.dataStagesCompiled += dataStagesCompiled;
         drawEntryCounters.dataVerified += dataVerified;
+        drawEntryCounters.addressStagesExact += addressStages[1];
+        drawEntryCounters.addressStagesStale += addressStages[2];
+        drawEntryCounters.addressStagesUnvalidated += addressStages[3];
+        if (dataStagesCompiled == 0 && addressStages[1] + addressStages[2] + addressStages[3] != 0) ++drawEntryCounters.addressDraws;
     }
     const bool shapeRefresh = Graphics::DrawPipelineEnabled();
     const auto refreshSeenTwice = [&] {

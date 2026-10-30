@@ -169,6 +169,7 @@ private:
     static bool drawEntries();
     static std::uint32_t drawCacheBypassPercent();
     static bool drawDataHits();
+    static bool diagStageReuseAddressWords();
     static bool verifyDrawDataHits();
     static bool drawStageDataHits();
     static bool verifyDrawEntries();

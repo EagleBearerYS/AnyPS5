@@ -1,7 +1,12 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
+#include <algorithm>
+#include <array>
 #include <cstdlib>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver::DriverDetail {
 
@@ -36,6 +41,21 @@ void Driver::reportDrawCache(DrawEntryCounters& counters, bool profile) {
         text += line;
         std::snprintf(line, sizeof(line), "[draw-cache] register-key miss component changes (10 s): stable registers %llu, user data %llu, auxiliary registers %llu, device %llu, first shader set %llu, unchanged components %llu\n", count(counters.registerKeyMissChanges[0]), count(counters.registerKeyMissChanges[1]), count(counters.registerKeyMissChanges[2]), count(counters.registerKeyMissChanges[3]), count(counters.registerKeyMissChanges[4]), count(counters.registerKeyMissChanges[5]));
         text += line;
+        if (diagStageReuseAddressWords()) {
+            std::vector<std::pair<std::uint32_t, std::array<std::uint64_t, 4>>> registers(counters.addressRegisters.begin(), counters.addressRegisters.end());
+            const auto total = [](const std::array<std::uint64_t, 4>& classes) { return classes[0] + classes[1] + classes[2] + classes[3]; };
+            std::sort(registers.begin(), registers.end(), [&](const auto& a, const auto& b) { return total(a.second) > total(b.second); });
+            std::string top;
+            for (std::size_t index = 0; index < registers.size() && index < 8; ++index) {
+                const auto& [reg, classes] = registers[index];
+                char item[128];
+                std::snprintf(item, sizeof(item), "%s 0x%03x %llu/%llu/%llu/%llu", index == 0 ? "" : ",", reg, count(classes[0]), count(classes[1]), count(classes[2]), count(classes[3]));
+                top += item;
+            }
+            const auto avoided = counters.addressStagesExact + counters.addressStagesStale + counters.addressStagesUnvalidated;
+            std::snprintf(line, sizeof(line), "[draw-cache] address-word stage reuse (APS5_DIAG_STAGE_REUSE_ADDRESS_WORDS, 10 s): compiles avoided %llu (exact %llu, stale value %llu, unvalidated %llu), links avoided %llu (draws with every stage reused), indirect data-only hits %llu; candidates: exact %llu, stale value %llu, unvalidated %llu, refused %llu, unreadable %llu; differing used words: forwarded %llu, relocated base %llu, address value %llu, refused %llu; inserts skipped after a stale reuse %llu; by register (forwarded/relocated/value/refused):%s\n", count(avoided), count(counters.addressStagesExact), count(counters.addressStagesStale), count(counters.addressStagesUnvalidated), count(counters.addressDraws), count(counters.addressIndirectDataHits), count(counters.addressCandidatesExact), count(counters.addressCandidatesStale), count(counters.addressCandidatesUnvalidated), count(counters.addressCandidatesRefused), count(counters.addressCandidatesInaccessible), count(counters.addressWords[0]), count(counters.addressWords[1]), count(counters.addressWords[2]), count(counters.addressWords[3]), count(counters.addressInsertsSkipped), top.empty() ? " none" : top.c_str());
+            text += line;
+        }
     }
     if (profile) text += profileDrawCacheLines(counters);
     AgcDriver::ProfilePrint_nid_no_patch("%s", text.c_str());

@@ -60,6 +60,11 @@ bool Driver::drawDataHits() {
     return hits;
 }
 
+bool Driver::diagStageReuseAddressWords() {
+    static const bool reuse = std::getenv("APS5_DIAG_STAGE_REUSE_ADDRESS_WORDS") != nullptr;
+    return reuse;
+}
+
 bool Driver::drawStageDataHits() {
     static const bool hits = std::getenv("APS5_NO_DRAW_STAGE_DATA_HITS") == nullptr && !stampValidate();
     return hits;

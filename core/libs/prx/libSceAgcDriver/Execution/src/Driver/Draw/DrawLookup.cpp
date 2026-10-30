@@ -2,7 +2,10 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
+#include <map>
+#include <span>
 
 namespace AgcDriver::DriverDetail {
 
@@ -229,6 +232,66 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             std::uint64_t imagesFlushed = 0, runsSynced = 0;
             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
             std::optional<SampledReadScope> sampling;
+            const bool addressWords = diagStageReuseAddressWords();
+            enum AddressWord : std::size_t { Forwarded, Relocated, Value, Refused };
+            std::array<std::uint64_t, 4> wordClasses{};
+            std::map<std::uint32_t, std::array<std::uint64_t, 4>> registerClasses;
+            std::uint64_t exact = 0, stale = 0, unvalidated = 0, refused = 0, inaccessible = 0;
+            const auto addressPair = [](const std::vector<std::uint32_t>& words, std::size_t low) {
+                if (words[low] == 0 || (words[low] & 3u) != 0) return false;
+                const std::uint64_t high = low + 1 < words.size() ? words[low + 1] & 0xffffu : 0u;
+                return GuestMemory::Accessible(reinterpret_cast<const void*>((high << 32u) | words[low]), sizeof(std::uint32_t));
+            };
+            const auto addressCopy = [&](const DrawProgram& program, const std::vector<std::uint32_t>& now, const std::vector<std::uint32_t>& was, const DispatchVariant& variant, std::uint64_t differing) -> std::shared_ptr<DispatchVariant> {
+                auto copy = std::make_shared<DispatchVariant>();
+                copy->runs = variant.runs;
+                copy->runBases = variant.runBases;
+                copy->relocatableWords = variant.relocatableWords;
+                copy->userWordsWalked = variant.userWordsWalked;
+                copy->words = variant.words;
+                copy->forgetSerial = variant.forgetSerial;
+                copy->compiled = variant.compiled;
+                copy->meshIndexDescriptor = variant.meshIndexDescriptor;
+                copy->shader = variant.shader;
+                copy->dataPositions = variant.dataPositions;
+                copy->dataSlots = variant.dataSlots;
+                copy->flatBinding = variant.flatBinding;
+                copy->pushOffset = variant.pushOffset;
+                copy->userDataMask = variant.userDataMask;
+                copy->vertexInfo = variant.vertexInfo;
+                copy->addressReuse = 1;
+                const auto& forwarded = variant.compiled->shaderDataUserWords;
+                for (std::uint32_t w = 0; w < 64u && w < now.size(); ++w) {
+                    if ((differing >> w & 1u) == 0) continue;
+                    const auto from = was[w];
+                    const auto to = now[w];
+                    const bool walked = (variant.userWordsWalked >> w & 1u) != 0;
+                    const bool pushed = std::find(forwarded.begin(), forwarded.end(), w) != forwarded.end();
+                    AddressWord kind = Refused;
+                    if ((variant.relocatableWords >> w & 1u) != 0 && from != 0 && to != 0 && ((from ^ to) & 3u) == 0) {
+                        const auto delta = static_cast<std::uint64_t>(to & ~std::uint32_t{3}) - static_cast<std::uint64_t>(from & ~std::uint32_t{3});
+                        for (std::size_t run = 0; run < copy->runs.size() && run < copy->runBases.size(); ++run) {
+                            if (copy->runBases[run] != static_cast<std::int8_t>(w)) continue;
+                            copy->runs[run].first += delta;
+                            copy->runs[run].second += delta;
+                        }
+                        kind = Relocated;
+                    } else if (!walked && pushed) {
+                        kind = Forwarded;
+                    } else if (addressPair(now, w) || (w > 0 && (differing >> (w - 1) & 1u) != 0 && addressPair(now, w - 1))) {
+                        kind = Value;
+                        copy->addressReuse = 2;
+                    }
+                    ++wordClasses[kind];
+                    ++registerClasses[w >= program.hiddenUserWords ? program.userDataBase + w - program.hiddenUserWords : 0xfffu][kind];
+                    if (kind == Refused) return nullptr;
+                    for (std::uint32_t slot = 0; slot < forwarded.size(); ++slot) {
+                        if (forwarded[slot] == w) copy->shaderDataPatches.emplace_back(slot, to);
+                    }
+                }
+                applyShaderDataPatches(*copy);
+                return copy;
+            };
             for (std::size_t i = 0; i < programs.size(); ++i) {
                 if (roles[i] == Role::GeometryBack || programs[i].userData.size() != dataEntry->decode->programs[i].userData.size()) continue;
                 const auto& now = programs[i].userData;
@@ -236,17 +299,66 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 auto& candidates = dataCandidates[i];
                 for (const auto& variant : dataEntry->stages[i]) {
                     bool usedEqual = true;
+                    std::uint64_t differing = 0;
                     for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
-                        if (now[w] != was[w] && (w >= 64u || ((variant->userDataMask >> w) & 1u) != 0)) usedEqual = false;
+                        if (now[w] == was[w] || (w < 64u && ((variant->userDataMask >> w) & 1u) == 0)) continue;
+                        if (addressWords && w < 64u) differing |= std::uint64_t{1} << w;
+                        else usedEqual = false;
                     }
                     if (!usedEqual) continue;
                     if ((i == 0 && variant->pushOffset != 0) || std::any_of(candidates.begin(), candidates.end(), [&](const auto& candidate) { return candidate.first->pushOffset == variant->pushOffset; })) continue;
+                    auto chosen = variant;
+                    if (differing != 0) {
+                        chosen = addressCopy(programs[i], now, was, *variant, differing);
+                        if (chosen == nullptr) {
+                            ++refused;
+                            continue;
+                        }
+                    }
                     std::vector<ShaderRecompiler::MemoryRegion> regions;
-                    appendEntryRegions(*variant, regions);
-                    auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
-                    if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *variant, regions, imagesFlushed, runsSynced, sampling);
-                    if (result == EntryOutcome::Equal) candidates.emplace_back(variant, std::move(regions));
+                    appendEntryRegions(*chosen, regions);
+                    auto result = validateVariant(programs[i].binary.codeAddress, submission.queue, *chosen, regions, imagesFlushed, runsSynced, sampling);
+                    if (gateRetry() && (result == EntryOutcome::PublishMoved || result == EntryOutcome::PendingMoved)) result = validateVariant(programs[i].binary.codeAddress, submission.queue, *chosen, regions, imagesFlushed, runsSynced, sampling);
+                    if (result == EntryOutcome::Differing && differing != 0) {
+                        std::size_t offset = 0;
+                        bool readable = true;
+                        for (const auto& [begin, end] : chosen->runs) {
+                            const auto count = static_cast<std::size_t>((end - begin) / sizeof(std::uint32_t));
+                            if (offset + count > chosen->words.size() || GuestMemory::CopyMapped(begin, std::as_writable_bytes(std::span(chosen->words).subspan(offset, count))) != GuestMemory::Compare::Equal) {
+                                readable = false;
+                                break;
+                            }
+                            offset += count;
+                        }
+                        if (readable && offset == chosen->words.size()) {
+                            chosen->addressReuse = 3;
+                            regions.clear();
+                            appendEntryRegions(*chosen, regions);
+                            result = EntryOutcome::Equal;
+                        } else {
+                            ++inaccessible;
+                        }
+                    } else if (result == EntryOutcome::Inaccessible && differing != 0) {
+                        ++inaccessible;
+                    }
+                    if (result != EntryOutcome::Equal) continue;
+                    if (differing != 0) ++(chosen->addressReuse == 1 ? exact : chosen->addressReuse == 2 ? stale : unvalidated);
+                    candidates.emplace_back(chosen, std::move(regions));
                 }
+            }
+            if (addressWords) {
+                std::lock_guard cacheLock(drawCacheMutex);
+                auto& counters = drawEntryCounters;
+                for (std::size_t kind = 0; kind < wordClasses.size(); ++kind) counters.addressWords[kind] += wordClasses[kind];
+                for (const auto& [reg, classes] : registerClasses) {
+                    auto& held = counters.addressRegisters[reg];
+                    for (std::size_t kind = 0; kind < classes.size(); ++kind) held[kind] += classes[kind];
+                }
+                counters.addressCandidatesExact += exact;
+                counters.addressCandidatesStale += stale;
+                counters.addressCandidatesUnvalidated += unvalidated;
+                counters.addressCandidatesRefused += refused;
+                counters.addressCandidatesInaccessible += inaccessible;
             }
         }
         phaseTiming.Phase(DrawRowKeyLookupValidate);
