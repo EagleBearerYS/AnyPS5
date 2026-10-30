@@ -1,4 +1,4 @@
-READY 2026-10-30T00:25:50Z: BF-289 done
+BUSY BF-290
 machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 20 GB free disk; /home/user/AnyPS5 and its Release build kept (last built at diag/village-draw-key-census-v2-on-103015a9ca c9fed6627b); origin and upstream fetched, upstream main 40a8faf90a; lavapipe only, no GPU, no IPv6
 setup report:
 RESULT:
