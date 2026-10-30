@@ -301,6 +301,26 @@ void LowHitRateBypassesTheCache() {
     Require(kept.lookups == recovered.lookups + 10, mode + ": a window of 2048 hits bypassed the draw cache");
 }
 
+void ColdSceneKeepsTheCacheLookedUp() {
+    constexpr std::size_t Frames = 4, SceneDraws = 1000;
+    const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
+    const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
+    const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
+    Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
+    Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    float scale = 5000.0f;
+    std::vector<float> scene(SceneDraws);
+    for (auto& value : scene) value = scale += 0.25f;
+    auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    for (std::size_t frame = 1; frame <= Frames; ++frame) {
+        const auto after = Submit(ScaledDraws(scene));
+        const auto hits = after.hits - before.hits;
+        if (frame == Frames) Require(10 * hits >= 9 * SceneDraws, mode + ": frame " + std::to_string(frame) + " of a scene that repeats the same 1000 new draws every frame hit " + std::to_string(hits) + " of them, expected at least 90%");
+        before = after;
+    }
+    std::cout << mode << ": a scene of 1000 new draws repeated every frame hit the draw cache by its fourth frame\n";
+}
+
 void StageHitsKeepTheCacheLookedUp() {
     constexpr std::size_t Window = 2048;
     const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
@@ -356,6 +376,8 @@ int main(int argc, char** argv) {
             LowHitRateBypassesTheCache();
             StageHitsKeepTheCacheLookedUp();
             ConcurrentNotesCloseEachWindowOnce();
+        } else if (argc > 1 && std::string(argv[1]) == "--cold-scene") {
+            ColdSceneKeepsTheCacheLookedUp();
         } else if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
             RefreshedStageDataVerifies();
         } else {
