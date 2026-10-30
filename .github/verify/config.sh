@@ -1,0 +1,4 @@
+BASE=aaccd0ba39b7d40fdbf19664575a7e567d8542f7
+REPEAT=10
+EXTRA_TESTS='agc_driver_bda_store_heap_mirror|agc_driver_bda_store_heap_mirror_no_space_cache|agc_driver_bda_store_heap_mirror_budget|agc_driver_bda_store_heap_mirror_store_pages|agc_driver_bda_device'
+NO_BEFORE=1
