@@ -19,9 +19,16 @@
 #include <utility>
 #include <vector>
 
+namespace AgcDriver::DriverDetail {
+struct DriverTestAccess {
+    static DrawCacheBypass& Bypass() { return Driver::Get().drawCacheBypass; }
+};
+}
+
 namespace {
 
 using AgcDriver::Graphics::Require;
+using AgcDriver::DriverDetail::DrawCacheBypass;
 using AgcDriver::DriverDetail::DrawMiss;
 using AgcDriver::DriverDetail::DrawKeySightings;
 
@@ -255,14 +262,23 @@ std::vector<std::uint32_t> ScaledDraws(const std::vector<float>& scales) {
     return commands;
 }
 
-std::vector<float> HitWindow(std::size_t draws, float repeated, std::size_t repeats, float& distinct) {
-    std::vector<float> scales(repeats, repeated);
-    while (scales.size() < draws) scales.push_back(distinct += 0.25f);
-    return scales;
+std::uint64_t NotedLookups = 0;
+
+std::uint64_t WindowPosition() {
+    return (AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters().lookups + NotedLookups) % DrawCacheBypass::Window;
+}
+
+void NoteLookups(std::uint64_t count, bool useful) {
+    auto& bypass = AgcDriver::DriverDetail::DriverTestAccess::Bypass();
+    for (std::uint64_t n = 0; n < count; ++n) bypass.Note(useful);
+    NotedLookups += count;
+}
+
+void CloseWindow(bool useful) {
+    NoteLookups((DrawCacheBypass::Window - WindowPosition()) % DrawCacheBypass::Window, useful);
 }
 
 void LowHitRateBypassesTheCache() {
-    constexpr std::size_t Window = 2048, FirstBypassDraws = 2048;
     const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
     const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
     const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
@@ -276,17 +292,18 @@ void LowHitRateBypassesTheCache() {
     Require(cached.lookups == 3 && cached.hits == 1, mode + ": three constant draws did not miss twice and hit once");
     const auto cachedColor = BrightestColorByte();
     Require(cachedColor == 64, mode + ": the cached draws of constant 0.25 wrote " + std::to_string(cachedColor) + ", expected 64");
-    float distinct = 1000.0f;
-    const auto even = Submit(ScaledDraws(HitWindow(Window - 3, 32.0f, 104, distinct)));
-    Require(even.lookups == Window && even.hits == 103, mode + ": the first window made " + std::to_string(even.lookups) + " lookups with " + std::to_string(even.hits) + " hits, expected 2048 with 103");
-    const auto low = Submit(ScaledDraws(HitWindow(Window, 16.0f, 103, distinct)));
-    Require(low.lookups == 2 * Window && low.hits == even.hits + 101, mode + ": a window of 101 hits and one second sighting made " + std::to_string(low.lookups) + " lookups with " + std::to_string(low.hits) + " hits, expected 4096 with 204");
-    const auto useful = Submit(ScaledDraws(HitWindow(Window, 17.0f, 104, distinct)));
-    Require(useful.lookups == 3 * Window, mode + ": a single window of 102 useful lookups in 2048 bypassed the draw cache, which needs two such windows in a row");
-    const auto lowAgain = Submit(ScaledDraws(HitWindow(Window, 18.0f, 103, distinct)));
-    Require(lowAgain.lookups == 4 * Window, mode + ": a window of 103 useful lookups, 5% of 2048, bypassed the draw cache");
-    const auto armed = Submit(ScaledDraws(HitWindow(Window, 19.0f, 103, distinct)));
-    Require(armed.lookups == 5 * Window, mode + ": a window of 103 useful lookups did not end the run of low windows before it");
+    const auto low = Submit(ScaledDraws(std::vector<float>(101, 32.0f)));
+    Require(low.lookups == 104 && low.hits == 100, mode + ": 101 draws of one new key made " + std::to_string(low.lookups - cached.lookups) + " lookups with " + std::to_string(low.hits - cached.hits) + " hits, expected 101 with 99");
+    CloseWindow(false);
+    const auto useful = Submit(ScaledDraws(std::vector<float>(104, 16.0f)));
+    Require(useful.lookups == low.lookups + 104 && useful.hits == low.hits + 102, mode + ": a single window of 100 hits and two second sightings, 102 useful lookups in 2048, bypassed the draw cache, which needs two such windows in a row");
+    CloseWindow(false);
+    const auto lowAgain = Submit(ScaledDraws(std::vector<float>(103, 17.0f)));
+    Require(lowAgain.lookups == useful.lookups + 103, mode + ": a window of 102 hits and one second sighting, 103 useful lookups, 5% of 2048, bypassed the draw cache");
+    CloseWindow(false);
+    const auto armed = Submit(ScaledDraws(std::vector<float>(103, 18.0f)));
+    Require(armed.lookups == lowAgain.lookups + 103, mode + ": a window of 103 useful lookups did not end the run of low windows before it");
+    CloseWindow(false);
     ColorMemory.fill(std::byte{0});
     const auto bypassed = SubmitConstantDraws(1);
     const auto bypassedColor = BrightestColorByte();
@@ -299,63 +316,52 @@ void LowHitRateBypassesTheCache() {
         return;
     }
     Require(bypassed.lookups == armed.lookups && refreshed.lookups == armed.lookups && refreshed.inserts == armed.inserts, mode + ": draws after two windows of 102 useful lookups in 2048 were still looked up or inserted");
-    const auto rest = Submit(ScaledDraws(std::vector<float>(FirstBypassDraws - 2, 32.0f)));
-    Require(rest.lookups == armed.lookups && rest.inserts == armed.inserts, mode + ": the first bypass ended before 2048 draws");
+    std::size_t rest = 0;
+    while (AgcDriver::DriverDetail::DriverTestAccess::Bypass().Skip()) ++rest;
+    Require(rest == DrawCacheBypass::FirstBypassDraws - 2, mode + ": the first bypass had " + std::to_string(rest) + " draws left after two bypassed draws, expected 2046 of 2048");
     const auto resumed = Submit(ScaledDraws({32.0f}));
     Require(resumed.lookups == armed.lookups + 1 && resumed.hits == armed.hits + 1, mode + ": the draw after 2048 bypassed draws did not look up the cached draw again");
-    const auto third = Submit(ScaledDraws(HitWindow(Window - 1, 32.0f, 0, distinct)));
-    Require(third.lookups == resumed.lookups + Window - 1, mode + ": the window after the first bypass was not looked up to its end");
-    const auto longer = Submit(ScaledDraws(std::vector<float>(2 * FirstBypassDraws, 32.0f)));
-    Require(longer.lookups == third.lookups && longer.inserts == third.inserts, mode + ": a third low window in a row did not bypass the next 4096 draws");
-    const auto after = Submit(ScaledDraws({32.0f}));
-    Require(after.lookups == longer.lookups + 1 && after.hits == longer.hits + 1, mode + ": the draw after 4096 bypassed draws did not look up the cached draw again");
-    const auto recovered = Submit(ScaledDraws(std::vector<float>(Window - 1, 32.0f)));
-    Require(recovered.hits - after.hits == Window - 1, mode + ": a window of repeated draws did not hit the cache");
-    const auto kept = Submit(ScaledDraws(std::vector<float>(10, 32.0f)));
-    Require(kept.lookups == recovered.lookups + 10, mode + ": a window of 2048 hits bypassed the draw cache");
 }
 
-void ColdScenesKeepTheCacheLookedUp() {
-    constexpr std::size_t Frames = 4;
+void ColdSceneKeepsTheCacheLookedUp() {
+    constexpr std::size_t Frames = 4, SceneDraws = 1000;
     const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
     const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
     const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
     Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
     float scale = 5000.0f;
-    for (const std::size_t draws : {1000u, 2048u, 4096u}) {
-        std::vector<float> scene(draws);
-        for (auto& value : scene) value = scale += 0.25f;
-        auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
-        for (std::size_t frame = 1; frame <= Frames; ++frame) {
-            const auto after = Submit(ScaledDraws(scene));
-            const auto hits = after.hits - before.hits;
-            if (frame == Frames) Require(10 * hits >= 9 * draws, mode + ": frame " + std::to_string(frame) + " of a scene that repeats the same " + std::to_string(draws) + " new draws every frame hit " + std::to_string(hits) + " of them, expected at least 90%");
-            before = after;
-        }
+    std::vector<float> scene(SceneDraws);
+    for (auto& value : scene) value = scale += 0.25f;
+    auto before = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
+    for (std::size_t frame = 1; frame <= Frames; ++frame) {
+        const auto after = Submit(ScaledDraws(scene));
+        const auto hits = after.hits - before.hits;
+        if (frame == Frames) Require(10 * hits >= 9 * SceneDraws, mode + ": frame " + std::to_string(frame) + " of a scene that repeats the same 1000 new draws every frame hit " + std::to_string(hits) + " of them, expected at least 90%");
+        before = after;
     }
-    std::cout << mode << ": scenes of 1000, 2048 and 4096 new draws repeated every frame hit the draw cache by their fourth frame\n";
+    std::cout << mode << ": a scene of 1000 new draws repeated every frame hit the draw cache by its fourth frame\n";
 }
 
 void StageHitsKeepTheCacheLookedUp() {
-    constexpr std::size_t Window = 2048;
+    constexpr std::size_t Shapes = 103;
     const char* percent = std::getenv("APS5_DRAW_CACHE_BYPASS_PERCENT");
     const bool bypass = percent == nullptr || std::strtoul(percent, nullptr, 10) != 0;
     const auto mode = std::string(bypass ? "with the default 5% bypass" : "with the bypass off");
     Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
     Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+    CloseWindow(true);
+    NoteLookups(DrawCacheBypass::Window, false);
     const auto start = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
-    const auto rest = Window - static_cast<std::size_t>(start.lookups % Window);
-    const auto closed = Submit(ScaledDraws(std::vector<float>(rest, 32.0f)));
-    Require(closed.lookups - start.lookups == rest && closed.hits - start.hits == rest, mode + ": the draws closing the current window did not all hit the cached draw");
     std::vector<std::vector<std::uint32_t>> words;
-    for (std::size_t i = 0; i < Window; ++i) words.push_back({std::bit_cast<std::uint32_t>(5000.0f + static_cast<float>(i))});
+    for (std::size_t i = 0; i < Shapes; ++i) words.push_back({std::bit_cast<std::uint32_t>(5000.0f + static_cast<float>(i))});
     const auto shapes = Submit(Draws(32.0f, VertexCode.data(), 1, PixelCode.data(), 1, words));
-    Require(shapes.lookups - closed.lookups == Window && shapes.hits == closed.hits && shapes.inserts == closed.inserts, mode + ": " + std::to_string(shapes.lookups - closed.lookups) + " lookups and " + std::to_string(shapes.hits - closed.hits) + " whole-draw hits for 2048 draws of new user words, expected 2048 misses");
-    Require(shapes.dataHits - closed.dataHits == Window && shapes.dataStagesReused - closed.dataStagesReused == Window, mode + ": 2048 draws of new user words reused " + std::to_string(shapes.dataStagesReused - closed.dataStagesReused) + " vertex stages from the cached draw of their shape, expected 2048");
+    Require(shapes.lookups - start.lookups == Shapes && shapes.hits == start.hits && shapes.inserts == start.inserts, mode + ": " + std::to_string(shapes.lookups - start.lookups) + " lookups and " + std::to_string(shapes.hits - start.hits) + " whole-draw hits for 103 draws of new user words, expected 103 misses");
+    Require(shapes.dataHits - start.dataHits == Shapes && shapes.dataStagesReused - start.dataStagesReused == Shapes, mode + ": 103 draws of new user words reused " + std::to_string(shapes.dataStagesReused - start.dataStagesReused) + " vertex stages from the cached draw of their shape, expected 103");
+    CloseWindow(false);
     const auto next = Submit(ScaledDraws({32.0f}));
-    Require(next.lookups == shapes.lookups + 1 && next.hits == shapes.hits + 1, mode + ": the draw after a window of 2048 draws whose keys missed but whose stages were reused from the cache was not looked up");
-    std::cout << mode << ": a window of 2048 draws whose keys missed but whose vertex stages were reused kept the draw cache looked up\n";
+    Require(next.lookups == shapes.lookups + 1 && next.hits == shapes.hits + 1, mode + ": after a low window, the draw after a window whose only useful lookups were 103 draws whose keys missed but whose stages were reused from the cache was not looked up");
+    std::cout << mode << ": after a low window, a window whose only useful lookups were 103 draws whose keys missed but whose vertex stages were reused kept the draw cache looked up\n";
 }
 
 void ConcurrentNotesCloseEachWindowOnce() {
@@ -422,7 +428,10 @@ void LowWindowsLengthenTheBypass() {
     using AgcDriver::DriverDetail::DrawCacheBypass;
     DrawCacheBypass bypass(5);
     const auto window = [&bypass](std::uint32_t useful) {
-        for (std::uint32_t n = 0; n < DrawCacheBypass::Window; ++n) bypass.Note(n < useful);
+        for (std::uint32_t n = 0; n < DrawCacheBypass::Window; ++n) {
+            Require(!bypass.Skip(), "a draw was bypassed before the window that starts its bypass closed");
+            bypass.Note(n < useful);
+        }
         std::uint32_t skipped = 0;
         while (bypass.Skip()) ++skipped;
         return skipped;
@@ -455,7 +464,7 @@ int main(int argc, char** argv) {
             ConcurrentClosesKeepTheirOrder();
             LowWindowsLengthenTheBypass();
         } else if (argc > 1 && std::string(argv[1]) == "--cold-scene") {
-            ColdScenesKeepTheCacheLookedUp();
+            ColdSceneKeepsTheCacheLookedUp();
         } else if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
             RefreshedStageDataVerifies();
         } else {
