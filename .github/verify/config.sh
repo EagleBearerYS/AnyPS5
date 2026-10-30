@@ -1,0 +1,5 @@
+BASE=673fa865f418876429bd871fdda2ab15ac1a0831
+REPEAT=1
+EXTRA_TESTS='agc_write_tracking|agc_untracked_hint_proof'
+NO_BEFORE=1
+VERBOSE=1
