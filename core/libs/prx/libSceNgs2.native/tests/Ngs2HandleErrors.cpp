@@ -28,7 +28,6 @@ static void CheckPendingExports(const char* path) {
         const char* name;
     };
     const Export exports[] = {
-        {sceNgs2JobSchedulerResetOption, "sceNgs2JobSchedulerResetOption"},
         {sceNgs2ModuleArrayEnumItems, "sceNgs2ModuleArrayEnumItems"},
         {sceNgs2ModuleEnumConfigs, "sceNgs2ModuleEnumConfigs"},
         {sceNgs2ModuleQueueEnumItems, "sceNgs2ModuleQueueEnumItems"},
