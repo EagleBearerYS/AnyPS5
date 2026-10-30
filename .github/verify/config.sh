@@ -1,0 +1,4 @@
+BASE=a5939f10a85fdbcd3e0fe75e5eea278f4fe3e52a
+REPEAT=10
+EXTRA_TESTS='agc_driver_image_table|agc_shader_disk_cache|agc_shader_memory|agc_driver_span_table_choice|agc_driver_table_image_per_workgroup|agc_driver_wave32_sampler_per_workgroup|agc_spanned_wave_refusal|request_serializer|^agc_spanned_wave_'
+NO_BEFORE=1
