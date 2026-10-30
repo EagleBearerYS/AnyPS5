@@ -1761,18 +1761,10 @@ int APS5_VABI sceSaveDataRebuildDatabase(void) {
 }
 
 int APS5_VABI sceSaveDataRegisterEventCallback(SaveDataEventCallback callback, void* userdata) {
-    if (g_initializations == 0) {
-        return SAVE_DATA_ERROR_NOT_INITIALIZED;
-    }
-    if (callback == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    auto& callbacks = Callbacks();
-    std::lock_guard calling(callbacks.calling);
-    std::lock_guard lock(callbacks.mutex);
-    callbacks.callback = callback;
-    callbacks.userdata = userdata;
-    return SAVE_DATA_OK;
+    (void)callback;
+    (void)userdata;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
@@ -1905,13 +1897,8 @@ int APS5_VABI sceSaveDataUmountWithBackup(const SaveDataMountPoint* mount_point)
 }
 
 int APS5_VABI sceSaveDataUnregisterEventCallback(void) {
-    auto& callbacks = Callbacks();
-    std::lock_guard calling(callbacks.calling);
-    std::lock_guard lock(callbacks.mutex);
-    callbacks.callback = nullptr;
-    callbacks.userdata = nullptr;
-    callbacks.pending.clear();
-    return SAVE_DATA_OK;
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceSaveDataUpload(void) {
