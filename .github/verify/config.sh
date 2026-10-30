@@ -1,0 +1,4 @@
+BASE=cf0e33b6a070c2c69e2956a524da75082cb2cff1
+REPEAT=10
+EXTRA_TESTS='test_registration|player_invitation_dialog|ngs2_pcm'
+NO_BEFORE=1
