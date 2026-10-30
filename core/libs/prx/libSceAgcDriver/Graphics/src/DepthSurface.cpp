@@ -2211,12 +2211,13 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
         }
     }
     const bool created = surface == nullptr;
+    const bool registered = created || surface->retired;
+    const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
+    const auto depthBytes = target.samples == 1u ? DepthSliceBytes(target.extent, d16 ? 2u : 4u) : MultisampledDepthBytes_nid_no_patch(target.extent, d16 ? 2u : 4u, target.samples);
+    const auto stencilBytes = target.stencilAddress == 0u ? 0u : target.samples == 1u ? DepthSliceBytes(target.extent, 1u) : MultisampledDepthBytes_nid_no_patch(target.extent, 1u, target.samples);
+    const auto metadataBytes = target.htileAddress == 0u ? 0u : HtileMetadataBytes(target.extent);
     GuestAllocations::Lease creationLease;
     if (created) {
-        const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
-        const auto depthBytes = target.samples == 1u ? DepthSliceBytes(target.extent, d16 ? 2u : 4u) : MultisampledDepthBytes_nid_no_patch(target.extent, d16 ? 2u : 4u, target.samples);
-        const auto stencilBytes = target.stencilAddress == 0u ? 0u : target.samples == 1u ? DepthSliceBytes(target.extent, 1u) : MultisampledDepthBytes_nid_no_patch(target.extent, 1u, target.samples);
-        const auto metadataBytes = target.htileAddress == 0u ? 0u : HtileMetadataBytes(target.extent);
         Require(target.address <= std::numeric_limits<std::uint64_t>::max() - depthBytes && target.stencilAddress <= std::numeric_limits<std::uint64_t>::max() - stencilBytes && target.htileAddress <= std::numeric_limits<std::uint64_t>::max() - metadataBytes, "native depth attachment range overflows");
         lock.unlock();
         RequireNoResidentDepthRead_nid_no_patch(target.address, static_cast<std::size_t>(depthBytes));
@@ -2240,6 +2241,11 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
         surface = surfaces().back().get();
     }
     surface->retired = false;
+    if (registered) {
+        GuestMemory::NoteDepthRegistered(target.address, static_cast<std::size_t>(depthBytes));
+        if (stencilBytes != 0u) GuestMemory::NoteDepthRegistered(target.stencilAddress, static_cast<std::size_t>(stencilBytes));
+        if (metadataBytes != 0u) GuestMemory::NoteDepthRegistered(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+    }
     const auto owner = depthOwners().find({context.device, target.address});
     const bool inherits = owner != depthOwners().end() && owner->second.surface->active->load(std::memory_order_acquire) && !owner->second.surface->retired;
     surface->clearDepth = target.clearDepth;

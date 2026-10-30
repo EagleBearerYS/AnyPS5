@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
@@ -459,6 +460,33 @@ void Imported(AgcDriver::VulkanDevice& device) {
     Settle(device, scene, "import (after)");
 }
 
+void DepthRegistered(AgcDriver::VulkanDevice& device) {
+    auto& scene = NewScene();
+    Build(device, scene);
+    Settle(device, scene, "depth");
+    const auto context = device.graphicsContext();
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(scene.Texels(Key)));
+    const AgcDriver::Graphics::DepthTarget target{address, 0, {TexelWidth, TexelHeight}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    try {
+        const auto depthBefore = Bumps(GuestMemory::WriteBumpSource::Depth);
+        Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE && AgcDriver::Graphics::DepthSurfaceAt(address), "depth: the depth target was not registered at the sampled texture's base");
+        Require(OutcomeOnly || Bumps(GuestMemory::WriteBumpSource::Depth) > depthBefore, "depth: registering a depth target at a sampled texture's base did not bump its subscription");
+        auto outcome = Draw(device, scene);
+        Require(outcome.accepted == 0.0 && outcome.lookedUp == 1.0 && outcome.rebound == 1.0 && outcome.builds == 0.0 && outcome.brightest == 255u, "depth: the draw after a depth target was registered over the sampled texture without a write kept the snapshot instead of re-binding the depth owner (" + outcome.Describe() + ")");
+        Settle(device, scene, "depth (owner)");
+        const auto again = Bumps(GuestMemory::WriteBumpSource::Depth);
+        Require(AgcDriver::Graphics::DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, "depth: the registered depth target was not found again");
+        Require(OutcomeOnly || Bumps(GuestMemory::WriteBumpSource::Depth) == again, "depth: binding the registered depth target again bumped the subscription");
+        AgcDriver::Graphics::ClearDepthSurfaces(context.device);
+        outcome = Draw(device, scene);
+        Require(outcome.accepted == 0.0 && outcome.brightest == 255u, "depth: the draw after the depth owner left kept it on the O(1) proof (" + outcome.Describe() + ")");
+        Settle(device, scene, "depth (after)");
+    } catch (...) {
+        AgcDriver::Graphics::ClearDepthSurfaces(context.device);
+        throw;
+    }
+}
+
 void ArraySlices(AgcDriver::VulkanDevice& device) {
     auto& scene = NewScene();
     Build(device, scene, true);
@@ -496,7 +524,7 @@ int main(int argc, char** argv) {
         TargetBytes = AgcDriver::Graphics::ColorTargetLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4).Bytes();
         GuestBlocks target((TargetBytes + BlockBytes - 1) / BlockBytes * BlockBytes);
         Target = &target;
-        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 10> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"array", &ArraySlices}}};
+        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 11> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"depth", &DepthRegistered}, {"array", &ArraySlices}}};
         for (const auto& [name, run] : cases) {
             if (!args.empty() && std::find(args.begin(), args.end(), name) == args.end()) continue;
             run(*device);

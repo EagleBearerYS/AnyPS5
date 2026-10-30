@@ -142,7 +142,7 @@ bool brokenSource(WriteBumpSource source) {
         const char* text = std::getenv("APS5_TABLE_INDEX_BREAK");
         if (text == nullptr) return flags;
         const std::string value(text);
-        constexpr std::array<const char*, static_cast<std::size_t>(WriteBumpSource::Count)> names{"cpu", "driver", "pending", "unwatch", "forget", "release", "import"};
+        constexpr std::array<const char*, static_cast<std::size_t>(WriteBumpSource::Count)> names{"cpu", "driver", "pending", "unwatch", "forget", "release", "import", "depth"};
         for (std::size_t i = 0; i < names.size(); ++i) flags[i] = value.find(names[i]) != std::string::npos;
         return flags;
     }();
@@ -156,7 +156,7 @@ void bumpSubscriptions(std::uint64_t address, std::uint64_t bytes, WriteBumpSour
     const auto start = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto first = address / IndexBlockBytes;
     const auto last = (address + bytes - 1) / IndexBlockBytes;
-    const bool lookup = source == WriteBumpSource::Release || source == WriteBumpSource::Import;
+    const bool lookup = source == WriteBumpSource::Release || source == WriteBumpSource::Import || source == WriteBumpSource::Depth;
     std::uint64_t lookups = 0;
     std::uint64_t bumped = 0;
     std::uint64_t overflowed = 0;
@@ -268,6 +268,10 @@ void NoteGpuPending(std::uint64_t address, std::size_t bytes) {
 
 void NoteTextureReleased(std::uint64_t address) {
     bumpSubscriptions(address, 1, WriteBumpSource::Release);
+}
+
+void NoteDepthRegistered(std::uint64_t address, std::size_t bytes) {
+    bumpSubscriptions(address, bytes, WriteBumpSource::Depth);
 }
 
 WriteIndexStats WriteIndexCounted() {
