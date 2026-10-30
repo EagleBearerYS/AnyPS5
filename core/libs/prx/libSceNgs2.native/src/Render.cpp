@@ -61,6 +61,7 @@ bool Ngs2FinishBlock(Ngs2Voice& voice) {
     };
     if (!repeat) {
         voice.blocks.pop_front();
+        Ngs2PublishBlockCount(voice);
         Ngs2BindSamplerBlock(voice, true);
     }
     const auto revision = voice.waveformRevision;
@@ -482,8 +483,8 @@ static void WriteOutput(const Ngs2RenderBufferInfo& output, const std::vector<fl
     }
     auto* pcm = static_cast<std::int16_t*>(output.buffer);
     for (std::size_t i = 0; i < mix.size(); i++) {
-        if (!std::isfinite(mix[i])) throw std::runtime_error("NGS2: integer rendering of nonfinite samples is not implemented");
-        pcm[i] = static_cast<std::int16_t>(std::min(std::lrint(std::clamp(mix[i], -1.0f, 1.0f) * 32768.0f), 32767L));
+        const float scaled = mix[i] * 32767.0f;
+        pcm[i] = std::isnan(scaled) ? 0 : static_cast<std::int16_t>(std::clamp(scaled, -32767.0f, 32767.0f));
     }
 }
 
@@ -516,6 +517,7 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
     for (auto* rack : system.racks) {
         for (auto& voice : rack->voices) {
             voice.ApplyPendingControls();
+            voice.decodePendingAtGrain = Ngs2DecodePending(voice);
             voice.rendered = false;
             Ngs2PublishSamplerState(voice);
             voices.push_back(&voice);
