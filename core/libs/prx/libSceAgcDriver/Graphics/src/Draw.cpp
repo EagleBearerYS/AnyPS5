@@ -1975,12 +1975,17 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                     reuse = AddressDrawReuse::SpaceChanged;
                 } else {
                     heldSpace.reset(cached.get());
-                    completeSnapshotWrites(snapshots);
-                    const auto service = cached->SnapshotsServedInPlace(snapshots);
-                    spaceHeld = service == SnapshotService::Served;
-                    if (!spaceHeld) {
-                        reuse = service == SnapshotService::Partial ? AddressDrawReuse::PartialOverlap : service == SnapshotService::Changed ? AddressDrawReuse::SnapshotChanged : AddressDrawReuse::SnapshotOutside;
+                    if (!cached->AddressTableGuardCurrent()) {
+                        reuse = AddressDrawReuse::SpaceChanged;
                         static_cast<void>(cached->ReleaseSpace());
+                    } else {
+                        completeSnapshotWrites(snapshots);
+                        const auto service = cached->SnapshotsServedInPlace(snapshots);
+                        spaceHeld = service == SnapshotService::Served;
+                        if (!spaceHeld) {
+                            reuse = service == SnapshotService::Partial ? AddressDrawReuse::PartialOverlap : service == SnapshotService::Changed ? AddressDrawReuse::SnapshotChanged : AddressDrawReuse::SnapshotOutside;
+                            static_cast<void>(cached->ReleaseSpace());
+                        }
                     }
                 }
             }

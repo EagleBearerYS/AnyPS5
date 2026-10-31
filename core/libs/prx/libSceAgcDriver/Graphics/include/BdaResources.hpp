@@ -26,6 +26,7 @@ public:
     BdaResources& operator=(const BdaResources&) = delete;
     VkDescriptorBufferInfo Table() const;
     std::span<const std::byte> TableBytes() const;
+    bool TableGuardCurrent(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
     void CheckUse(const BdaResources* record) const;
@@ -88,6 +89,7 @@ private:
     bool reportOnly = false;
     std::uint64_t lastUse = 0;
     std::size_t tableBytes = 0;
+    std::uint64_t tableGuardSerial = 0;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<SrtGuardFaults> srtGuards;

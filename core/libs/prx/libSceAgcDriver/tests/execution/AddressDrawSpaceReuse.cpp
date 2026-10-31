@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -35,6 +36,14 @@
 #include <span>
 #include <string>
 #include <vector>
+
+namespace AgcDriver {
+
+struct VulkanDeviceTestAccess {
+    static Graphics::Context ContextOf(const VulkanDevice& device) { return device.graphicsContext(); }
+};
+
+}
 
 namespace {
 
@@ -90,6 +99,7 @@ constexpr std::array<std::uint32_t, 12> StoringPixelCode{
 };
 
 constexpr std::size_t StoringCodeOffset = 768;
+constexpr std::size_t MultisampleTargetOffset = 32768;
 
 alignas(16) constexpr std::array<std::uint32_t, 4> OutsideWords{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
 
@@ -759,6 +769,80 @@ void RingRefusals(Scene& scene) {
     scene.cachedVertex = false;
 }
 
+bool MultisampleTargetsAvailable(Scene& scene) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(scene.device);
+    if (AgcDriver::GuestMemory::WriteWatched() && (context.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0) return true;
+    Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "address draw space reuse: the multisample target cases require write tracking and 4x color targets");
+    std::puts("skipped, the multisample target cases require write tracking and 4x color targets");
+    return false;
+}
+
+void PlaceMultisampleTarget(Scene& scene, std::uint64_t address) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(scene.device);
+    AgcDriver::Graphics::ColorTarget target{};
+    target.address = address;
+    target.surfaceAddress = address;
+    target.extent = {Width, Height};
+    target.surfaceExtent = target.extent;
+    target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.tileMode = ColorTileMode::RenderTarget;
+    target.elementBytes = 4;
+    target.bytes = TargetLayout.Bytes();
+    target.samples = 4;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Require(AgcDriver::Graphics::MultisampleTargetView(context, target) != VK_NULL_HANDLE, "address draw space reuse: the multisample target has no view");
+    scene.device.SubmitRecorded(true);
+    scene.device.WaitIdle();
+}
+
+void RetireMultisampleTargets(Scene& scene) {
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(scene.device);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    scene.device.WaitIdle();
+    AgcDriver::Graphics::ClearMultisampleTargets(context.device);
+}
+
+void MultisampleTargetInside(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    if (!MultisampleTargetsAvailable(scene)) return;
+    scene.Store(scene.constants, 0, 130);
+    Require(scene.DrawnColor() == 130 && scene.DrawnColor() == 130, "address draw space reuse: the draws before the multisample target did not read the guest constant");
+    const Outcomes outcomes;
+    const auto built = Builds();
+    PlaceMultisampleTarget(scene, scene.constants.Address(MultisampleTargetOffset));
+    std::uint8_t color = 0;
+    try {
+        color = scene.DrawnColor();
+    } catch (...) {
+        RetireMultisampleTargets(scene);
+        throw;
+    }
+    RetireMultisampleTargets(scene);
+    Require(outcomes[AddressDrawReuse::SpaceChanged] == 1 && outcomes.Total() == 1 && Builds() == built + 1, "address draw space reuse: a draw after a resident multisample target appeared inside its address space counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected one refusal for a space change and a build");
+    Require(color == 130, "address draw space reuse: the build after a resident multisample target appeared inside its address space read " + std::to_string(color) + " instead of 130");
+}
+
+void MultisampleTargetOutside(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    if (!MultisampleTargetsAvailable(scene)) return;
+    scene.Store(scene.constants, 0, 160);
+    Require(scene.DrawnColor() == 160 && scene.DrawnColor() == 160, "address draw space reuse: the draws before the multisample target did not read the guest constant");
+    Pages outside{BlockBytes};
+    const Outcomes outcomes;
+    const auto built = Builds();
+    PlaceMultisampleTarget(scene, outside.Address());
+    std::uint8_t color = 0;
+    try {
+        color = scene.DrawnColor();
+    } catch (...) {
+        RetireMultisampleTargets(scene);
+        throw;
+    }
+    RetireMultisampleTargets(scene);
+    Require(color == 160, "address draw space reuse: the draw after a resident multisample target appeared outside its space read " + std::to_string(color) + " instead of 160");
+    Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1 && Builds() == built, "address draw space reuse: a draw after a resident multisample target appeared outside its space counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected one reuse");
+}
+
 void Disabled(Scene& scene) {
     scene.Store(scene.constants, 0, 70);
     Require(scene.DrawnColor() == 70, "address draw space reuse: the first draw with reuse off did not read the guest constant");
@@ -784,7 +868,7 @@ struct NamedCase {
     Case run;
 };
 
-constexpr std::array<NamedCase, 12> DefaultCases{{
+constexpr std::array<NamedCase, 14> DefaultCases{{
     {"unchanged", UnchangedInputs},
     {"cpu-write", CpuWrite},
     {"idle-free", IdleFree},
@@ -797,6 +881,8 @@ constexpr std::array<NamedCase, 12> DefaultCases{{
     {"ring-own-constants", RingOwnConstants},
     {"ring-old-slot-write", RingOldSlotWrite},
     {"ring-refusals", RingRefusals},
+    {"multisample-target-inside", MultisampleTargetInside},
+    {"multisample-target-outside", MultisampleTargetOutside},
 }};
 
 constexpr std::array<NamedCase, 3> TransitionCases{{
@@ -840,6 +926,7 @@ int main(int argc, char** argv) {
                 const auto verified = AgcDriver::Graphics::AddressDrawReuseVerifications() - verifiedBefore;
                 const auto reused = outcomes[AgcDriver::Graphics::AddressDrawReuse::Reused];
                 Require(reused != 0 && verified == reused, "address draw space reuse: APS5_VERIFY_ADDRESS_DRAW_REUSE verified " + std::to_string(verified) + " of " + std::to_string(reused) + " served hits");
+                std::puts(("address draw space reuse: APS5_VERIFY_ADDRESS_DRAW_REUSE verified " + std::to_string(verified) + " of " + std::to_string(reused) + " served hits").c_str());
             }
             scene.Wait();
         }

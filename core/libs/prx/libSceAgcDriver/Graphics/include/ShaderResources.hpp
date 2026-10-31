@@ -261,6 +261,7 @@ public:
     bool ReleaseCompletedSpace(std::uint64_t completedThrough) { return guestMemory.ReleaseCompletedSpace(completedThrough); }
     bool UsesAddressTable() const { return usesBda; }
     std::span<const std::byte> AddressTableBytes() const;
+    bool AddressTableGuardCurrent();
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
