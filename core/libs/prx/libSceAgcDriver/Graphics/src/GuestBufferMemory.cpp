@@ -6476,9 +6476,9 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> GuestBufferMemory::DeviceRe
     return result;
 }
 
-void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
+std::size_t GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
     ResidentBuffer::FlushChanged(context);
-    if (!uploaded || committed) return;
+    if (!uploaded || committed) return 0;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     std::vector<Region*> copies;
     for (auto& region : regions) {
@@ -6491,10 +6491,11 @@ void GuestBufferMemory::RecordStagingCopies(Recorder& recorder) {
         region.copiedBack = false;
         copies.push_back(&region);
     }
-    if (copies.empty()) return;
+    if (copies.empty()) return 0;
     Require(Recorder::Active() == &recorder, "staging copies recorded into a recorder that is not the device's");
     if (profile) Copies().stagedReused.fetch_add(copies.size(), std::memory_order_relaxed);
     recordGpuCopies(copies, false);
+    return copies.size();
 }
 
 std::uint64_t ImageMirrorSerial(const Context& context, std::uint64_t address, std::size_t bytes) {

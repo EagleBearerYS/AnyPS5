@@ -2948,6 +2948,48 @@ RevalidateProfile& Revalidations() {
     return profile;
 }
 
+enum class RevalidatePiece : std::size_t { Guards, Index, Fast, T1, Walk, Pending, Imports, Staging, Rest, Count };
+constexpr std::array<const char*, static_cast<std::size_t>(RevalidatePiece::Count)> RevalidatePieceNames{"guards", "index", "fast", "t1", "walk", "pending", "imports", "staging", "rest"};
+
+struct RevalidateSplit {
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(RevalidatePiece::Count)> calls{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(RevalidatePiece::Count)> nanoseconds{};
+    std::atomic<std::uint64_t> cpuWriters{0};
+    std::atomic<std::uint64_t> pendingSkipped{0};
+    std::atomic<std::uint64_t> stagingCopies{0};
+};
+
+RevalidateSplit& RevalidateSplits() {
+    static RevalidateSplit split;
+    return split;
+}
+
+void countRevalidatePiece(RevalidatePiece piece, std::chrono::steady_clock::time_point start) {
+    auto& split = RevalidateSplits();
+    const auto index = static_cast<std::size_t>(piece);
+    split.calls[index].fetch_add(1, std::memory_order_relaxed);
+    split.nanoseconds[index].fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+}
+
+void reportRevalidateSplit(std::uint64_t totalNanoseconds) {
+    auto& split = RevalidateSplits();
+    std::string pieces;
+    std::uint64_t sum = 0;
+    for (std::size_t i = 0; i < RevalidatePieceNames.size(); ++i) {
+        const auto calls = split.calls[i].exchange(0, std::memory_order_relaxed);
+        const auto nanoseconds = split.nanoseconds[i].exchange(0, std::memory_order_relaxed);
+        sum += nanoseconds;
+        char text[96];
+        std::snprintf(text, sizeof(text), "%s %s %llu %.2f", i == 0 ? "" : ",", RevalidatePieceNames[i], static_cast<unsigned long long>(calls), static_cast<double>(nanoseconds) / 1e6);
+        pieces += text;
+        const auto piece = static_cast<RevalidatePiece>(i);
+        if (piece == RevalidatePiece::Guards) pieces += " (cpu writers " + std::to_string(split.cpuWriters.exchange(0, std::memory_order_relaxed)) + ")";
+        else if (piece == RevalidatePiece::Pending) pieces += " (skipped " + std::to_string(split.pendingSkipped.exchange(0, std::memory_order_relaxed)) + ")";
+        else if (piece == RevalidatePiece::Staging) pieces += " (" + std::to_string(split.stagingCopies.exchange(0, std::memory_order_relaxed)) + " copies)";
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate split (10 s):%s, sum %.2f of %.2f ms\n", pieces.c_str(), static_cast<double>(sum) / 1e6, static_cast<double>(totalNanoseconds) / 1e6);
+}
+
 void countFastFail(FastFail reason) {
     if (BuildProfiled()) Revalidations().fastFails[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
 }
@@ -3063,7 +3105,9 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
         for (const auto& surface : profile.refusedSurfaces) refusedBytes += surface.second;
         profile.refusedSurfaces.clear();
     }
+    const auto windowNanoseconds = profile.nanoseconds.load(std::memory_order_relaxed);
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate (10 s): %llu calls %.1f ms: fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped; lookup log: %llu builds and full walks kept their records past the bound; full walk ms by reason:%s; collect refusals: sampled %llu, storage %llu (uncommitted pages %llu, unwatched %llu, other %llu) over %llu surfaces, %.1f MiB\n", static_cast<unsigned long long>(profile.calls.exchange(0, std::memory_order_relaxed)), profile.nanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(profile.fast.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.full.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.failed.exchange(0, std::memory_order_relaxed)), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownStorageRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownViewRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownSourceViews.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refreshedOverlaps.exchange(0, std::memory_order_relaxed)), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingForeign.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingSnapshot.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingT1Eligible.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.keysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.storageKeysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.serialSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.importSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(lookupBuildsPastBound.exchange(0, std::memory_order_relaxed)), walkMs.c_str(), static_cast<unsigned long long>(profile.refusedSampled.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedStorage.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUncommitted.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUnwatched.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedOther.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(refusedSurfaces), static_cast<double>(refusedBytes) / 1048576.0);
+    reportRevalidateSplit(windowNanoseconds);
     if (!GuestMemory::WriteIndexEnabled()) return;
     const auto index = GuestMemory::WriteIndexCounted();
     GuestMemory::ResetWriteIndexCounts();
@@ -3932,9 +3976,25 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         CompletePendingCpuWrites(context, image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes()));
         if (image->Descriptor().dccAddress != 0) CompletePendingCpuWrites(context, image->Descriptor().dccAddress, DccKeyBytes(image->GuestBytes()));
     }
+    if (profile) {
+        countRevalidatePiece(RevalidatePiece::Guards, start);
+        if (cpuWriters) RevalidateSplits().cpuWriters.fetch_add(1, std::memory_order_relaxed);
+    }
+    auto openPiece = RevalidatePiece::Count;
+    std::chrono::steady_clock::time_point pieceStart{};
+    const auto beginPiece = [&](RevalidatePiece piece) {
+        openPiece = piece;
+        pieceStart = std::chrono::steady_clock::now();
+    };
+    const auto endPiece = [&] {
+        if (openPiece == RevalidatePiece::Count) return;
+        countRevalidatePiece(openPiece, pieceStart);
+        openPiece = RevalidatePiece::Count;
+    };
     // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
     const auto finish = [&](bool fast, bool ok, ProofFailure failure = ProofFailure::Other) {
+        if (profile) endPiece();
         if (profile) countRevalidate(fast, ok, start);
         if (report != nullptr) report->failure = ok ? ProofFailure::None : failure;
         return ok;
@@ -4035,13 +4095,17 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     bool indexProved = false;
     std::uint64_t indexBaseline = 0;
     if (GuestMemory::WriteIndexEnabled() && !noFast && EpochRevalidate()) {
+        if (profile) beginPiece(RevalidatePiece::Index);
         if (indexRevalidate(shaders, serialBefore) != IndexOutcome::Fallback) indexProved = true;
         else {
             if (writeSubscription == nullptr) subscribeIndex(shaders);
             if (writeSubscription != nullptr) indexBaseline = GuestMemory::SubscriptionGeneration(*writeSubscription);
         }
+        if (profile) endPiece();
     }
+    if (profile && !indexProved && !noFast) beginPiece(RevalidatePiece::Fast);
     bool fast = indexProved || (!noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted));
+    if (profile) endPiece();
     // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
     // to the surfaces is resolved by the own objects' refresh (what the walk's lookups would do to
     // them) and the fast proof run again, which is then authoritative (it accepts what stays
@@ -4049,6 +4113,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     // takes the full walk as before.
     bool ownRefreshed = false;
     if (!fast && !overlapping.empty()) {
+        if (profile) beginPiece(RevalidatePiece::T1);
         auto fallback = OwnRefreshFallback::Count;
         if (!OwnImageRefreshEnabled()) fallback = OwnRefreshFallback::Disabled;
         else {
@@ -4061,6 +4126,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             else fallback = OwnRefreshFallback::Rerun;
         }
         if (fallback != OwnRefreshFallback::Count) countOwnRefreshFallback(fallback);
+        if (profile) endPiece();
     }
     if (fast && !indexProved && TemplateAuditDue(lastFullWalk)) {
         fast = false;
@@ -4070,9 +4136,11 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     if (report != nullptr) report->path = !fast ? ProofPath::Full : ownRefreshed ? ProofPath::OwnRefreshed : ProofPath::Fast;
     if (!fast) {
         countFullWalk(reason);
+        if (profile) beginPiece(RevalidatePiece::Walk);
         const auto walkStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const bool walked = fullWalk();
         countFullWalkTime(reason, walkStart);
+        if (profile) endPiece();
         if (!walked) {
             const auto failure = [&] {
                 switch (reason) {
@@ -4128,7 +4196,9 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         return true;
     };
     if (EpochRevalidate()) {
+        if (profile && (!directRegions.empty() || !guestMemory.Writes().empty()) && pendingSerialSeen != 0 && pendingSerialSeen == StorageTexture::PendingSerial()) RevalidateSplits().pendingSkipped.fetch_add(1, std::memory_order_relaxed);
         if ((!directRegions.empty() || !guestMemory.Writes().empty()) && !(pendingSerialSeen != 0 && pendingSerialSeen == StorageTexture::PendingSerial())) {
+            if (profile) beginPiece(RevalidatePiece::Pending);
             thread_local std::vector<StorageTexture::PendingQuery>* regionsSlot = nullptr;
             auto& regions = ShaderRecompiler::ThreadOwned(regionsSlot);
             regions.clear();
@@ -4140,30 +4210,43 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             for (const auto& region : regions) {
                 if (region.overlaps || AnyShadowedOverlaps(region.begin, static_cast<std::size_t>(region.end - region.begin))) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
             }
+            if (profile) endPiece();
         }
+        if (profile) beginPiece(RevalidatePiece::Imports);
         if (HostImportsUnchanged(context, importsProof)) {
             if (profile) Revalidations().importSkips.fetch_add(1, std::memory_order_relaxed);
         } else {
             if (!serialLoop()) return finish(fast, false, ProofFailure::Imports);
             importsProof = HostImportsIdentity(context);
         }
+        if (profile) endPiece();
     } else {
+        if (profile) beginPiece(RevalidatePiece::Pending);
         for (const auto& region : directRegions) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
         for (const auto& [begin, end] : guestMemory.Writes()) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
+        if (profile) {
+            endPiece();
+            beginPiece(RevalidatePiece::Imports);
+        }
         if (!serialLoop()) return finish(fast, false, ProofFailure::Imports);
+        if (profile) endPiece();
     }
     // (3) Buffers staged in device memory (GuestBufferMemory::AllowDeviceStaging) are copied in
     // from their imports anew for this use, after the flushes above and before the work is
     // recorded; a failure to record leaves the object unusable for this dispatch, not the batch.
     if (auto* recorder = Recorder::Active(); recorder != nullptr) {
+        if (profile) beginPiece(RevalidatePiece::Staging);
         try {
-            guestMemory.RecordStagingCopies(*recorder);
+            const auto copies = guestMemory.RecordStagingCopies(*recorder);
+            if (profile) RevalidateSplits().stagingCopies.fetch_add(copies, std::memory_order_relaxed);
         } catch (const std::exception& error) {
             std::fprintf(stderr, "[resources] staging copies of a reused build failed: %s\n", error.what());
             return finish(fast, false);
         }
+        if (profile) endPiece();
     }
-    pendingSerialSeen = EpochRevalidate() && StorageTexture::PendingSerial() == serialBefore ? serialBefore : 0;
+    if (profile) beginPiece(RevalidatePiece::Rest);
+    pendingSerialSeen =EpochRevalidate() && StorageTexture::PendingSerial() == serialBefore ? serialBefore : 0;
     if (indexBaseline != 0) {
         noteIndexProof(indexBaseline, serialBefore);
         for (auto& [address, copy] : comparedTableSpans) {
