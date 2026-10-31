@@ -1,0 +1,4 @@
+BASE=76fd1c09e9be0465d50a7431a79d371a5a10abb2
+REPEAT=10
+EXTRA_TESTS='agc_driver_draw_cache_cold_scene|agc_driver_draw_cache_cold_scene_off|agc_driver_draw_cache_low_hit_bypass|agc_driver_draw_cache_low_hit_bypass_off|^agc_driver_draw_cache_'
+NO_BEFORE=1
