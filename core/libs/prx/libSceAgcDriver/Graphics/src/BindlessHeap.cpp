@@ -5,7 +5,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
-#include "prx/libc/include/HostThreadLocal.hpp"
 #include "Recompiler.hpp"
 #include "RuntimeAbi.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
@@ -243,22 +242,19 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
     slotCap = configuredSlotCap();
 }
 
-BindlessHeap::~BindlessHeap() = default;
-
 namespace {
 
-struct SweptStorageTag {};
+constexpr std::uint32_t ImageSlotMargin = 1024u;
+constexpr std::uint32_t SamplerSlotMargin = Abi::GpuSamplerHeapSlots / 4u;
+std::atomic<std::uint32_t> refusedHeaps{0};
 
-std::vector<std::shared_ptr<void>>& sweptStorage() {
-    return HostThreadLocal<std::vector<std::shared_ptr<void>>, SweptStorageTag>();
 }
 
-struct SweptStorageRelease {
-    ~SweptStorageRelease() {
-        auto released = std::move(sweptStorage());
-        sweptStorage().clear();
-    }
-};
+BindlessHeap::~BindlessHeap() {
+    if (refused) refusedHeaps.fetch_sub(1, std::memory_order_relaxed);
+}
+
+namespace {
 
 std::mutex& heapsMutex() {
     static auto& mutex = *new std::mutex();
@@ -318,91 +314,74 @@ std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, const
     const bool sampledKind = kind >= Abi::FirstImageBinding && kind < Abi::FirstStorageImageBinding;
     if (!sampledKind || texture == nullptr || view == VK_NULL_HANDLE)
         throw std::runtime_error("AGC bindless heap: invalid texture slot request");
-    std::vector<std::shared_ptr<Texture>> dropped;
-    SweptStorageRelease swept;
     std::lock_guard lock(mutex);
     const TextureKey key{kind, texture.get(), view, layout};
     if (const auto found = textureSlots.find(key); found != textureSlots.end()) return found->second;
-    if (++slotRequests % 1024u == 0u) NoteSweepDue();
-    const auto slot = takeOrSweepLocked(dropped);
+    const auto slot = takeSlotLocked();
     if (!slot) return std::nullopt;
     writeImageSlot(kind, *slot, view, layout);
-    auto& owner = claimSlotLocked(key, *slot);
-    owner.texture = texture;
-    texture->AddHeapHold();
-    noteTakenLocked(dropped);
-    if (const auto& source = texture->SharedStorageSource(); source != nullptr && source->LeftCache()) NoteStorageEvicted();
+    claimSlotLocked(key, *slot).texture = texture.get();
+    texture->MarkHeapSlotted();
+    noteTakenLocked();
     return slot;
-}
-
-std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, std::shared_ptr<void> owner, VkImageView view) {
-    return takeStorageSlot(kind, std::move(owner), view, nullptr);
 }
 
 std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, const std::shared_ptr<StorageTexture>& image, VkImageView view) {
-    return takeStorageSlot(kind, image, view, image.get());
+    return StorageSlot(kind, static_cast<const void*>(image.get()), view);
 }
 
-std::optional<std::uint32_t> BindlessHeap::takeStorageSlot(std::uint32_t kind, std::shared_ptr<void> owner, VkImageView view, const StorageTexture* image) {
+std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, const void* owner, VkImageView view) {
     if (!Abi::GpuHeapStorageKind(kind) || owner == nullptr || view == VK_NULL_HANDLE)
         throw std::runtime_error("AGC bindless heap: invalid storage slot request");
-    std::vector<std::shared_ptr<Texture>> dropped;
-    SweptStorageRelease swept;
-    std::lock_guard lock(mutex);
-    const TextureKey key{kind, owner.get(), view, VK_IMAGE_LAYOUT_GENERAL};
-    if (const auto found = textureSlots.find(key); found != textureSlots.end()) return found->second;
-    if (++slotRequests % 1024u == 0u) NoteSweepDue();
-    const auto slot = takeOrSweepLocked(dropped);
-    if (!slot) return std::nullopt;
-    noteTakenLocked(dropped);
-    writeImageSlot(kind, *slot, view, VK_IMAGE_LAYOUT_GENERAL);
-    auto& claimed = claimSlotLocked(key, *slot);
-    claimed.storage = std::move(owner);
-    claimed.image = image;
-    storageSlots[key.texture].push_back(*slot);
-    if (image != nullptr && image->LeftCache()) NoteStorageEvicted();
-    return slot;
+    return ownedSlot(kind, owner, view);
 }
 
 std::optional<std::uint32_t> BindlessHeap::ViewSlot(std::uint32_t kind, const void* owner, VkImageView view) {
     const bool imageKind = kind >= Abi::FirstImageBinding && kind < SamplerKind;
     if (!imageKind || owner == nullptr || view == VK_NULL_HANDLE) throw std::runtime_error("AGC bindless heap: invalid view slot request");
-    std::vector<std::shared_ptr<Texture>> dropped;
-    SweptStorageRelease swept;
+    return ownedSlot(kind, owner, view);
+}
+
+std::optional<std::uint32_t> BindlessHeap::ownedSlot(std::uint32_t kind, const void* owner, VkImageView view) {
     std::lock_guard lock(mutex);
     const TextureKey key{kind, owner, view, VK_IMAGE_LAYOUT_GENERAL};
     if (const auto found = textureSlots.find(key); found != textureSlots.end()) return found->second;
-    const auto slot = takeOrSweepLocked(dropped);
+    const auto slot = takeSlotLocked();
     if (!slot) return std::nullopt;
-    noteTakenLocked(dropped);
     writeImageSlot(kind, *slot, view, VK_IMAGE_LAYOUT_GENERAL);
     claimSlotLocked(key, *slot);
-    viewSlots[owner].push_back(*slot);
+    noteTakenLocked();
     return slot;
 }
 
-void BindlessHeap::ReleaseViewSlots(const void* owner) {
+void BindlessHeap::ReleaseImageSlots(const void* owner) {
     std::lock_guard lock(mutex);
-    const auto found = viewSlots.find(owner);
-    if (found == viewSlots.end()) return;
-    for (const auto slot : found->second) freeSlotLocked(slot);
+    const auto found = ownerSlots.find(owner);
+    if (found == ownerSlots.end()) return;
+    const auto slots = std::move(found->second);
+    ownerSlots.erase(found);
+    for (const auto slot : slots) freeSlotLocked(slot);
     slotSerial.fetch_add(1, std::memory_order_release);
-    viewSlots.erase(found);
-    if (NearlyFull()) NoteSweepDue();
+    noteReleasedLocked();
 }
 
-std::optional<std::uint32_t> BindlessHeap::takeOrSweepLocked(std::vector<std::shared_ptr<Texture>>& dropped) {
-    auto slot = takeSlotLocked();
-    if (!slot) {
-        sweepLocked(dropped);
-        slot = takeSlotLocked();
-    }
-    if (!slot) ++counts.full;
-    return slot;
+void BindlessHeap::ReleaseSamplerSlot(const Sampler* sampler) {
+    std::lock_guard lock(mutex);
+    const auto found = samplerSlots.find(sampler);
+    if (found == samplerSlots.end()) return;
+    const auto slot = found->second;
+    samplerSlots.erase(found);
+    heldSamplers[slot] = nullptr;
+    ++samplerGenerations[slot];
+    slotSerial.fetch_add(1, std::memory_order_release);
+    freeSamplerSlots.push_back(slot);
+    ++counts.slotsFreed;
+    noteReleasedLocked();
 }
 
 BindlessHeap::SlotOwner& BindlessHeap::claimSlotLocked(const TextureKey& key, std::uint32_t slot) {
     textureSlots.emplace(key, slot);
+    ownerSlots[key.texture].push_back(slot);
     if (owners.size() <= slot) owners.resize(slot + 1u);
     owners[slot].key = key;
     ++counts.textures;
@@ -411,13 +390,8 @@ BindlessHeap::SlotOwner& BindlessHeap::claimSlotLocked(const TextureKey& key, st
 
 void BindlessHeap::freeSlotLocked(std::uint32_t slot) {
     auto& owner = owners[slot];
-    if (const auto found = storageSlots.find(owner.key.texture); found != storageSlots.end()) {
-        auto& slots = found->second;
-        if (const auto at = std::find(slots.begin(), slots.end(), slot); at != slots.end()) slots.erase(at);
-        if (slots.empty()) storageSlots.erase(found);
-    }
     textureSlots.erase(owner.key);
-    owner.image = nullptr;
+    owner.texture = nullptr;
     owner.key = {};
     ++owner.generation;
     freeSlots.push_back(slot);
@@ -435,171 +409,19 @@ std::optional<std::uint32_t> BindlessHeap::takeSlotLocked() {
         ++counts.slotsReused;
         return slot;
     }
-    if (nextTextureSlot >= slotCap) return std::nullopt;
+    if (nextTextureSlot >= slotCap) {
+        ++counts.full;
+        return std::nullopt;
+    }
     return nextTextureSlot++;
 }
 
-void BindlessHeap::sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped) {
-    ++counts.sweeps;
-    const auto firstDropped = dropped.size();
-    for (std::uint32_t slot = SamplerKind; slot < owners.size(); ++slot) {
-        auto& owner = owners[slot];
-        if (owner.storage != nullptr) {
-            if (!heldOnlyHereLocked(owner.key.texture, owner.storage.use_count())) continue;
-            dropStorageLocked(owner.key.texture, slot);
-            continue;
-        } else {
-            const bool heldElsewhere =
-                owner.texture == nullptr || owner.texture.use_count() > static_cast<long>(owner.texture->HeapHolds());
-            if (heldElsewhere) continue;
-            dropped.push_back(std::move(owner.texture));
-        }
-        freeSlotLocked(slot);
-        slotSerial.fetch_add(1, std::memory_order_release);
-    }
-    for (auto index = firstDropped; index < dropped.size(); ++index) dropped[index]->DropHeapHold();
-}
-
-bool BindlessHeap::heldOnlyHereLocked(const void* owner, long uses) const {
-    const auto found = storageSlots.find(owner);
-    const auto slots = found != storageSlots.end() ? static_cast<long>(found->second.size()) : 1l;
-    return uses <= slots;
-}
-
-bool BindlessHeap::releaseUncachedLocked(std::vector<std::shared_ptr<Texture>>& dropped, bool storagePhase) {
-    bool heldElsewhere = false;
-    const auto firstDropped = dropped.size();
-    std::vector<std::pair<const void*, std::uint32_t>> images;
-    for (std::uint32_t slot = SamplerKind; slot < owners.size(); ++slot) {
-        auto& owner = owners[slot];
-        if (owner.storage != nullptr) {
-            if (!storagePhase) continue;
-            if (owner.image == nullptr || !owner.image->LeftCache()) continue;
-            const auto found = storageSlots.find(owner.key.texture);
-            if (found == storageSlots.end() || found->second.front() != slot) continue;
-            if (!heldOnlyHereLocked(owner.key.texture, owner.storage.use_count())) {
-                heldElsewhere = true;
-                continue;
-            }
-            images.emplace_back(owner.key.texture, slot);
-            continue;
-        }
-        if (storagePhase || owner.texture == nullptr) continue;
-        const auto& source = owner.texture->SharedStorageSource();
-        if (source == nullptr || !source->LeftCache()) continue;
-        if (owner.texture.use_count() > static_cast<long>(owner.texture->HeapHolds())) {
-            heldElsewhere = true;
-            continue;
-        }
-        heldElsewhere = true;
-        dropped.push_back(std::move(owner.texture));
-        freeSlotLocked(slot);
-        slotSerial.fetch_add(1, std::memory_order_release);
-    }
-    for (auto index = firstDropped; index < dropped.size(); ++index) dropped[index]->DropHeapHold();
-    for (const auto& [image, slot] : images) dropStorageLocked(image, slot);
-    return heldElsewhere;
-}
-
-void BindlessHeap::dropStorageLocked(const void* image, std::uint32_t slot) {
-    std::vector<std::uint32_t> slots{slot};
-    if (const auto found = storageSlots.find(image); found != storageSlots.end()) slots = found->second;
-    for (const auto held : slots) {
-        sweptStorage().push_back(std::move(owners[held].storage));
-        freeSlotLocked(held);
-    }
-    slotSerial.fetch_add(1, std::memory_order_release);
-}
-
-void BindlessHeap::sweepSamplersLocked(std::vector<std::shared_ptr<Sampler>>& dropped) {
-    for (std::uint32_t slot = 0; slot < heldSamplers.size(); ++slot) {
-        auto& held = heldSamplers[slot];
-        if (held == nullptr || held.use_count() != 1) continue;
-        samplerSlots.erase(held.get());
-        dropped.push_back(std::move(held));
-        ++samplerGenerations[slot];
-        slotSerial.fetch_add(1, std::memory_order_release);
-        freeSamplerSlots.push_back(slot);
-        ++counts.slotsFreed;
-    }
-}
-
-namespace {
-
-constexpr std::uint32_t ImageSlotMargin = 1024u;
-constexpr std::uint32_t SamplerSlotMargin = Abi::GpuSamplerHeapSlots / 4u;
-std::atomic<bool> nearlyFull{false};
-
-void noteNearlyFull(const char* what, std::uint32_t margin) {
-    if (!nearlyFull.exchange(true, std::memory_order_relaxed))
-        std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; draws and dispatches take the per-draw path until a sweep frees twice that many\n", margin, what);
-}
-
-}
-
 bool BindlessHeap::NearlyFull() {
-    return nearlyFull.load(std::memory_order_relaxed);
+    return refusedHeaps.load(std::memory_order_relaxed) != 0u;
 }
 
 std::uint32_t BindlessHeap::ImageSlotCapacity() {
     return configuredSlotCap() - SamplerKind;
-}
-
-namespace {
-
-std::atomic<bool> sweepDue{false};
-
-std::atomic<bool> uncachedPending{false};
-std::atomic<std::uint32_t> refusedSweepChecks{0};
-constexpr std::uint32_t RefusedSweepInterval = 64u;
-
-}
-
-void BindlessHeap::NoteSweepDue() {
-    sweepDue.store(true, std::memory_order_relaxed);
-}
-
-void BindlessHeap::NoteStorageEvicted() {
-    uncachedPending.store(true, std::memory_order_relaxed);
-}
-
-void BindlessHeap::SweepIfDue() {
-    const bool uncached = uncachedPending.load(std::memory_order_relaxed) && uncachedPending.exchange(false, std::memory_order_relaxed);
-    const bool due = sweepDue.load(std::memory_order_relaxed) && sweepDue.exchange(false, std::memory_order_relaxed);
-    const bool retry = !due && nearlyFull.load(std::memory_order_relaxed) &&
-                       refusedSweepChecks.fetch_add(1, std::memory_order_relaxed) % RefusedSweepInterval == RefusedSweepInterval - 1u;
-    if (!due && !retry && !uncached) return;
-    bool again = false;
-    bool room = true;
-    {
-        std::vector<std::shared_ptr<Texture>> dropped;
-        SweptStorageRelease swept;
-        std::vector<std::shared_ptr<Sampler>> droppedSamplers;
-        std::lock_guard heapsLock(heapsMutex());
-        for (auto& [device, heap] : heaps()) {
-            if (heap == nullptr) continue;
-            std::lock_guard lock(heap->mutex);
-            if (due || retry) {
-                heap->sweepLocked(dropped);
-                heap->sweepSamplersLocked(droppedSamplers);
-            }
-            if (uncached && heap->releaseUncachedLocked(dropped, false)) again = true;
-        }
-    }
-    {
-        std::vector<std::shared_ptr<Texture>> none;
-        SweptStorageRelease swept;
-        std::lock_guard heapsLock(heapsMutex());
-        for (auto& [device, heap] : heaps()) {
-            if (heap == nullptr) continue;
-            std::lock_guard lock(heap->mutex);
-            if (uncached && heap->releaseUncachedLocked(none, true)) again = true;
-            room = room && heap->roomLocked();
-        }
-    }
-    if (again) NoteStorageEvicted();
-    if (room && nearlyFull.exchange(false, std::memory_order_relaxed))
-        std::fprintf(stderr, "[gpu-heap] a sweep left twice the margin of slots free; draws take the heap again\n");
 }
 
 std::uint32_t BindlessHeap::imageMargin() const {
@@ -615,20 +437,27 @@ bool BindlessHeap::roomLocked() const {
     return Abi::GpuSamplerHeapSlots - heldSamplers.size() + freeSamplerSlots.size() >= 2u * SamplerSlotMargin;
 }
 
-void BindlessHeap::noteTakenLocked(std::vector<std::shared_ptr<Texture>>& dropped) {
-    if (nearlyFull.load(std::memory_order_relaxed)) return;
-    const auto margin = imageMargin();
-    if (unusedLocked() >= margin) return;
-    sweepLocked(dropped);
-    if (unusedLocked() < margin) noteNearlyFull("image", margin);
+void BindlessHeap::noteRefusedLocked(const char* what, std::uint32_t margin) {
+    if (refused) return;
+    refused = true;
+    refusedHeaps.fetch_add(1, std::memory_order_relaxed);
+    std::fprintf(stderr, "[gpu-heap] fewer than %u %s slots are free; draws and dispatches take the per-draw path until released slots leave twice that many free\n", margin, what);
 }
 
-void BindlessHeap::noteSamplerTakenLocked(std::vector<std::shared_ptr<Sampler>>& dropped) {
-    if (nearlyFull.load(std::memory_order_relaxed)) return;
-    const auto unused = [&] { return Abi::GpuSamplerHeapSlots - heldSamplers.size() + freeSamplerSlots.size(); };
-    if (unused() >= SamplerSlotMargin) return;
-    sweepSamplersLocked(dropped);
-    if (unused() < SamplerSlotMargin) noteNearlyFull("sampler", SamplerSlotMargin);
+void BindlessHeap::noteTakenLocked() {
+    const auto margin = imageMargin();
+    if (!refused && unusedLocked() < margin) noteRefusedLocked("image", margin);
+}
+
+void BindlessHeap::noteSamplerTakenLocked() {
+    if (!refused && Abi::GpuSamplerHeapSlots - heldSamplers.size() + freeSamplerSlots.size() < SamplerSlotMargin) noteRefusedLocked("sampler", SamplerSlotMargin);
+}
+
+void BindlessHeap::noteReleasedLocked() {
+    if (!refused || !roomLocked()) return;
+    refused = false;
+    refusedHeaps.fetch_sub(1, std::memory_order_relaxed);
+    std::fprintf(stderr, "[gpu-heap] released slots left twice the margin free; draws take the heap again\n");
 }
 
 std::uint32_t BindlessHeap::SamplerGeneration(std::uint32_t slot) const {
@@ -666,7 +495,7 @@ std::uint32_t BindlessHeap::SlotGeneration(std::uint32_t slot) const {
 const Texture* BindlessHeap::SlotTexture(std::uint32_t kind, std::uint32_t slot) const {
     std::lock_guard lock(mutex);
     const auto* owner = ownerLocked(slot);
-    return owner != nullptr && owner->key.kind == kind ? owner->texture.get() : nullptr;
+    return owner != nullptr && owner->key.kind == kind ? owner->texture : nullptr;
 }
 
 bool BindlessHeap::SlotHoldsStorage(std::uint32_t kind, std::uint32_t slot, const void* owner, VkImageView view) const {
@@ -686,10 +515,8 @@ std::uint32_t BindlessHeap::AbsentSlot(std::uint32_t kind, VkImageView view) {
 
 std::optional<std::uint32_t> BindlessHeap::SamplerSlot(const std::shared_ptr<Sampler>& sampler) {
     if (sampler == nullptr) throw std::runtime_error("AGC bindless heap: invalid sampler slot request");
-    std::vector<std::shared_ptr<Sampler>> dropped;
     std::lock_guard lock(mutex);
     if (const auto found = samplerSlots.find(sampler.get()); found != samplerSlots.end()) return found->second;
-    if (freeSamplerSlots.empty()) sweepSamplersLocked(dropped);
     std::uint32_t slot = 0;
     if (!freeSamplerSlots.empty()) {
         slot = freeSamplerSlots.back();
@@ -705,9 +532,10 @@ std::optional<std::uint32_t> BindlessHeap::SamplerSlot(const std::shared_ptr<Sam
     }
     writeSamplerSlot(slot, sampler->Handle());
     samplerSlots.emplace(sampler.get(), slot);
-    heldSamplers[slot] = sampler;
+    heldSamplers[slot] = sampler.get();
+    sampler->MarkHeapSlotted();
     ++counts.samplers;
-    noteSamplerTakenLocked(dropped);
+    noteSamplerTakenLocked();
     return slot;
 }
 

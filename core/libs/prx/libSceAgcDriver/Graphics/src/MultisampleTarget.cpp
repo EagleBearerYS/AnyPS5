@@ -757,8 +757,8 @@ private:
         if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
         if (twinView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, twinView, nullptr);
         if (auto* heap = BindlessHeap::Existing(context)) {
-            if (storageView) heap->ReleaseViewSlots(reinterpret_cast<const void*>(storageView));
-            if (uintStorageView) heap->ReleaseViewSlots(reinterpret_cast<const void*>(uintStorageView));
+            if (storageView) heap->ReleaseImageSlots(reinterpret_cast<const void*>(storageView));
+            if (uintStorageView) heap->ReleaseImageSlots(reinterpret_cast<const void*>(uintStorageView));
         }
         if (storageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, storageView, nullptr);
         if (uintStorageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uintStorageView, nullptr);
