@@ -425,6 +425,11 @@ VkDescriptorBufferInfo BdaResources::Table() const {
     return {table->Handle(), 0, tableBytes};
 }
 
+std::span<const std::byte> BdaResources::TableBytes() const {
+    if (table == nullptr) return {};
+    return table->Bytes().first(tableBytes);
+}
+
 VkDescriptorBufferInfo BdaResources::Fault() const {
     return {faultChunk->buffer->Handle(), faultOffset, faultChunk->slotBytes};
 }

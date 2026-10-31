@@ -164,6 +164,7 @@ enum class AddressDrawReuse : std::uint8_t { Reused, Built, NotReadOnly, NotSpac
 using AddressDrawReuseCounts = std::array<std::uint64_t, static_cast<std::size_t>(AddressDrawReuse::Count)>;
 AddressDrawReuseCounts AddressDrawReuseCounters();
 const char* AddressDrawReuseName(AddressDrawReuse outcome);
+std::uint64_t AddressDrawReuseVerifications();
 
 }
 

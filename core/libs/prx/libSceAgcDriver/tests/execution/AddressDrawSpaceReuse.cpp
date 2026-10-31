@@ -286,7 +286,7 @@ private:
 
 std::uint64_t Builds() {
     const auto counters = AgcDriver::Graphics::BdaResources::TableCacheCounters();
-    return counters.hits + counters.misses;
+    return counters.hits + counters.misses - AgcDriver::Graphics::AddressDrawReuseVerifications();
 }
 
 float Level(std::uint8_t value) {
@@ -811,7 +811,8 @@ int main(int argc, char** argv) {
     try {
         const std::string mode = argc > 1 ? argv[1] : "";
         const std::string only = mode == "--case" && argc > 2 ? argv[2] : "";
-        Require(mode.empty() || mode == "--off" || mode == "--transitions" || !only.empty(), "usage: [--off | --transitions | --case <name>]");
+        Require(mode.empty() || mode == "--off" || mode == "--transitions" || mode == "--verify" || !only.empty(), "usage: [--off | --transitions | --verify | --case <name>]");
+        Require(mode != "--verify" || std::getenv("APS5_VERIFY_ADDRESS_DRAW_REUSE") != nullptr, "address draw space reuse: --verify needs APS5_VERIFY_ADDRESS_DRAW_REUSE=1");
         LimitPinWait();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -821,6 +822,8 @@ int main(int argc, char** argv) {
                 std::puts("skipped, host imports are unavailable: the cached address space needs one");
                 return VulkanTestSkipped;
             }
+            const Outcomes outcomes;
+            const auto verifiedBefore = AgcDriver::Graphics::AddressDrawReuseVerifications();
             if (mode == "--off") {
                 Disabled(scene);
             } else {
@@ -832,6 +835,11 @@ int main(int argc, char** argv) {
                     ran = true;
                 }
                 Require(ran, "address draw space reuse: no case is named " + only);
+            }
+            if (mode == "--verify") {
+                const auto verified = AgcDriver::Graphics::AddressDrawReuseVerifications() - verifiedBefore;
+                const auto reused = outcomes[AgcDriver::Graphics::AddressDrawReuse::Reused];
+                Require(reused != 0 && verified == reused, "address draw space reuse: APS5_VERIFY_ADDRESS_DRAW_REUSE verified " + std::to_string(verified) + " of " + std::to_string(reused) + " served hits");
             }
             scene.Wait();
         }

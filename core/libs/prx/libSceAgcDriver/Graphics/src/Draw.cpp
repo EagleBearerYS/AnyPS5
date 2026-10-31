@@ -811,6 +811,11 @@ void countAddressDrawReuse(AddressDrawReuse outcome) {
     addressDrawReuses()[static_cast<std::size_t>(outcome)].fetch_add(1, std::memory_order_relaxed);
 }
 
+std::atomic<std::uint64_t>& addressDrawReuseVerifications() {
+    static std::atomic<std::uint64_t> verifications{0};
+    return verifications;
+}
+
 void completeSnapshotWrites(std::span<const GuestMemorySnapshot> snapshots) {
     auto* recorder = Recorder::Active();
     if (recorder == nullptr || Recorder::InCompletion()) return;
@@ -1894,6 +1899,45 @@ AddressStages addressStages(std::span<const CompiledShader> shaders) {
     return stages;
 }
 
+bool verifyAddressDrawReuse() {
+    static const bool verify = std::getenv("APS5_VERIFY_ADDRESS_DRAW_REUSE") != nullptr;
+    return verify;
+}
+
+bool snapshotsInTable(std::span<const std::byte> table, std::span<const GuestMemorySnapshot> snapshots) {
+    ShaderRecompiler::BdaAbi::Header header{};
+    if (table.size() < sizeof(header)) return snapshots.empty();
+    std::memcpy(&header, table.data(), sizeof(header));
+    if (header.entryBytes != sizeof(ShaderRecompiler::BdaAbi::Range) || (table.size() - sizeof(header)) / sizeof(ShaderRecompiler::BdaAbi::Range) < header.count) return false;
+    std::vector<ShaderRecompiler::BdaAbi::Range> ranges(header.count);
+    if (!ranges.empty()) std::memcpy(ranges.data(), table.data() + sizeof(header), ranges.size() * sizeof(ranges.front()));
+    return std::ranges::all_of(snapshots, [&](const GuestMemorySnapshot& snapshot) {
+        auto at = snapshot.address;
+        const auto end = snapshot.address + snapshot.bytes.size();
+        for (const auto& range : ranges) {
+            if (at >= end || range.begin > at) break;
+            if (range.end > at && (range.permissions & ShaderRecompiler::BdaAbi::Read) != 0u) at = range.end;
+        }
+        return at >= end;
+    });
+}
+
+bool snapshotsEqualMemory(std::span<const GuestMemorySnapshot> snapshots) {
+    return std::ranges::all_of(snapshots, [](const GuestMemorySnapshot& snapshot) { return snapshot.bytes.empty() || std::memcmp(reinterpret_cast<const void*>(snapshot.address), snapshot.bytes.data(), snapshot.bytes.size()) == 0; });
+}
+
+void verifyServedSpace(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, const ShaderResources& served) {
+    const ShaderResources fresh(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, static_cast<std::size_t>(indexBytes), snapshots);
+    const auto servedTable = served.AddressTableBytes();
+    const auto freshTable = fresh.AddressTableBytes();
+    const char* what = !fresh.SpaceReuse() ? "space reuse" : !std::ranges::equal(servedTable, freshTable) ? "BDA table" : !snapshotsInTable(servedTable, snapshots) ? "snapshot ranges" : !snapshotsEqualMemory(snapshots) ? "snapshot bytes" : served.SampledTextures() != fresh.SampledTextures() ? "sampled textures" : served.StorageImages() != fresh.StorageImages() ? "storage images" : served.LayoutKey() != fresh.LayoutKey() || served.FragmentLayoutKey() != fresh.FragmentLayoutKey() ? "set layouts" : nullptr;
+    addressDrawReuseVerifications().fetch_add(1, std::memory_order_relaxed);
+    if (what == nullptr) return;
+    char message[320];
+    std::snprintf(message, sizeof(message), "APS5_VERIFY_ADDRESS_DRAW_REUSE: a served address-based draw hit disagrees with a fresh build or guest memory in its %s (BDA table %zu bytes served, %zu fresh; %zu / %zu sampled textures; %zu snapshots)", what, servedTable.size(), freshTable.size(), served.SampledTextures().size(), fresh.SampledTextures().size(), snapshots.size());
+    throw std::runtime_error(message);
+}
+
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
@@ -1947,6 +1991,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
+                if (counted && verifyAddressDrawReuse()) verifyServedSpace(context, state, draw, shaders, snapshots, indexBytes, *cached);
                 static_cast<void>(heldSpace.release());
                 resolved.resources = std::move(cached);
                 resolved.moved = std::move(*moved);
@@ -4038,6 +4083,10 @@ AddressDrawReuseCounts AddressDrawReuseCounters() {
 
 const char* AddressDrawReuseName(AddressDrawReuse outcome) {
     return static_cast<std::size_t>(outcome) < AddressDrawReuseNames.size() ? AddressDrawReuseNames[static_cast<std::size_t>(outcome)] : "?";
+}
+
+std::uint64_t AddressDrawReuseVerifications() {
+    return addressDrawReuseVerifications().load(std::memory_order_relaxed);
 }
 
 bool DrawPipelineEnabled() {

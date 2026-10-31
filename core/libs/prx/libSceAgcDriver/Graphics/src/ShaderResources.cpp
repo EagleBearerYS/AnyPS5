@@ -6083,6 +6083,10 @@ void ShaderResources::WriteBackBuffers() {
     if (unaligned) std::rethrow_exception(unaligned);
 }
 
+std::span<const std::byte> ShaderResources::AddressTableBytes() const {
+    return bda != nullptr ? bda->TableBytes() : std::span<const std::byte>{};
+}
+
 bool ShaderResources::ReadsOverlap(std::uint64_t address, std::size_t bytes) const {
     const auto reads = guestMemory.InPlaceReads();
     return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return address < range.second && range.first < address + bytes; });

@@ -25,6 +25,7 @@ public:
     BdaResources(const BdaResources&) = delete;
     BdaResources& operator=(const BdaResources&) = delete;
     VkDescriptorBufferInfo Table() const;
+    std::span<const std::byte> TableBytes() const;
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
     void CheckUse(const BdaResources* record) const;
