@@ -259,6 +259,7 @@ public:
     static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
     bool RetakeSpace() { return guestMemory.RetakeSpace(); }
+    bool AddressTableGuardCurrent();
     bool SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
     std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
     bool UsesAddressTable() const { return usesBda; }

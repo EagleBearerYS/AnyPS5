@@ -2837,6 +2837,12 @@ bool ShaderResources::NeverReusable(std::span<const CompiledShader> shaders) {
     });
 }
 
+bool ShaderResources::AddressTableGuardCurrent() {
+    if (bda == nullptr) return true;
+    if (const auto cached = guestMemory.CachedAddressTable(); cached.has_value()) return bda->TableGuardCurrent(context.device, *cached->ranges);
+    return bda->TableGuardCurrent(context.device, guestMemory.AddressRanges());
+}
+
 bool ShaderResources::SpaceReuseDisabled() {
     return !GpuHeapEnabled();
 }
