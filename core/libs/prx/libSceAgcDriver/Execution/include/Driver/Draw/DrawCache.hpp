@@ -171,13 +171,13 @@ public:
     explicit DrawCacheBypass(std::uint32_t percent);
     std::uint32_t Percent() const { return percent; }
     bool Skip();
-    void Note(bool useful);
+    void Note(bool useful, bool hit);
     std::uint64_t TakeBypassed();
 
 private:
-    static constexpr std::uint32_t CountBits = 12, LowShift = 2 * CountBits, LowBits = 3, LeftShift = 32;
-    static constexpr std::uint64_t CountMask = (std::uint64_t{1} << CountBits) - 1u, LowMask = (std::uint64_t{1} << LowBits) - 1u;
-    static_assert(Window <= CountMask + 1u && LowWindowsToBypass + 3u <= LowMask && LowShift + LowBits <= LeftShift);
+    static constexpr std::uint32_t CountBits = 12, LowShift = 2 * CountBits, LowBits = 3, HitShift = LowShift + LowBits, LeftShift = 32;
+    static constexpr std::uint64_t CountMask = (std::uint64_t{1} << CountBits) - 1u, LowMask = (std::uint64_t{1} << LowBits) - 1u, HitBit = std::uint64_t{1} << HitShift;
+    static_assert(Window <= CountMask + 1u && LowWindowsToBypass + 3u <= LowMask && HitShift < LeftShift);
 
     std::uint32_t percent, minimumHits;
     std::atomic<std::uint64_t> state{0};

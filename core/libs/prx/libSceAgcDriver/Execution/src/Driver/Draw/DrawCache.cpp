@@ -51,18 +51,19 @@ std::uint64_t DrawCacheBypass::TakeBypassed() {
     return bypassed.exchange(0, std::memory_order_relaxed);
 }
 
-void DrawCacheBypass::Note(bool useful) {
+void DrawCacheBypass::Note(bool useful, bool hit) {
     if (minimumHits == 0) return;
     auto current = state.load(std::memory_order_relaxed);
     std::uint64_t next = 0;
     do {
         const auto lookups = (current & CountMask) + 1u;
         const auto usefulLookups = ((current >> CountBits) & CountMask) + (useful ? 1u : 0u);
+        const bool hits = hit || (current & HitBit) != 0;
         if (lookups < Window) {
-            next = (current & ~((CountMask << CountBits) | CountMask)) | (usefulLookups << CountBits) | lookups;
+            next = (current & ~((CountMask << CountBits) | CountMask)) | (hits ? HitBit : 0u) | (usefulLookups << CountBits) | lookups;
             continue;
         }
-        const auto low = usefulLookups >= minimumHits ? 0u : std::min<std::uint64_t>(((current >> LowShift) & LowMask) + 1u, LowWindowsToBypass + 3u);
+        const auto low = usefulLookups >= minimumHits && hits ? 0u : std::min<std::uint64_t>(((current >> LowShift) & LowMask) + 1u, LowWindowsToBypass + 3u);
         const auto remaining = low >= LowWindowsToBypass ? std::uint64_t{std::min(BypassDraws, FirstBypassDraws << (low - LowWindowsToBypass))} : current >> LeftShift;
         next = (remaining << LeftShift) | (low << LowShift);
     } while (!state.compare_exchange_weak(current, next, std::memory_order_relaxed));

@@ -657,7 +657,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         TraceDrawAttemptException(traceToken, "lookup", submission.serial, submission.queue, packetOffset, std::current_exception());
         throw;
     }
-    if (stageEntries) drawCacheBypass.Note(drawHit || verifyHit || std::any_of(dataCandidates.begin(), dataCandidates.end(), [](const auto& candidates) { return !candidates.empty(); }) || drawKeySeen(drawKey));
+    if (stageEntries) {
+        const bool reuse = drawHit || verifyHit || std::any_of(dataCandidates.begin(), dataCandidates.end(), [](const auto& candidates) { return !candidates.empty(); });
+        drawCacheBypass.Note(reuse || drawKeySeen(drawKey), reuse);
+    }
     for (std::size_t i = 0; i < matched.size(); ++i) {
         if (matched[i] == nullptr || matched[i]->shaderDataPatches.empty()) continue;
         applyShaderDataPatches(*matched[i]);
