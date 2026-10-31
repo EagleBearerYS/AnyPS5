@@ -726,6 +726,16 @@ void countAddressDrawReuse(AddressDrawReuse outcome) {
     addressDrawReuses()[static_cast<std::size_t>(outcome)].fetch_add(1, std::memory_order_relaxed);
 }
 
+void completeSnapshotWrites(std::span<const GuestMemorySnapshot> snapshots) {
+    auto* recorder = Recorder::Active();
+    if (recorder == nullptr || Recorder::InCompletion()) return;
+    for (const auto& snapshot : snapshots) {
+        if (snapshot.bytes.empty() || !recorder->PendingWriteOverlaps(snapshot.address, snapshot.bytes.size())) continue;
+        Recorder::CountSync(4);
+        recorder->SyncThrough(snapshot.address, snapshot.bytes.size());
+    }
+}
+
 DrawProfile& Profile() {
     static DrawProfile profile;
     return profile;
@@ -1812,6 +1822,7 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                     reuse = AddressDrawReuse::SpaceChanged;
                 } else {
                     heldSpace.reset(cached.get());
+                    completeSnapshotWrites(snapshots);
                     const auto service = cached->SnapshotsServedInPlace(snapshots);
                     spaceHeld = service == SnapshotService::Served;
                     if (!spaceHeld) {
