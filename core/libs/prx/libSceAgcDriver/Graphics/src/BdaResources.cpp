@@ -440,13 +440,29 @@ bool LoopGuardTripped() {
 }
 
 void BdaResources::CheckFault() const {
-    if (faultChunk == nullptr) return;
-    if (!reportOnly) markWrittenPages();
+    checkFault(*this);
+}
+
+void BdaResources::CheckUse(const BdaResources* record) const {
+    const auto& checked = record != nullptr ? *record : *this;
+    if (checked.faultChunk == nullptr) return;
+    const struct Cleared {
+        std::span<std::byte> bytes;
+        ~Cleared() {
+            if (!faultSlotClean(bytes)) clearFaultSlot(bytes);
+        }
+    } cleared{checked.faultBytes()};
+    checkFault(checked);
+}
+
+void BdaResources::checkFault(const BdaResources& record) const {
+    if (record.faultChunk == nullptr) return;
+    if (!reportOnly) markWrittenPages(record);
     ShaderRecompiler::BdaAbi::Fault report{};
-    std::memcpy(&report, faultBytes().data(), sizeof(report));
+    std::memcpy(&report, record.faultBytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
         Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.otherFaults == 0, "BDA fault record has data without publication");
-        if (!reportOnly) checkSrtGuard();
+        if (!reportOnly) checkSrtGuard(record);
         return;
     }
     Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && report.otherFaults <= 1, "incomplete or invalid BDA fault record");
@@ -455,7 +471,7 @@ void BdaResources::CheckFault() const {
         // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
         loopGuardTripped.store(true, std::memory_order_relaxed);
         std::fprintf(stderr, "[gpu] loop guard: the loop exit at pc 0x%x of shader 0x%llx ran past %u evaluations\n", report.instruction, static_cast<unsigned long long>(report.address), report.bytes);
-        std::memset(faultBytes().data(), 0, faultBytes().size());
+        std::memset(record.faultBytes().data(), 0, record.faultBytes().size());
         return;
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::ImageTable) {
@@ -519,10 +535,10 @@ void BdaResources::SetSrtGuards(std::vector<SrtGuardFaults> guards) {
     srtGuards = std::move(guards);
 }
 
-void BdaResources::checkSrtGuard() const {
+void BdaResources::checkSrtGuard(const BdaResources& faults) const {
     namespace Abi = ShaderRecompiler::BdaAbi;
     std::uint32_t guard = 0;
-    std::memcpy(&guard, faultBytes().data() + Abi::SrtGuardWord * sizeof(std::uint32_t), sizeof(guard));
+    std::memcpy(&guard, faults.faultBytes().data() + Abi::SrtGuardWord * sizeof(std::uint32_t), sizeof(guard));
     if (guard == 0) return;
     const auto stage = guard >> Abi::SrtGuardStageShift;
     const auto record = guard & ((1u << Abi::SrtGuardStageShift) - 1u);
@@ -536,9 +552,9 @@ void BdaResources::checkSrtGuard() const {
     throw std::runtime_error(message.str());
 }
 
-void BdaResources::markWrittenPages() const {
+void BdaResources::markWrittenPages(const BdaResources& record) const {
     namespace Abi = ShaderRecompiler::BdaAbi;
-    auto* words = reinterpret_cast<std::uint32_t*>(faultBytes().data());
+    auto* words = reinterpret_cast<std::uint32_t*>(record.faultBytes().data());
     Require(words[Abi::WrittenOverflowWord] == 0, "more than " + std::to_string(Abi::WrittenPageSlots) + " chunks of " + std::to_string(Abi::WrittenChunkPages) + " pages stored to through the BDA table in one use are not implemented");
     const auto count = words[Abi::WrittenCountWord];
     if (count == 0) return;
