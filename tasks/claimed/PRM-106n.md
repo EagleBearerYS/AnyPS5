@@ -23,3 +23,5 @@ The T-or-P question stands: does a copy-backed writable heap mirror end up writa
 ## When you finish
 
 After you mark this task done, claim the next open task on the board right away (priority high first, then the lowest id; skip any whose `for:` line names another worker). If none is open, restart the board watcher as a background command before you end your turn. A worker that ends its turn with no task and no watcher is never woken: on 2026-10-15 one sat READY for 30 minutes beside two open tasks.
+
+claimed-by: cloud-4 2026-10-31T16:14:34Z
