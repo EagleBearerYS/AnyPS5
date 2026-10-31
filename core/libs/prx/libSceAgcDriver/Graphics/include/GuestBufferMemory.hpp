@@ -379,7 +379,7 @@ public:
     bool SpaceOnly() const;
     std::shared_ptr<const void> ReleaseSpace();
     bool RetakeSpace();
-    bool SpaceHeld() const { return space != nullptr; }
+    bool SpaceHeld() const;
     SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const;
     std::size_t CopiedBytes() const {
         std::size_t bytes = 0;

@@ -4933,7 +4933,13 @@ bool GuestBufferMemory::SpaceOnly() const {
     return space != nullptr && lease.empty() && regions.empty() && space->sparseMirrors.empty() && space->copied.empty();
 }
 
+bool GuestBufferMemory::SpaceHeld() const {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::SpaceHeld");
+    return space != nullptr;
+}
+
 std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseSpace");
     if (space == nullptr) return {};
     releasedSpace = space;
     return std::move(space);
@@ -4976,6 +4982,7 @@ void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space)
 }
 
 bool GuestBufferMemory::RetakeSpace() {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::RetakeSpace");
     if (space != nullptr) return true;
     auto kept = releasedSpace.lock();
     if (kept == nullptr) return false;
