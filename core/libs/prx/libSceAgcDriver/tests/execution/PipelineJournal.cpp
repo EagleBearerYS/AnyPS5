@@ -12,6 +12,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include "ShaderDiskCache.hpp"
 #include "../NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
@@ -460,6 +461,10 @@ constexpr std::uint32_t JournalModuleRecord = 1u;
 constexpr std::uint32_t JournalComputeRecord = 3u;
 constexpr std::uint32_t JournalHeaderBytes = 32u;
 
+std::uint64_t JournalRecordBytes(std::uint64_t payloadBytes) {
+    return (sizeof(JournalRecordHeader) + payloadBytes + 7u) / 8u * 8u;
+}
+
 void AppendJournalRecord(std::vector<std::byte>& file, std::uint32_t kind, const std::vector<std::byte>& payload) {
     const JournalRecordHeader header{kind, 0u, payload.size(), ShaderRecompiler::HashBytes(payload)};
     const auto offset = file.size();
@@ -647,6 +652,9 @@ void EvictionTests() {
 
 void EvictionWatermarkTests() {
     using namespace NarrowConstantStoreFixture;
+    constexpr std::uint64_t JournalCap = 1024u * 1024u;
+    constexpr std::uint64_t RewriteTarget = JournalCap - JournalCap / 4u;
+    constexpr std::uint64_t RecordShare = (JournalCap - RewriteTarget) / 4u;
     const auto path = AgcDriver::Graphics::PipelineJournalPath();
     const auto before = Snapshot();
     Block compute(BlockBytes);
@@ -657,7 +665,14 @@ void EvictionWatermarkTests() {
         device->WaitForPipelineJournalReplay();
         for (std::uint32_t salt = 8; salt <= 10; ++salt) {
             auto result = CompileCompute(*device, ComputeCode(salt), words, 32);
-            result.shaderDataUserWords.assign(16u * 1024u, salt);
+            result.shaderDataUserWords.clear();
+            std::vector<std::byte> module;
+            ShaderRecompiler::ShaderDiskCache::EncodeResult(result, module);
+            const auto recordBytes = [&](std::uint64_t userWords) { return JournalRecordBytes(20u + module.size() + userWords * sizeof(std::uint32_t)) + JournalRecordBytes(17u); };
+            Require(recordBytes(0) <= RecordShare, "the fixture's compute module alone takes " + std::to_string(recordBytes(0)) + " journal bytes, more than the " + std::to_string(RecordShare) + " each record may take after a rewrite");
+            auto userWords = (RecordShare - recordBytes(0)) / sizeof(std::uint32_t);
+            while (recordBytes(userWords) > RecordShare) --userWords;
+            result.shaderDataUserWords.assign(static_cast<std::size_t>(userWords), salt);
             AgcDriver::Graphics::RecordComputePipeline(result, true);
         }
         AgcDriver::Graphics::FlushPipelineJournal();
