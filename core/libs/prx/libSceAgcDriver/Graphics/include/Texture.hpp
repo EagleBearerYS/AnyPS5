@@ -121,12 +121,10 @@ public:
     void MarkRefreshedPerUse() { perUseCopy = PerUseCopy::RemadePerUse; }
     bool Released() const { return released.load(std::memory_order_acquire); }
     void MarkReleased() { released.store(true, std::memory_order_release); }
-    std::uint32_t HeapHolds() const { return heapHolds.load(std::memory_order_relaxed); }
-    void AddHeapHold() { heapHolds.fetch_add(1, std::memory_order_relaxed); }
-    void DropHeapHold() { heapHolds.fetch_sub(1, std::memory_order_relaxed); }
+    void MarkHeapSlotted() { heapSlotted.store(true, std::memory_order_release); }
 
 private:
-    std::atomic<std::uint32_t> heapHolds{0};
+    std::atomic<bool> heapSlotted{false};
     void release() noexcept;
     bool refreshBlockCopy();
     bool refreshSrgbExpand();

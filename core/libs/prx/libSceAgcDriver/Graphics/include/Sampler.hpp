@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -32,11 +33,13 @@ public:
         cacheKey = key;
         keyed = true;
     }
+    void MarkHeapSlotted() { heapSlotted.store(true, std::memory_order_release); }
 
 private:
     void release() noexcept;
 
     Context context;
+    std::atomic<bool> heapSlotted{false};
     bool forcesDegamma = false;
     VkSampler sampler = VK_NULL_HANDLE;
     bool requiresFilterMinmax = false;

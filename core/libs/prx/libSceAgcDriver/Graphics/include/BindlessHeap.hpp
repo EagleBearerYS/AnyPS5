@@ -50,10 +50,11 @@ public:
 
     std::optional<std::uint32_t> TextureSlot(std::uint32_t kind, const std::shared_ptr<Texture>& texture, VkImageView view,
                                              VkImageLayout layout);
-    std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, std::shared_ptr<void> owner, VkImageView view);
+    std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, const void* owner, VkImageView view);
     std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, const std::shared_ptr<StorageTexture>& image, VkImageView view);
     std::optional<std::uint32_t> ViewSlot(std::uint32_t kind, const void* owner, VkImageView view);
-    void ReleaseViewSlots(const void* owner);
+    void ReleaseImageSlots(const void* owner);
+    void ReleaseSamplerSlot(const Sampler* sampler);
     std::uint32_t SlotGeneration(std::uint32_t slot) const;
     const Texture* SlotTexture(std::uint32_t kind, std::uint32_t slot) const;
     bool SlotHoldsStorage(std::uint32_t kind, std::uint32_t slot, const void* owner, VkImageView view) const;
@@ -65,9 +66,6 @@ public:
     std::uint32_t AbsentSlot(std::uint32_t kind, VkImageView view);
     static bool NearlyFull();
     static std::uint32_t ImageSlotCapacity();
-    static void NoteSweepDue();
-    static void NoteStorageEvicted();
-    static void SweepIfDue();
 
     struct DataSpan {
         std::uint32_t offset = 0;
@@ -87,7 +85,7 @@ public:
 
     struct Counts {
         std::uint64_t textures = 0, samplers = 0, full = 0, ringWraps = 0, encodes = 0, encodedCopies = 0;
-        std::uint64_t slotsFreed = 0, slotsReused = 0, sweeps = 0, chunkWaits = 0;
+        std::uint64_t slotsFreed = 0, slotsReused = 0, chunkWaits = 0;
         std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0;
     };
     Counts Statistics() const;
@@ -144,38 +142,31 @@ private:
         }
     };
     std::unordered_map<TextureKey, std::uint32_t, TextureKeyHash> textureSlots;
-    std::unordered_map<const void*, std::vector<std::uint32_t>> viewSlots;
-    std::unordered_map<const void*, std::vector<std::uint32_t>> storageSlots;
+    std::unordered_map<const void*, std::vector<std::uint32_t>> ownerSlots;
     std::uint32_t nextTextureSlot = 0;
     struct SlotOwner {
-        std::shared_ptr<Texture> texture;
-        std::shared_ptr<void> storage;
-        const StorageTexture* image = nullptr;
+        const Texture* texture = nullptr;
         TextureKey key{};
         std::uint32_t generation = 0;
     };
     std::vector<SlotOwner> owners;
     std::vector<std::uint32_t> freeSlots;
     std::uint32_t slotCap = 0;
-    std::uint64_t slotRequests = 0;
-    void sweepLocked(std::vector<std::shared_ptr<Texture>>& dropped);
-    bool heldOnlyHereLocked(const void* owner, long uses) const;
-    std::optional<std::uint32_t> takeStorageSlot(std::uint32_t kind, std::shared_ptr<void> owner, VkImageView view, const StorageTexture* image);
-    bool releaseUncachedLocked(std::vector<std::shared_ptr<Texture>>& dropped, bool storagePhase);
-    void dropStorageLocked(const void* image, std::uint32_t slot);
+    std::optional<std::uint32_t> ownedSlot(std::uint32_t kind, const void* owner, VkImageView view);
     std::optional<std::uint32_t> takeSlotLocked();
-    std::optional<std::uint32_t> takeOrSweepLocked(std::vector<std::shared_ptr<Texture>>& dropped);
     SlotOwner& claimSlotLocked(const TextureKey& key, std::uint32_t slot);
     void freeSlotLocked(std::uint32_t slot);
     const SlotOwner* ownerLocked(std::uint32_t slot) const;
     std::unordered_map<const Sampler*, std::uint32_t> samplerSlots;
     std::unordered_set<std::uint32_t> absentSlots;
-    std::vector<std::shared_ptr<Sampler>> heldSamplers;
+    std::vector<const Sampler*> heldSamplers;
     std::vector<std::uint32_t> samplerGenerations;
     std::vector<std::uint32_t> freeSamplerSlots;
-    void sweepSamplersLocked(std::vector<std::shared_ptr<Sampler>>& dropped);
-    void noteTakenLocked(std::vector<std::shared_ptr<Texture>>& dropped);
-    void noteSamplerTakenLocked(std::vector<std::shared_ptr<Sampler>>& dropped);
+    bool refused = false;
+    void noteRefusedLocked(const char* what, std::uint32_t margin);
+    void noteTakenLocked();
+    void noteSamplerTakenLocked();
+    void noteReleasedLocked();
     std::uint32_t imageMargin() const;
     std::size_t unusedLocked() const;
     bool roomLocked() const;

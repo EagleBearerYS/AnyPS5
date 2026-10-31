@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include <algorithm>
 #include <cstdlib>
@@ -55,6 +56,9 @@ namespace AgcDriver::Graphics {
     }
 
     void Sampler::release() noexcept {
+        if (heapSlotted.exchange(false, std::memory_order_acq_rel)) {
+            if (auto* heap = BindlessHeap::Existing(context)) heap->ReleaseSamplerSlot(this);
+        }
         if (sampler) context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, sampler, nullptr);
     }
 
