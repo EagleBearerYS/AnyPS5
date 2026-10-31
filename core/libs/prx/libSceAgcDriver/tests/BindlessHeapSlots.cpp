@@ -300,8 +300,10 @@ int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         _putenv_s("APS5_GPU_HEAP", "1");
+        _putenv_s("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
 #else
         setenv("APS5_GPU_HEAP", "1", 1);
+        setenv("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1", 1);
 #endif
         std::unique_ptr<AgcDriver::VulkanDevice> device;
         try {
@@ -315,11 +317,6 @@ int main(int argc, char** argv) {
             std::printf("skipped, the device has no VK_EXT_descriptor_heap\n");
             return VulkanTestSkipped;
         }
-#ifdef _WIN32
-        _putenv_s("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
-#else
-        setenv("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1", 1);
-#endif
         if (comesBack) {
             {
                 const auto context = device->GraphicsContext();
