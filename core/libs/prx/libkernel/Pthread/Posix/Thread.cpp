@@ -266,8 +266,8 @@ int APS5_VABI pthread_getprio_nid_postfix(Pthread thread) {
 
 int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset) {
     if (!thread) return PosixThread::GUEST_EINVAL;
-    if (cpusetSize >= GUEST_CPUSET_BYTES) return GUEST_ERANGE;
-    if (cpusetSize != 8 && cpusetSize != 16) NotImplemented_nid_no_patch("pthread_getaffinity_np with a set other than 8, 16 or 32 bytes and more");
+    if (cpusetSize < sizeof(KernelCpumask) || cpusetSize >= GUEST_CPUSET_BYTES) return GUEST_ERANGE;
+    if (cpusetSize > 16) NotImplemented_nid_no_patch("pthread_getaffinity_np with a set of 17 to 31 bytes");
     if (!cpuset) return PosixThread::GUEST_EFAULT;
     KernelCpumask mask = 0;
     const int result = scePthreadGetaffinity(thread, &mask);
