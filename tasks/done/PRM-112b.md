@@ -54,3 +54,4 @@ The result goes in `results/cloud-<n>/PRM-112b.md`, in PRM-109's row format, plu
 After you mark this task done, claim the next open task on the board right away (priority high first, then the lowest id; skip any whose `for:` line names another worker). If none is open, restart the board watcher as a background command before you end your turn. A worker that ends its turn with no task and no watcher is never woken: on 2026-10-15 one sat READY for 30 minutes beside two open tasks.
 
 claimed-by: cloud-1 2026-10-31T21:02:52Z
+done: 2026-10-31T21:41:32Z, result: results/cloud-1/PRM-112b.md
