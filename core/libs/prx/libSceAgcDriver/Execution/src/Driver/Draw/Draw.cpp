@@ -659,7 +659,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     }
     if (stageEntries) drawCacheBypass.Note(drawHit || verifyHit || std::any_of(dataCandidates.begin(), dataCandidates.end(), [](const auto& candidates) { return !candidates.empty(); }) || drawKeySeen(drawKey));
     for (std::size_t i = 0; i < matched.size(); ++i) {
-        if (matched[i] == nullptr || matched[i]->shaderDataPatches.empty()) continue;
+        if (matched[i] == nullptr || (matched[i]->shaderDataPatches.empty() && matched[i]->descriptorPatches.empty())) continue;
         applyShaderDataPatches(*matched[i]);
         if (stageData[i].compiled != nullptr) stageData[i].compiled = patchDataWords(*matched[i], stageData[i].words);
     }
