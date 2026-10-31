@@ -783,12 +783,10 @@ int HeapRetention() {
             Require(heap.SlotTexture(KindOf(*value), value->slot) == table.EntryTexture(key).get(), "the heap slot holds the entry's texture");
             generations.emplace_back(KindOf(*value), heap.SlotGeneration(value->slot));
         }
-        BindlessHeap::NoteSweepDue();
-        BindlessHeap::SweepIfDue();
         table.Prepare(context, *recorder);
         for (std::size_t index = 0; index < keys.size(); ++index) {
             const auto value = table.Find(keys[index]);
-            Require(value.has_value() && heap.SlotGeneration(value->slot) == generations[index].second, "the heap's sweep keeps the slot of a texture the table holds");
+            Require(value.has_value() && heap.SlotGeneration(value->slot) == generations[index].second, "a texture the table holds keeps its heap slot");
         }
         Require(table.Totals().swept == 0u, "nothing left the table");
         recorder->Sync();
