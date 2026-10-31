@@ -1,0 +1,4 @@
+BASE=0836dfdf4fecb1e0326100c490476e15d3a74da5
+REPEAT=10
+EXTRA_TESTS='agc_driver_draw_recapture_on_change|agc_driver_draw_recapture_on_change_inline|agc_driver_dispatch_recapture_on_change|agc_driver_dispatch_recapture_on_change_items'
+NO_BEFORE=1
