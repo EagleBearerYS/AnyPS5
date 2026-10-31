@@ -57,6 +57,7 @@ inline VkDeviceSize HostImportOffset(const HostImport& import, std::uint64_t add
 }
 
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
+enum class SnapshotService : std::uint8_t { Served, Outside, Partial, Changed };
 
 struct ImportProbe {
     const char* failure = nullptr;
@@ -377,7 +378,8 @@ public:
     bool SpaceOnly() const;
     std::shared_ptr<const void> ReleaseSpace();
     bool RetakeSpace();
-    bool SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const;
+    bool SpaceHeld() const { return space != nullptr; }
+    SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const;
     std::size_t CopiedBytes() const {
         std::size_t bytes = 0;
         for (const auto& region : regions) if (region.buffer != nullptr) bytes += static_cast<std::size_t>((region.bufferEnd != 0 ? region.bufferEnd : region.end) - region.begin);
