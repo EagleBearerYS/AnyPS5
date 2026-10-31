@@ -1,0 +1,4 @@
+BASE=0836dfdf4fecb1e0326100c490476e15d3a74da5
+REPEAT=10
+EXTRA_TESTS='agc_untracked_forget|agc_untracked_revalidate|agc_untracked_hint_proof|agc_write_tracking|agc_driver_recorder|agc_recorder_command_buffer_release|^agc_untracked_'
+NO_BEFORE=1
