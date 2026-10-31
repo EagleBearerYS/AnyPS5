@@ -6190,7 +6190,7 @@ std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::AddressRanges() 
                 const auto* region = owner(cursor, end);
                 Require(region != nullptr && region->writable && (region->mirror == nullptr || region->mirror->writable), "runtime buffer write has no writable GPU owner");
                 part.permissions |= ShaderRecompiler::BdaAbi::Write;
-                if (addressStores && region->mirror != nullptr && region->mirror->heap && region->mirror->resident == nullptr) part.permissions |= ShaderRecompiler::BdaAbi::Masked;
+                if (addressStores && region->mirror != nullptr && region->mirror->heap && region->mirror->resident == nullptr) part.permissions = (part.permissions | ShaderRecompiler::BdaAbi::Masked) & ~ShaderRecompiler::BdaAbi::Write;
                 if (addressStores && region->mirror != nullptr && region->mirror->heap && region->mirror->resident != nullptr) {
                     const auto& resident = *region->mirror->resident;
                     constexpr auto block = ResidentBuffer::BlockBytes;
