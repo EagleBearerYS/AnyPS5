@@ -6,12 +6,10 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
 #include <mutex>
-#include <thread>
 #include <vector>
 
 namespace {
@@ -107,13 +105,11 @@ bool Contains(std::uint64_t begin, std::uint64_t end) {
     return false;
 }
 
-void SubmitAndWaitForPending(std::vector<std::uint32_t>& words) {
+void SubmitAndWaitIdle(std::vector<std::uint32_t>& words) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     AgcDriver::Submit(&packet, 0);
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-    while (!AgcDriver::Graphics::StorageTexture::AnyPending() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    AgcDriverWaitIdle_nid_postfix();
     Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "idle yield fixture did not observe pending storage results");
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
 }
 
 void StopsBetweenImages() {
@@ -127,7 +123,7 @@ void StopsBetweenImages() {
     std::vector<std::uint32_t> words;
     AppendStore(words, first, StoreRowZeroCode);
     AppendStore(words, second, StoreRowZeroCode);
-    SubmitAndWaitForPending(words);
+    SubmitAndWaitIdle(words);
     const auto pending = [](const Surface& surface) { return Pending(surface.Address(), surface.Address() + surface.bytes); };
     {
         std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
@@ -155,7 +151,7 @@ void StopsWithinAnImage() {
     std::vector<std::uint32_t> words;
     AppendStore(words, surface, StoreRowZeroCode);
     AppendStore(words, surface, StoreFarRowCode);
-    SubmitAndWaitForPending(words);
+    SubmitAndWaitIdle(words);
     const auto begin = surface.Address();
     const auto split = begin + Piece;
     const auto end = begin + surface.bytes;
