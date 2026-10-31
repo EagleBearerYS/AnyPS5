@@ -1,0 +1,5 @@
+BASE=73f4f7e06e4f210a8c6570e335fd654dc0a86134
+REPEAT=30
+EXTRA_TESTS='agc_driver_idle_store_yields'
+NO_BEFORE=1
+VERBOSE=1
