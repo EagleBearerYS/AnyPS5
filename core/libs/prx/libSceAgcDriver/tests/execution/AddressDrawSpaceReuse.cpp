@@ -51,6 +51,8 @@ constexpr std::size_t PixelCodeOffset = 256;
 constexpr std::size_t IndirectCodeOffset = 512;
 constexpr std::size_t PointerSlots = 1024;
 constexpr std::size_t MovedVerticesOffset = 32768;
+constexpr std::size_t RingSlotBytes = 256;
+constexpr std::size_t RingSlots = 8;
 constexpr std::uint32_t PinWaitMs = 4000;
 
 constexpr std::array<std::uint32_t, 6> VertexCode{
@@ -298,6 +300,8 @@ struct Scene {
     Pages code{BlockBytes};
     Pages constants{BlockBytes};
     Pages spare{BlockBytes};
+    Pages ring{BlockBytes};
+    bool cachedVertex = false;
     std::deque<ShaderRecompiler::RecompileResult> vertexResults;
     std::uint32_t vertexPush = 0;
     std::deque<ShaderRecompiler::RecompileResult> pixelResults;
@@ -317,6 +321,7 @@ struct Scene {
         code.Register(false);
         constants.Register(true);
         spare.Register(true);
+        ring.Register(true);
         Fetch(0);
         state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 64u, 64u, std::nullopt, std::nullopt};
         state.color = {pixels.Address(), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, TargetLayout.Bytes(), 0xe4u, ColorTileMode::RenderTarget};
@@ -336,7 +341,11 @@ struct Scene {
     }
 
     void Fetch(std::size_t offset) {
-        const auto address = vertices.Address(offset);
+        Fetch(vertices, offset);
+    }
+
+    void Fetch(Pages& source, std::size_t offset) {
+        const auto address = source.Address(offset);
         const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (16u << 16u), static_cast<std::uint32_t>((BlockBytes - offset) / 16u), 0x01016facu};
         const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{code.Address(VertexCodeOffset), std::as_bytes(std::span(VertexCode))}}};
         ShaderRecompiler::RecompileRequest vertex{
@@ -345,7 +354,7 @@ struct Scene {
             device.Target(),
             {0, 0, 0, 64}
         };
-        vertex.useCache = false;
+        vertex.useCache = cachedVertex;
         vertexResults.push_back(ShaderRecompiler::Recompile(vertex));
         if (vertexResults.size() > 8) vertexResults.pop_front();
         vertexPush = static_cast<std::uint32_t>(vertexResults.back().pushConstants.size());
@@ -597,6 +606,159 @@ void Counters(Scene& scene) {
     Require(scene.DrawnColor() == 60, "address draw space reuse: the draw after the counted draws did not read the guest constant");
 }
 
+void PendingSnapshotWrite(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    constexpr std::size_t Slot = PointerSlots + 512;
+    constexpr std::size_t Cleared = 64;
+    scene.Store(scene.constants, 0, 230);
+    scene.Store(scene.constants, Cleared, 0);
+    const auto value = scene.constants.Address();
+    const std::array<std::uint64_t, 2> captured{value, 0};
+    scene.PointThrough(Slot, value);
+    const auto plain = scene.snapshots;
+    scene.snapshots.push_back({scene.constants.Address(Slot), std::as_bytes(std::span(captured))});
+    Require(scene.DrawnColor() == 230 && scene.DrawnColor() == 230, "address draw space reuse: the draws with a captured pointer did not read the guest constant");
+    const auto cleared = scene.constants.Address(Cleared);
+    const std::array<std::uint32_t, 4> pattern{static_cast<std::uint32_t>(cleared), static_cast<std::uint32_t>(cleared >> 32u), 0u, 0u};
+    const Outcomes outcomes;
+    const auto built = Builds();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(scene.device.FillBuffer(scene.constants.Address(Slot), 16, pattern), "address draw space reuse: the fill over the captured pointer was not recorded on the GPU");
+        const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+        scene.device.Draw(scene.state, draw, scene.shaders, scene.snapshots);
+    }
+    const auto color = scene.Color();
+    Require(color == 0, "address draw space reuse: a draw after a recorded fill rewrote its captured pointer read " + std::to_string(color) + " instead of the new pointer's 0");
+    Require(outcomes[AddressDrawReuse::SnapshotChanged] == 1 && outcomes.Total() == 1 && Builds() == built + 1, "address draw space reuse: a draw whose captured snapshot a pending GPU write changed counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected one refusal for a changed snapshot and a build");
+    scene.snapshots = plain;
+    scene.Point(value);
+}
+
+struct Ring {
+    Scene& scene;
+    std::size_t next = 0;
+    std::vector<AgcDriver::Graphics::GuestMemorySnapshot> plain;
+
+    explicit Ring(Scene& scene) : scene(scene), plain(scene.snapshots) {}
+    Ring(const Ring&) = delete;
+    Ring& operator=(const Ring&) = delete;
+
+    ~Ring() {
+        scene.snapshots = plain;
+        scene.Point(scene.constants.Address());
+    }
+
+    static std::size_t Slot(std::size_t index) { return (index % RingSlots) * RingSlotBytes; }
+
+    void Write(std::size_t index, std::uint8_t value) {
+        scene.Store(scene.ring, Slot(index), value);
+    }
+
+    void Point(std::size_t index) {
+        scene.Point(scene.ring.Address(Slot(index)));
+        scene.snapshots = plain;
+        scene.snapshots.push_back({scene.ring.Address(Slot(index)), std::as_bytes(std::span(scene.ring.Data() + Slot(index), 16))});
+    }
+
+    std::uint8_t Draw(std::uint8_t value) {
+        const auto index = next++;
+        Write(index, value);
+        Point(index);
+        return scene.DrawnColor();
+    }
+};
+
+void RingSameConstants(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    Ring ring(scene);
+    Require(ring.Draw(140) == 140, "address draw space reuse: the first draw of the ring did not read its slot");
+    const Outcomes outcomes;
+    const auto built = Builds();
+    for (std::size_t draw = 1; draw < 2 * RingSlots; ++draw) {
+        const auto color = ring.Draw(140);
+        Require(color == 140, "address draw space reuse: ring draw " + std::to_string(draw) + " read " + std::to_string(color) + " instead of its slot's 140");
+    }
+    Require(Builds() == built && outcomes[AddressDrawReuse::Reused] == 2 * RingSlots - 1 && outcomes.Total() == 2 * RingSlots - 1, "address draw space reuse: draws of the same constants in successive ring slots counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected every one reused");
+}
+
+void RingOwnConstants(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    Ring ring(scene);
+    Require(ring.Draw(10) == 10, "address draw space reuse: the first draw of the ring did not read its slot");
+    const Outcomes outcomes;
+    const auto built = Builds();
+    for (std::size_t draw = 1; draw < 2 * RingSlots; ++draw) {
+        const auto value = static_cast<std::uint8_t>(10 + 15 * draw);
+        const auto color = ring.Draw(value);
+        Require(color == value, "address draw space reuse: ring draw " + std::to_string(draw) + " read " + std::to_string(color) + " instead of its own " + std::to_string(value));
+    }
+    Require(Builds() == built && outcomes[AddressDrawReuse::Reused] == 2 * RingSlots - 1 && outcomes.Total() == 2 * RingSlots - 1, "address draw space reuse: draws of different constants in successive ring slots counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected every one reused");
+}
+
+void RingOldSlotWrite(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    Ring ring(scene);
+    Require(ring.Draw(50) == 50, "address draw space reuse: the first draw of the ring did not read its slot");
+    const Outcomes outcomes;
+    for (std::size_t draw = 1; draw < RingSlots; ++draw) {
+        const auto value = static_cast<std::uint8_t>(50 + 20 * draw);
+        const auto index = ring.next++;
+        ring.Write(index, value);
+        ring.Point(index);
+        scene.Draw();
+        ring.Write(index - 1, 255);
+        const auto color = scene.Color();
+        Require(color == value, "address draw space reuse: ring draw " + std::to_string(draw) + " read " + std::to_string(color) + " after a CPU write to the previous slot, instead of its own " + std::to_string(value));
+    }
+    Require(outcomes[AddressDrawReuse::Reused] == RingSlots - 1 && outcomes.Total() == RingSlots - 1, "address draw space reuse: ring draws followed by a CPU write to the previous slot counted " + outcomes.Text() + ", expected every one reused");
+}
+
+void RingRefusals(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    {
+        Ring ring(scene);
+        Require(ring.Draw(90) == 90, "address draw space reuse: the first draw of the ring did not read its slot");
+        const Outcomes outcomes;
+        const auto index = ring.next++;
+        ring.Write(index, 90);
+        ring.Point(index);
+        scene.snapshots.back() = {AddressOf(OutsideWords.data()), std::as_bytes(std::span(OutsideWords))};
+        Require(scene.DrawnColor() == 90, "address draw space reuse: the draw whose moved snapshot lies outside the space did not read its slot");
+        Require(outcomes[AddressDrawReuse::SnapshotOutside] == 1 && outcomes.Total() == 1, "address draw space reuse: a ring draw whose moved snapshot lies outside the space counted " + outcomes.Text() + ", expected one refusal for a snapshot outside the space");
+    }
+    scene.Store(scene.constants, 0, 170);
+    scene.Point(scene.constants.Address());
+    scene.cachedVertex = true;
+    scene.Fetch(0);
+    for (int warm = 0; warm < 2; ++warm) Require(scene.DrawnColor() == 170, "address draw space reuse: the draw before the vertex buffer moved did not read the guest constant");
+    {
+        const Outcomes outcomes;
+        scene.Fetch(MovedVerticesOffset);
+        const auto color = scene.DrawnColor();
+        Require(color == 170, "address draw space reuse: the draw after its read-only vertex buffer moved read " + std::to_string(color) + " instead of 170");
+        Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose read-only vertex buffer moved inside the space counted " + outcomes.Text() + ", expected one reuse with the buffer bound anew");
+    }
+    {
+        std::memcpy(scene.spare.Data(), Triangle.data(), sizeof(Triangle));
+        constexpr std::size_t Filled = 64;
+        const std::array<std::uint32_t, 4> pattern{};
+        const Outcomes outcomes;
+        scene.Fetch(scene.spare, 0);
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            Require(scene.device.FillBuffer(scene.spare.Address(Filled), 16, pattern), "address draw space reuse: the fill inside the moved vertex buffer was not recorded on the GPU");
+            const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+            scene.device.Draw(scene.state, draw, scene.shaders, scene.snapshots);
+        }
+        const auto color = scene.Color();
+        Require(color == 170, "address draw space reuse: the draw whose moved vertex buffer a pending fill overlaps read " + std::to_string(color) + " instead of 170");
+        Require(outcomes[AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + ", expected one refusal for a moved GuestBuffers element");
+    }
+    scene.Fetch(0);
+    scene.cachedVertex = false;
+}
+
 void Disabled(Scene& scene) {
     scene.Store(scene.constants, 0, 70);
     Require(scene.DrawnColor() == 70, "address draw space reuse: the first draw with reuse off did not read the guest constant");
@@ -622,7 +784,7 @@ struct NamedCase {
     Case run;
 };
 
-constexpr std::array<NamedCase, 7> DefaultCases{{
+constexpr std::array<NamedCase, 12> DefaultCases{{
     {"unchanged", UnchangedInputs},
     {"cpu-write", CpuWrite},
     {"idle-free", IdleFree},
@@ -630,6 +792,11 @@ constexpr std::array<NamedCase, 7> DefaultCases{{
     {"moved-vertices", MovedVertices},
     {"fault-per-use", FaultPerUse},
     {"counters", Counters},
+    {"pending-snapshot-write", PendingSnapshotWrite},
+    {"ring-same-constants", RingSameConstants},
+    {"ring-own-constants", RingOwnConstants},
+    {"ring-old-slot-write", RingOldSlotWrite},
+    {"ring-refusals", RingRefusals},
 }};
 
 constexpr std::array<NamedCase, 3> TransitionCases{{
