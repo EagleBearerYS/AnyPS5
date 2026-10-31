@@ -1,0 +1,4 @@
+BASE=6a691f69ee44888635bed90833a0ab20ed9889ab
+REPEAT=5
+EXTRA_TESTS='agc_driver_pipeline_journal'
+NO_BEFORE=1
