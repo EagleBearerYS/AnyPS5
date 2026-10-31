@@ -4166,7 +4166,7 @@ bool VulkanDevice::PresentsOnOwnQueue() const {
 ShaderRecompiler::SpirvTarget VulkanDevice::ComputeTarget(std::uint32_t waveSize) const {
     auto target = Target();
     if (waveSize == 32u && state->computeWave32) target.subgroupSize = 32u;
-    target.gpuResolvedImages = Graphics::HeapComputeEnabled();
+    target.gpuResolvedImages = Graphics::DescriptorHeapEnabled();
     return target;
 }
 

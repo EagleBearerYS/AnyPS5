@@ -658,7 +658,6 @@ private:
     VkImageView heapStorageView(std::size_t index, std::uint32_t binding) const;
     VkImageView heapMultisampleStorageView(std::size_t index) const;
     void appendHeapSlotKey(VkShaderStageFlags stageBit, std::vector<std::uintptr_t>& key) const;
-    static bool heapSlotsCurrent(const BindlessHeap& heap, const HeapStageState& state);
     void takeHeapSlots(BindlessHeap& heap, HeapStageState& state, VkShaderStageFlags stageBit, std::span<const std::uintptr_t> key);
     static void noteHeapSlotGenerations(const BindlessHeap& heap, HeapStageState& state);
     void verifyHeapSlots(const BindlessHeap& heap, const HeapStageState& state, VkShaderStageFlags stageBit) const;

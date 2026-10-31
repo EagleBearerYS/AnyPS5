@@ -88,7 +88,7 @@ std::shared_ptr<StorageTexture> heapSlotted(AgcDriver::VulkanDevice& device, std
     if (!heapSlots || image == nullptr) return image;
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto& heap = AgcDriver::Graphics::BindlessHeap::For(device.GraphicsContext());
-    const auto slot = heap.StorageSlot(ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding, image, image->StorageView(0, false));
+    const auto slot = heap.StorageSlot(ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding, image.get(), image->StorageView(0, false));
     Require(slot.has_value(), "the stored image took no GPU heap storage slot");
     heapSlotsByAddress.try_emplace(address, HeapSlotted{*slot, heap.SlotGeneration(*slot)});
     return image;

@@ -36,16 +36,16 @@ void textureSlots(const Context& context, VkImageView view) {
     BindlessHeap heap(context);
     const auto kind = Abi::FirstImageBinding;
     auto first = fakeTexture(0);
-    const auto slot = heap.TextureSlot(kind, first, view, VK_IMAGE_LAYOUT_GENERAL);
+    const auto slot = heap.TextureSlot(kind, first.get(), view, VK_IMAGE_LAYOUT_GENERAL);
     require(slot.has_value(), "the first texture takes a slot");
     require(heap.SlotTexture(kind, *slot) == first.get(), "the slot names the first texture");
     require(first.use_count() == 1, "a heap slot holds a reference to its texture");
     const auto generation = heap.SlotGeneration(*slot);
 
     auto second = fakeTexture(1);
-    require(!heap.TextureSlot(kind, second, view, VK_IMAGE_LAYOUT_GENERAL).has_value(), "the slot of a live texture is not reused");
+    require(!heap.TextureSlot(kind, second.get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(), "the slot of a live texture is not reused");
     heap.ReleaseImageSlots(first.get());
-    const auto reused = heap.TextureSlot(kind, second, view, VK_IMAGE_LAYOUT_GENERAL);
+    const auto reused = heap.TextureSlot(kind, second.get(), view, VK_IMAGE_LAYOUT_GENERAL);
     require(reused.has_value() && *reused == *slot, "the released texture's slot is reused");
     require(heap.SlotGeneration(*slot) != generation, "a freed slot moves its generation");
     require(heap.SlotTexture(kind, *slot) == second.get(), "the reused slot names the second texture");
@@ -54,10 +54,10 @@ void textureSlots(const Context& context, VkImageView view) {
 
     auto shared = fakeTexture(2);
     const auto otherKind = kind + 1u;
-    require(!heap.TextureSlot(otherKind, shared, view, VK_IMAGE_LAYOUT_GENERAL).has_value(),
+    require(!heap.TextureSlot(otherKind, shared.get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(),
             "another kind finds the capped heap's only slot taken");
     heap.ReleaseImageSlots(second.get());
-    const auto sharedSlot = heap.TextureSlot(otherKind, shared, view, VK_IMAGE_LAYOUT_GENERAL);
+    const auto sharedSlot = heap.TextureSlot(otherKind, shared.get(), view, VK_IMAGE_LAYOUT_GENERAL);
     require(sharedSlot.has_value() && *sharedSlot == *slot, "another kind takes the slot the first kind's texture left");
     require(heap.SlotTexture(kind, *slot) == nullptr && heap.SlotTexture(otherKind, *slot) == shared.get(),
             "the slot names the other kind's texture");
@@ -182,7 +182,7 @@ void heapComesBack(const Context& context, VkImageView view) {
     std::vector<std::shared_ptr<Texture>> held;
     for (std::size_t index = 0; index < 7u; ++index) {
         held.push_back(fakeTexture(index));
-        require(heap.TextureSlot(kind, held.back(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(),
+        require(heap.TextureSlot(kind, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(),
                 "a texture takes one of the eight capped slots");
     }
     require(BindlessHeap::NearlyFull(), "one free slot of eight refuses the heap");
@@ -234,7 +234,7 @@ void mixedComesBack(const Context& context, VkImageView sampledView, VkImageView
     std::vector<std::shared_ptr<Texture>> textures;
     for (std::size_t index = 0; index < 4u; ++index) {
         textures.push_back(fakeTexture(index));
-        require(heap.TextureSlot(Abi::FirstImageBinding, textures.back(), sampledView, VK_IMAGE_LAYOUT_GENERAL).has_value(),
+        require(heap.TextureSlot(Abi::FirstImageBinding, textures.back().get(), sampledView, VK_IMAGE_LAYOUT_GENERAL).has_value(),
                 "a texture takes one of the eight capped slots");
     }
     require(!BindlessHeap::NearlyFull(), "four textures in eight capped slots leave the heap taken");

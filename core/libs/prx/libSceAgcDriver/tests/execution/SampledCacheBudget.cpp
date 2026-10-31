@@ -596,7 +596,7 @@ bool heapViewTests(const Context& context) {
     for (std::size_t surface = 1; surface < Surfaces; ++surface) CachedStorageSurface(context, Resource(block.Surface(surface)));
     Require(!view->StorageSource()->Cached(), "the heap view's storage image was not evicted");
     auto& heap = BindlessHeap::For(context);
-    const auto slot = heap.TextureSlot(ShaderRecompiler::RuntimeAbi::FirstImageBinding, view, view->View(), view->Layout());
+    const auto slot = heap.TextureSlot(ShaderRecompiler::RuntimeAbi::FirstImageBinding, view.get(), view->View(), view->Layout());
     Require(slot.has_value(), "the view of an evicted storage image took no heap slot");
     view.reset();
     Require(viewed.expired(), "a heap slot kept the view of an evicted storage image, and with it the image");
@@ -611,7 +611,7 @@ void heapHeldReleaseTests(const Context& context) {
     std::vector<std::uint32_t> slots;
     for (std::size_t surface = 0; surface < 2; ++surface) {
         auto texture = Sampled(context, block.Surface(surface));
-        const auto slot = heap.TextureSlot(ShaderRecompiler::RuntimeAbi::FirstImageBinding, texture, texture->View(), texture->Layout());
+        const auto slot = heap.TextureSlot(ShaderRecompiler::RuntimeAbi::FirstImageBinding, texture.get(), texture->View(), texture->Layout());
         Require(slot.has_value(), "the cached sampled texture took no heap slot");
         held.push_back(texture);
         slots.push_back(*slot);
