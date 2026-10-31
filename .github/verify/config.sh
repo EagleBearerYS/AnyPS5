@@ -1,0 +1,4 @@
+BASE=828ac0b2ae74aac181ba128fb59b08a1534f2041
+REPEAT=10
+EXTRA_TESTS='agc_driver_present_lock_wait|agc_driver_bda_device|agc_driver_image_table_reuse|agc_driver_pixel_lds'
+NO_BEFORE=1
