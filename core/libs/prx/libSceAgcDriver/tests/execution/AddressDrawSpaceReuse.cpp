@@ -75,6 +75,22 @@ constexpr std::array<std::uint32_t, 10> IndirectPixelCode{
     0xbf810000u,
 };
 
+constexpr std::array<std::uint32_t, 12> StoringPixelCode{
+    0x7e000280u,
+    0xdc308000u, 0x01000000u,
+    0xbf8c3f70u,
+    0xdc708008u, 0x00000100u,
+    0xbf8c3f70u,
+    0xf800180fu, 0x01010101u,
+    0xbf810000u,
+    0xbf810000u,
+    0xbf810000u,
+};
+
+constexpr std::size_t StoringCodeOffset = 768;
+
+alignas(16) constexpr std::array<std::uint32_t, 4> OutsideWords{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
+
 constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
@@ -137,7 +153,11 @@ public:
     Pages& operator=(const Pages&) = delete;
 
     void Register(bool writable) {
-        GuestAllocations::Mutation().Add(data, bytes, true, writable, true);
+        Register(writable, bytes);
+    }
+
+    void Register(bool writable, std::size_t length) {
+        GuestAllocations::Mutation().Add(data, length, true, writable, true);
         registered = true;
     }
 
@@ -235,6 +255,33 @@ std::string FaultAt(std::uint64_t address) {
     return text;
 }
 
+class Outcomes {
+public:
+    std::uint64_t operator[](AgcDriver::Graphics::AddressDrawReuse outcome) const {
+        return AgcDriver::Graphics::AddressDrawReuseCounters()[static_cast<std::size_t>(outcome)] - before[static_cast<std::size_t>(outcome)];
+    }
+
+    std::uint64_t Total() const {
+        const auto now = AgcDriver::Graphics::AddressDrawReuseCounters();
+        std::uint64_t total = 0;
+        for (std::size_t index = 0; index < now.size(); ++index) total += now[index] - before[index];
+        return total;
+    }
+
+    std::string Text() const {
+        const auto now = AgcDriver::Graphics::AddressDrawReuseCounters();
+        std::string text;
+        for (std::size_t index = 0; index < now.size(); ++index) {
+            if (now[index] == before[index]) continue;
+            text += (text.empty() ? "" : ", ") + std::string(AgcDriver::Graphics::AddressDrawReuseName(static_cast<AgcDriver::Graphics::AddressDrawReuse>(index))) + " " + std::to_string(now[index] - before[index]);
+        }
+        return text.empty() ? "nothing" : text;
+    }
+
+private:
+    AgcDriver::Graphics::AddressDrawReuseCounts before = AgcDriver::Graphics::AddressDrawReuseCounters();
+};
+
 std::uint64_t Builds() {
     const auto counters = AgcDriver::Graphics::BdaResources::TableCacheCounters();
     return counters.hits + counters.misses;
@@ -266,6 +313,7 @@ struct Scene {
         std::memcpy(code.Data() + VertexCodeOffset, VertexCode.data(), sizeof(VertexCode));
         std::memcpy(code.Data() + PixelCodeOffset, PixelCode.data(), sizeof(PixelCode));
         std::memcpy(code.Data() + IndirectCodeOffset, IndirectPixelCode.data(), sizeof(IndirectPixelCode));
+        std::memcpy(code.Data() + StoringCodeOffset, StoringPixelCode.data(), sizeof(StoringPixelCode));
         code.Register(false);
         constants.Register(true);
         spare.Register(true);
@@ -488,6 +536,67 @@ void FaultPerUse(Scene& scene) {
     scene.Point(good);
 }
 
+void Counters(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    const auto good = scene.constants.Address();
+    scene.Store(scene.constants, 0, 60);
+    scene.Point(good);
+    Require(scene.DrawnColor() == 60, "address draw space reuse: the draw before the counted draws did not read the guest constant");
+    const Outcomes all;
+    std::uint64_t draws = 0;
+    const auto counted = [&](AddressDrawReuse outcome, std::size_t repeats, const char* what) {
+        const Outcomes step;
+        for (std::size_t draw = 0; draw < repeats; ++draw) {
+            scene.Draw();
+            scene.Wait();
+            ++draws;
+        }
+        Require(step[outcome] == repeats && step.Total() == repeats, std::string("address draw space reuse: ") + what + " counted " + step.Text() + " for " + std::to_string(repeats) + " draws, expected " + AgcDriver::Graphics::AddressDrawReuseName(outcome) + " " + std::to_string(repeats));
+    };
+    const auto settle = [&] {
+        for (int draw = 0; draw < 2; ++draw) {
+            scene.Draw();
+            scene.Wait();
+            ++draws;
+        }
+    };
+    counted(AddressDrawReuse::Reused, 2, "draws with unchanged inputs");
+    {
+        Pages mapped{BlockBytes};
+        mapped.Register(false);
+        counted(AddressDrawReuse::SpaceChanged, 1, "a draw after an allocation was mapped");
+        counted(AddressDrawReuse::Reused, 1, "the draw after it");
+    }
+    settle();
+    const auto plain = scene.snapshots;
+    scene.snapshots.push_back({AddressOf(OutsideWords.data()), std::as_bytes(std::span(OutsideWords))});
+    counted(AddressDrawReuse::SnapshotOutside, 1, "a draw with a snapshot outside the address space");
+    counted(AddressDrawReuse::NotSpaceOnly, 2, "draws whose build copies that snapshot");
+    scene.snapshots = plain;
+    counted(AddressDrawReuse::Built, 1, "the draw without it");
+    Pages straddle{2 * BlockBytes};
+    straddle.Register(false, BlockBytes);
+    settle();
+    const std::array<std::uint32_t, 4> across{};
+    std::memcpy(straddle.Data() + BlockBytes - 8, across.data(), sizeof(across));
+    scene.snapshots.push_back({straddle.Address(BlockBytes - 8), std::as_bytes(std::span(across))});
+    counted(AddressDrawReuse::PartialOverlap, 1, "a draw with a snapshot across the end of an allocation");
+    scene.snapshots = plain;
+    settle();
+    std::array<std::uint32_t, PixelCode.size()> changed = PixelCode;
+    changed.back() ^= 1u;
+    scene.snapshots.back() = {scene.code.Address(PixelCodeOffset), std::as_bytes(std::span(changed))};
+    counted(AddressDrawReuse::SnapshotChanged, 2, "draws with a snapshot that differs from guest memory");
+    scene.snapshots = plain;
+    settle();
+    scene.Point(good, StoringPixelCode, StoringCodeOffset);
+    counted(AddressDrawReuse::NotReadOnly, 2, "draws whose pixel shader stores through addresses");
+    scene.Point(good);
+    settle();
+    Require(all.Total() == draws, "address draw space reuse: " + std::to_string(draws) + " address-based draws counted " + std::to_string(all.Total()) + " outcomes (" + all.Text() + ")");
+    Require(scene.DrawnColor() == 60, "address draw space reuse: the draw after the counted draws did not read the guest constant");
+}
+
 void Disabled(Scene& scene) {
     scene.Store(scene.constants, 0, 70);
     Require(scene.DrawnColor() == 70, "address draw space reuse: the first draw with reuse off did not read the guest constant");
@@ -513,13 +622,14 @@ struct NamedCase {
     Case run;
 };
 
-constexpr std::array<NamedCase, 6> DefaultCases{{
+constexpr std::array<NamedCase, 7> DefaultCases{{
     {"unchanged", UnchangedInputs},
     {"cpu-write", CpuWrite},
     {"idle-free", IdleFree},
     {"no-recipe", NoRecipe},
     {"moved-vertices", MovedVertices},
     {"fault-per-use", FaultPerUse},
+    {"counters", Counters},
 }};
 
 constexpr std::array<NamedCase, 3> TransitionCases{{

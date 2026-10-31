@@ -678,9 +678,20 @@ struct DrawProfile {
     // Draw packets that drew nothing, by DrawSkip, and their time.
     std::array<std::uint64_t, static_cast<std::size_t>(DrawSkip::Count)> skips{};
     std::array<double, static_cast<std::size_t>(DrawSkip::Count)> skipUs{};
+    AddressDrawReuseCounts addressSeen{};
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 constexpr std::array<const char*, static_cast<std::size_t>(DrawSkip::Count)> DrawSkipNames{"nothing to draw", "prechecked", "thrown"};
+constexpr std::array<const char*, static_cast<std::size_t>(AddressDrawReuse::Count)> AddressDrawReuseNames{"reused", "built", "not read-only", "not space-only", "snapshot outside the space (copied)", "partial overlap", "snapshot changed", "moved GuestBuffers element", "patched data word", "space or epoch change", "in use", "revalidation"};
+
+std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressDrawReuse::Count)>& addressDrawReuses() {
+    static std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(AddressDrawReuse::Count)> counts{};
+    return counts;
+}
+
+void countAddressDrawReuse(AddressDrawReuse outcome) {
+    addressDrawReuses()[static_cast<std::size_t>(outcome)].fetch_add(1, std::memory_order_relaxed);
+}
 
 DrawProfile& Profile() {
     static DrawProfile profile;
@@ -797,6 +808,17 @@ void reportDraw(const std::array<double, PhaseCount>& us, const ShaderResources:
     }
     AgcDriver::ProfilePrint_nid_no_patch("%s\n", line);
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] draws: %llu hits, %llu misses, %llu invalidated, %llu uncacheable; validation memo %llu hits / %llu misses (which key words the misses differ in: the miss churn line)\n", static_cast<unsigned long long>(profile.cacheHits), static_cast<unsigned long long>(profile.cacheMisses), static_cast<unsigned long long>(profile.cacheInvalidated), static_cast<unsigned long long>(profile.uncacheable), static_cast<unsigned long long>(profile.validateHits), static_cast<unsigned long long>(profile.validateMisses));
+    const auto address = AddressDrawReuseCounters();
+    if (address != profile.addressSeen) {
+        char reuse[512];
+        const auto seen = [&](AddressDrawReuse outcome) { return static_cast<unsigned long long>(address[static_cast<std::size_t>(outcome)] - profile.addressSeen[static_cast<std::size_t>(outcome)]); };
+        int at = std::snprintf(reuse, sizeof(reuse), "[rescache] address-based draws (10 s): reused %llu, built %llu; refused:", seen(AddressDrawReuse::Reused), seen(AddressDrawReuse::Built));
+        for (auto outcome = static_cast<std::size_t>(AddressDrawReuse::NotReadOnly); outcome < address.size() && at > 0 && static_cast<std::size_t>(at) < sizeof(reuse); ++outcome) {
+            at += std::snprintf(reuse + at, sizeof(reuse) - static_cast<std::size_t>(at), "%s %s %llu", outcome == static_cast<std::size_t>(AddressDrawReuse::NotReadOnly) ? "" : ",", AddressDrawReuseNames[outcome], seen(static_cast<AddressDrawReuse>(outcome)));
+        }
+        AgcDriver::ProfilePrint_nid_no_patch("%s\n", reuse);
+        profile.addressSeen = address;
+    }
     profile.totalsUs.fill(0);
     profile.maxUs.fill(0);
     profile.maxDrawUs = profile.hookWaitUs = profile.maxHookWaitUs = profile.ownSyncUs = 0;
@@ -1726,6 +1748,18 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
+enum class AddressStages { None, ReadOnly, Storing };
+
+AddressStages addressStages(std::span<const CompiledShader> shaders) {
+    auto stages = AddressStages::None;
+    for (const auto& shader : shaders) {
+        if (shader.program == nullptr || std::none_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; })) continue;
+        if (ShaderStoresThroughAddresses(shader.program->spirv)) return AddressStages::Storing;
+        stages = AddressStages::ReadOnly;
+    }
+    return stages;
+}
+
 ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
@@ -1740,21 +1774,42 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     // The render target and index ranges stay out of the key (see DrawResourceKey); a hit repeats
     // the alias checks instead. Debug aid: APS5_NO_DRAW_KEY_TRIM=1 keys them as before.
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
-    resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
+    const bool candidate = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; });
+    resolved.cacheable = candidate && !ShaderResources::NeverReusable(shaders);
+    const auto address = candidate && !ShaderResources::SpaceReuseDisabled() ? addressStages(shaders) : AddressStages::None;
+    std::optional<AddressDrawReuse> reuse;
+    if (address == AddressStages::Storing) reuse = AddressDrawReuse::NotReadOnly;
+    else if (address == AddressStages::ReadOnly && !resolved.cacheable) reuse = AddressDrawReuse::NotSpaceOnly;
     if (resolved.cacheable) {
         resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
         if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
             const auto releaseSpace = [](ShaderResources* resources) { static_cast<void>(resources->ReleaseSpace()); };
-            std::unique_ptr<ShaderResources, decltype(releaseSpace)> heldSpace(cached->SpaceReuse() ? cached.get() : nullptr, releaseSpace);
+            std::unique_ptr<ShaderResources, decltype(releaseSpace)> heldSpace(nullptr, releaseSpace);
+            const bool counted = address == AddressStages::ReadOnly && cached->SpaceReuse();
             bool spaceHeld = !cached->SpaceReuse();
-            if (!spaceHeld && cached->RetakeSpace()) {
-                spaceHeld = cached->SnapshotsServedInPlace(snapshots);
-                if (!spaceHeld) static_cast<void>(cached->ReleaseSpace());
+            bool inUse = false;
+            if (!spaceHeld) {
+                if (cached->SpaceHeld()) {
+                    inUse = true;
+                    reuse = AddressDrawReuse::InUse;
+                } else if (!cached->RetakeSpace()) {
+                    reuse = AddressDrawReuse::SpaceChanged;
+                } else {
+                    heldSpace.reset(cached.get());
+                    const auto service = cached->SnapshotsServedInPlace(snapshots);
+                    spaceHeld = service == SnapshotService::Served;
+                    if (!spaceHeld) {
+                        reuse = service == SnapshotService::Partial ? AddressDrawReuse::PartialOverlap : service == SnapshotService::Changed ? AddressDrawReuse::SnapshotChanged : AddressDrawReuse::SnapshotOutside;
+                        static_cast<void>(cached->ReleaseSpace());
+                    }
+                }
             }
             const bool valid = spaceHeld && cached->Revalidate(shaders);
+            if (counted && spaceHeld && !valid) reuse = AddressDrawReuse::Revalidation;
             auto* recorder = Recorder::Active();
             std::optional<std::vector<ShaderResources::MovedBuffer>> moved;
-            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color);
+            bool patched = false;
+            if (valid && recorder != nullptr) moved = cached->MovedReadOnlyBuffers(shaders, *recorder, &state.color, &patched);
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 static_cast<void>(heldSpace.release());
@@ -1762,8 +1817,10 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
                 resolved.moved = std::move(*moved);
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);
-            } else if (valid) {
-                if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
+                if (counted) reuse = AddressDrawReuse::Reused;
+            } else if (valid || inUse) {
+                if (valid && cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
+                if (valid && counted) reuse = patched ? AddressDrawReuse::PatchedData : AddressDrawReuse::MovedBuffer;
                 countCache(&DrawProfile::cacheMisses);
             } else {
                 if (cached->SpaceReuse()) static_cast<void>(cached->ReleaseSpace());
@@ -1781,7 +1838,9 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
         outcome.addressBased = resolved.resources->HoldsLease();
         outcome.kind = outcome.addressBased ? KindBda : KindBuild;
         if (resolved.cacheable) countCache(&DrawProfile::cacheMisses);
+        if (address == AddressStages::ReadOnly && !reuse.has_value()) reuse = resolved.resources->SpaceReuse() ? AddressDrawReuse::Built : AddressDrawReuse::NotSpaceOnly;
     }
+    if (reuse.has_value()) countAddressDrawReuse(*reuse);
     timer.phase(PhaseResources);
     APS5_LOG_CHARS_OUT_DEBUG("ShaderResources created");
     return resolved;
@@ -3828,6 +3887,17 @@ void RunColorMetadataPass(const Context& context, const ColorMetadataPass& pass)
         }
         storeClearTexels(context, color, texel);
     }
+}
+
+AddressDrawReuseCounts AddressDrawReuseCounters() {
+    AddressDrawReuseCounts counts{};
+    const auto& counters = addressDrawReuses();
+    for (std::size_t index = 0; index < counts.size(); ++index) counts[index] = counters[index].load(std::memory_order_relaxed);
+    return counts;
+}
+
+const char* AddressDrawReuseName(AddressDrawReuse outcome) {
+    return static_cast<std::size_t>(outcome) < AddressDrawReuseNames.size() ? AddressDrawReuseNames[static_cast<std::size_t>(outcome)] : "?";
 }
 
 bool DrawPipelineEnabled() {
