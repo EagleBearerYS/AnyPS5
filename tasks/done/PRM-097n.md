@@ -50,3 +50,4 @@ So a keep reserved at the hit can't be tied to the batch open at the hit.
 
 After you mark this task done, claim the next open task on the board right away (priority high first, then the lowest id; skip any whose `for:` line names another worker). If none is open, restart the board watcher as a background command before you end your turn. A worker that ends its turn with no task and no watcher is never woken: on 2026-10-15 one sat READY for 30 minutes beside two open tasks.
 claimed-by: cloud-1 2026-10-31T11:22:39Z
+done: 2026-10-31T11:42:20Z, result: results/cloud-1/PRM-097.md (section PRM-097n; point 2 no change d214fad61a, point 4 revised to 8a85451640 before the first push)
