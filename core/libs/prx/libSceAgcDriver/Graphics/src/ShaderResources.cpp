@@ -3003,6 +3003,107 @@ void reportRevalidateSplit(std::uint64_t totalNanoseconds) {
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate split (10 s):%s, sum %.2f of %.2f ms\n", pieces.c_str(), static_cast<double>(sum) / 1e6, static_cast<double>(totalNanoseconds) / 1e6);
 }
 
+enum class IndexFallbackReason : std::size_t { NoSubscription, DepthFlush, SweepFailed, PendingOverSpans, ComparedSpanChanged, BumpsSinceFailed, TableSpanBumped, LookupReresolve, CompareReresolve, InnerFast, BumpedReresolve, SecondProof, Count };
+constexpr std::array<const char*, static_cast<std::size_t>(IndexFallbackReason::Count) + 1> IndexFallbackNames{"no subscription", "depth-plane flush", "sweep failed", "pending images over spans", "compared table span changed", "bumps since failed", "table span element bumped", "lookup re-resolve failed", "compare re-resolve failed", "inner fast proof failed", "bumped re-resolve failed", "second proof failed", "index not run"};
+
+struct AuditedTemplate {
+    std::uint64_t shaderSet = 0;
+    std::uint64_t audits = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(IndexFallbackReason::Count) + 1> reasons{};
+};
+
+struct IndexFallbackProfile {
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(IndexFallbackReason::Count)> byReason{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(FastFail::Count) + 1> innerFast{};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(FastFail::Count) + 1> secondProof{};
+    std::mutex auditMutex;
+    std::unordered_map<const void*, AuditedTemplate> audited;
+};
+
+IndexFallbackProfile& IndexFallbacks() {
+    static IndexFallbackProfile profile;
+    return profile;
+}
+
+thread_local IndexFallbackReason lastIndexFallback = IndexFallbackReason::Count;
+
+void countIndexFallback(IndexFallbackReason reason, FastFail fast) {
+    lastIndexFallback = reason;
+    auto& profile = IndexFallbacks();
+    profile.byReason[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+    if (reason == IndexFallbackReason::InnerFast) profile.innerFast[static_cast<std::size_t>(fast)].fetch_add(1, std::memory_order_relaxed);
+    else if (reason == IndexFallbackReason::SecondProof) profile.secondProof[static_cast<std::size_t>(fast)].fetch_add(1, std::memory_order_relaxed);
+}
+
+void countTemplateAudit(const void* resources, std::span<const CompiledShader> shaders) {
+    std::uint64_t variants = 0;
+    for (const auto& shader : shaders) {
+        if (shader.program != nullptr) variants = variants * 1000003ull ^ shader.program->PipelineVariantId();
+    }
+    const auto hashed = (variants ^ 0x9e3779b97f4a7c15ull) * 0xff51afd7ed558ccdull;
+    auto& profile = IndexFallbacks();
+    std::lock_guard lock(profile.auditMutex);
+    auto& entry = profile.audited[resources];
+    entry.shaderSet = hashed ^ (hashed >> 33u);
+    ++entry.audits;
+    ++entry.reasons[static_cast<std::size_t>(lastIndexFallback)];
+}
+
+std::string reportIndexFallbacks() {
+    auto& profile = IndexFallbacks();
+    const auto fastReasons = [](auto& counts) {
+        std::string reasons;
+        for (std::size_t i = 0; i < counts.size(); ++i) {
+            const auto count = counts[i].exchange(0, std::memory_order_relaxed);
+            if (count == 0) continue;
+            reasons += std::string(reasons.empty() ? "" : ", ") + (i < FastFailNames.size() ? FastFailNames[i] : "no reason") + " " + std::to_string(count);
+        }
+        return reasons;
+    };
+    const auto reasonList = [](const auto& counts) {
+        std::string reasons;
+        for (std::size_t i = 0; i < counts.size(); ++i) {
+            if (counts[i] == 0) continue;
+            reasons += std::string(reasons.empty() ? "" : ", ") + IndexFallbackNames[i] + " " + std::to_string(counts[i]);
+        }
+        return reasons;
+    };
+    std::string text = "; fallbacks by reason:";
+    bool any = false;
+    for (std::size_t i = 0; i < profile.byReason.size(); ++i) {
+        const auto count = profile.byReason[i].exchange(0, std::memory_order_relaxed);
+        const auto reason = static_cast<IndexFallbackReason>(i);
+        const auto detail = reason == IndexFallbackReason::InnerFast ? fastReasons(profile.innerFast) : reason == IndexFallbackReason::SecondProof ? fastReasons(profile.secondProof) : std::string();
+        if (count == 0) continue;
+        text += std::string(any ? "," : "") + " " + IndexFallbackNames[i] + " " + std::to_string(count);
+        if (!detail.empty()) text += " (" + detail + ")";
+        any = true;
+    }
+    if (!any) text += " none";
+    std::vector<AuditedTemplate> audited;
+    {
+        std::lock_guard lock(profile.auditMutex);
+        for (const auto& entry : profile.audited) audited.push_back(entry.second);
+        profile.audited.clear();
+    }
+    std::uint64_t audits = 0;
+    std::array<std::uint64_t, static_cast<std::size_t>(IndexFallbackReason::Count) + 1> reasons{};
+    for (const auto& entry : audited) {
+        audits += entry.audits;
+        for (std::size_t i = 0; i < reasons.size(); ++i) reasons[i] += entry.reasons[i];
+    }
+    text += "; audit walks: " + std::to_string(audits) + " over " + std::to_string(audited.size()) + " templates";
+    if (audits == 0) return text;
+    text += " (index fallback in the same call: " + reasonList(reasons) + "), most audited:";
+    std::sort(audited.begin(), audited.end(), [](const AuditedTemplate& left, const AuditedTemplate& right) { return left.audits > right.audits; });
+    for (std::size_t i = 0; i < audited.size() && i < 3; ++i) {
+        char name[64];
+        std::snprintf(name, sizeof(name), " shader set %016llx", static_cast<unsigned long long>(audited[i].shaderSet));
+        text += std::string(i == 0 ? "" : ",") + name + " " + std::to_string(audited[i].audits) + " (" + reasonList(audited[i].reasons) + ")";
+    }
+    return text;
+}
+
 void countFastFail(FastFail reason) {
     if (BuildProfiled()) Revalidations().fastFails[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
 }
@@ -3099,7 +3200,8 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
         counts[i] = total - reported[i];
         reported[i] = total;
     }
-    AgcDriver::ProfilePrint_nid_no_patch("[rescache] write index (10 s): %llu proofs %.1f ms: %llu accepted, %llu partial (%llu bumped elements, %llu looked up again, %llu re-bound), %llu unwatched elements compared, %llu fallbacks, %llu builds subscribed; %llu subscriptions over %llu blocks, %llu bumps by source:%s, %llu sweeps (%llu failed), %llu bump lists overflowed, writers' index lookups %llu in %.1f ms\n", static_cast<unsigned long long>(counts[IndexAccepted] + counts[IndexPartial] + counts[IndexFallback]), profile.indexNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(counts[IndexAccepted]), static_cast<unsigned long long>(counts[IndexPartial]), static_cast<unsigned long long>(counts[IndexBumped]), static_cast<unsigned long long>(counts[IndexLookedUp]), static_cast<unsigned long long>(counts[IndexRebound]), static_cast<unsigned long long>(counts[IndexCompared]), static_cast<unsigned long long>(counts[IndexFallback]), static_cast<unsigned long long>(counts[IndexBuilds]), static_cast<unsigned long long>(index.subscriptions), static_cast<unsigned long long>(index.blocks), static_cast<unsigned long long>(index.bumps), sources.c_str(), static_cast<unsigned long long>(index.sweeps), static_cast<unsigned long long>(index.sweepFailures), static_cast<unsigned long long>(index.overflows), static_cast<unsigned long long>(index.lookups), static_cast<double>(index.lookupNanoseconds) / 1e6);
+    const auto indexFallbacks = reportIndexFallbacks();
+    AgcDriver::ProfilePrint_nid_no_patch("[rescache] write index (10 s): %llu proofs %.1f ms: %llu accepted, %llu partial (%llu bumped elements, %llu looked up again, %llu re-bound), %llu unwatched elements compared, %llu fallbacks, %llu builds subscribed; %llu subscriptions over %llu blocks, %llu bumps by source:%s, %llu sweeps (%llu failed), %llu bump lists overflowed, writers' index lookups %llu in %.1f ms%s\n", static_cast<unsigned long long>(counts[IndexAccepted] + counts[IndexPartial] + counts[IndexFallback]), profile.indexNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(counts[IndexAccepted]), static_cast<unsigned long long>(counts[IndexPartial]), static_cast<unsigned long long>(counts[IndexBumped]), static_cast<unsigned long long>(counts[IndexLookedUp]), static_cast<unsigned long long>(counts[IndexRebound]), static_cast<unsigned long long>(counts[IndexCompared]), static_cast<unsigned long long>(counts[IndexFallback]), static_cast<unsigned long long>(counts[IndexBuilds]), static_cast<unsigned long long>(index.subscriptions), static_cast<unsigned long long>(index.blocks), static_cast<unsigned long long>(index.bumps), sources.c_str(), static_cast<unsigned long long>(index.sweeps), static_cast<unsigned long long>(index.sweepFailures), static_cast<unsigned long long>(index.overflows), static_cast<unsigned long long>(index.lookups), static_cast<double>(index.lookupNanoseconds) / 1e6, indexFallbacks.c_str());
 }
 
 // APS5_NO_EPOCH_REVALIDATE=1: the per-element registry, cache and stamp checks and the per-region
@@ -3845,7 +3947,10 @@ bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements
 
 ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const CompiledShader> shaders, std::uint64_t serialBefore) {
     static_cast<void>(shaders);
-    if (writeSubscription == nullptr || subscribedGeneration == 0) return IndexOutcome::Fallback;
+    if (writeSubscription == nullptr || subscribedGeneration == 0) {
+        if (BuildProfiled()) countIndexFallback(IndexFallbackReason::NoSubscription, FastFail::Count);
+        return IndexOutcome::Fallback;
+    }
     const bool profiled = BuildProfiled();
     const auto start = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto outcome = [&](IndexOutcome result) {
@@ -3854,12 +3959,15 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
         Revalidations().indexNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
         return result;
     };
-    const auto fallback = [&] { return outcome(IndexOutcome::Fallback); };
+    const auto fallback = [&](IndexFallbackReason reason, FastFail fast = FastFail::Count) {
+        if (profiled) countIndexFallback(reason, fast);
+        return outcome(IndexOutcome::Fallback);
+    };
     auto& subscription = *writeSubscription;
     for (const auto& [begin, end] : GuestMemory::SubscriptionSpans(subscription)) {
-        if (!FlushDepthPlanes(begin, static_cast<std::size_t>(end - begin)).empty()) return fallback();
+        if (!FlushDepthPlanes(begin, static_cast<std::size_t>(end - begin)).empty()) return fallback(IndexFallbackReason::DepthFlush);
     }
-    if (!GuestMemory::SweepSubscription(subscription)) return fallback();
+    if (!GuestMemory::SweepSubscription(subscription)) return fallback(IndexFallbackReason::SweepFailed);
     if ((subscribedPendingSerial == 0 || subscribedPendingSerial != serialBefore) && !IndexBroken("pending")) {
         thread_local std::vector<StorageTexture::PendingQuery>* regionsSlot = nullptr;
         auto& regions = ShaderRecompiler::ThreadOwned(regionsSlot);
@@ -3867,11 +3975,11 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
         for (const auto& [begin, end] : GuestMemory::SubscriptionSpans(subscription)) regions.push_back({begin, end, nullptr, nullptr, false});
         if (!regions.empty()) {
             StorageTexture::ScanPending(regions);
-            if (std::any_of(regions.begin(), regions.end(), [](const StorageTexture::PendingQuery& region) { return region.overlaps; })) return fallback();
+            if (std::any_of(regions.begin(), regions.end(), [](const StorageTexture::PendingQuery& region) { return region.overlaps; })) return fallback(IndexFallbackReason::PendingOverSpans);
         }
     }
     for (const auto& [address, bytes] : comparedTableSpans) {
-        if (GuestMemory::CompareMapped(address, bytes) != GuestMemory::Compare::Equal) return fallback();
+        if (GuestMemory::CompareMapped(address, bytes) != GuestMemory::Compare::Equal) return fallback(IndexFallbackReason::ComparedSpanChanged);
     }
     const auto generation = GuestMemory::SubscriptionGeneration(subscription);
     thread_local std::vector<std::size_t>* checkSlot = nullptr;
@@ -3901,8 +4009,8 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
     };
     const bool partial = generation != subscribedGeneration;
     if (partial) {
-        if (!GuestMemory::SubscriptionBumpsSince(subscription, subscribedGeneration, blocks, lookupBlocks)) return fallback();
-        if (!elementsOf(blocks, bumped) || !elementsOf(lookupBlocks, looked)) return fallback();
+        if (!GuestMemory::SubscriptionBumpsSince(subscription, subscribedGeneration, blocks, lookupBlocks)) return fallback(IndexFallbackReason::BumpsSinceFailed);
+        if (!elementsOf(blocks, bumped) || !elementsOf(lookupBlocks, looked)) return fallback(IndexFallbackReason::TableSpanBumped);
         countIndex(IndexBumped, bumped.size());
         check.insert(check.end(), bumped.begin(), bumped.end());
         check.insert(check.end(), looked.begin(), looked.end());
@@ -3914,11 +4022,11 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
     replaced.clear();
     if (!looked.empty()) {
         countIndex(IndexLookedUp, looked.size());
-        if (!reresolveElements(looked, replaced)) return fallback();
+        if (!reresolveElements(looked, replaced)) return fallback(IndexFallbackReason::LookupReresolve);
     }
     if (!comparedTextures.empty() && !IndexBroken("compared")) {
         countIndex(IndexCompared, comparedTextures.size());
-        if (!reresolveElements(comparedTextures, replaced)) return fallback();
+        if (!reresolveElements(comparedTextures, replaced)) return fallback(IndexFallbackReason::CompareReresolve);
     }
     if (!check.empty() || !storageTextures.empty()) {
         thread_local std::vector<PendingOverlap>* overlappingSlot = nullptr;
@@ -3926,9 +4034,9 @@ ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const C
         FastFail reason = FastFail::Count;
         bool accepted = false;
         if (!fastRevalidate(serialBefore, {}, reason, overlapping, accepted, &check, true)) {
-            if (!partial || bumped.empty() || reason != FastFail::Changed) return fallback();
-            if (!reresolveElements(bumped, replaced)) return fallback();
-            if (!fastRevalidate(serialBefore, {}, reason, overlapping, accepted, &check, true)) return fallback();
+            if (!partial || bumped.empty() || reason != FastFail::Changed) return fallback(IndexFallbackReason::InnerFast, reason);
+            if (!reresolveElements(bumped, replaced)) return fallback(IndexFallbackReason::BumpedReresolve);
+            if (!fastRevalidate(serialBefore, {}, reason, overlapping, accepted, &check, true)) return fallback(IndexFallbackReason::SecondProof, reason);
         }
     }
     auto proved = generation;
@@ -4116,6 +4224,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     bool accepted = false;
     bool indexProved = false;
     std::uint64_t indexBaseline = 0;
+    if (profile) lastIndexFallback = IndexFallbackReason::Count;
     if (GuestMemory::WriteIndexEnabled() && !noFast && EpochRevalidate() && !SkipImageProof()) {
         if (profile) beginPiece(RevalidatePiece::Index);
         if (indexRevalidate(shaders, serialBefore) != IndexOutcome::Fallback) indexProved = true;
@@ -4167,6 +4276,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         fast = false;
         ownRefreshed = false;
         reason = FastFail::Audit;
+        if (profile && GuestMemory::WriteIndexEnabled()) countTemplateAudit(this, shaders);
     }
     if (report != nullptr) report->path = !fast ? ProofPath::Full : ownRefreshed ? ProofPath::OwnRefreshed : ProofPath::Fast;
     if (!fast) {
