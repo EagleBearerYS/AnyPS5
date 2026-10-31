@@ -1,2 +1,2 @@
-BUSY PRM-109
-machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 18 GB free disk; /home/user/AnyPS5 and its Release build kept (clone clean and detached at upstream main 0f302813ce, build configured there; last compiled a local main + #12945 tree's LibreSSL3 tests); origin and upstream fetched, upstream main ca073ec3ad; Khronos validation layer 1.4.341 built at /home/user/vvl; lavapipe only, no GPU, no IPv6
+READY 2026-10-31T20:31:18Z: PRM-109 done
+machine: Intel Xeon @ 2.80 GHz, 4 vCPUs (AVX2, AVX-512), 15 GiB RAM, 18 GB free disk; /home/user/AnyPS5 clean and detached at upstream main 0836dfdf4f (its Release build dir is still configured for 0f302813ce); origin and upstream fetched; Khronos validation layer 1.4.341 built at /home/user/vvl; lavapipe only, no GPU, no IPv6
