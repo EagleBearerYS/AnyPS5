@@ -1,0 +1,3 @@
+BASE=474030e58424fefdb65e5df9f3820810fbb4553c
+REPEAT=10
+EXTRA_TESTS='agc_storage_pending_key_refresh|agc_pending_key_stores|agc_unchanged_cpu_stamps'
