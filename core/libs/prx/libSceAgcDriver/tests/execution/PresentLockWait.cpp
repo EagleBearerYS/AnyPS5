@@ -246,7 +246,7 @@ Measured PresentBesideLockWaits(GuestBlock& block, const AgcDriver::Presentation
     std::thread presenter([&] {
         const auto start = Clock::now();
         try {
-            AgcDriverPresentBuffer_nid_postfix(window, buffer, NoGpuReady, &ReadyContext);
+            AgcDriverPresentBuffer_nid_postfix(window, buffer, nullptr, NoGpuReady, &ReadyContext);
         } catch (...) {
             failure = std::current_exception();
         }
@@ -282,7 +282,7 @@ int Run() {
     const AgcDriver::PresentationWindow window{&context, extensions, CreateHeadlessSurface, DrawableSize, Width, Height, nullptr};
     AgcDriverAttachWindow_nid_postfix(window);
     const AgcDriver::DisplayBuffer buffer{reinterpret_cast<std::uintptr_t>(block.Display()), Bgra8, Width, Height, 1u, Width};
-    AgcDriverPresentBuffer_nid_postfix(window, buffer, NoGpuReady, &ReadyContext);
+    AgcDriverPresentBuffer_nid_postfix(window, buffer, nullptr, NoGpuReady, &ReadyContext);
     AgcDriverWaitIdle_nid_postfix();
     Require(dumps.FirstPixel(0) == 0, "present lock wait: the first present read " + Hex(dumps.FirstPixel(0)) + " from a cleared display buffer");
     std::uint32_t iterations = 1u << 20u;
