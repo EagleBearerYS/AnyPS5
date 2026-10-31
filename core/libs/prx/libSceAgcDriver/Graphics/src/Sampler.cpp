@@ -56,9 +56,7 @@ namespace AgcDriver::Graphics {
     }
 
     void Sampler::release() noexcept {
-        if (heapSlotted.exchange(false, std::memory_order_acq_rel)) {
-            if (auto* heap = BindlessHeap::Existing(context)) heap->ReleaseSamplerSlot(this);
-        }
+        ReleaseHeapSlots(context);
         if (sampler) context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, sampler, nullptr);
     }
 

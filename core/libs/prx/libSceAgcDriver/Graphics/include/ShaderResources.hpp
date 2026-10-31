@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -657,6 +658,7 @@ private:
     VkImageView heapSampledView(std::size_t index) const;
     VkImageView heapStorageView(std::size_t index, std::uint32_t binding) const;
     VkImageView heapMultisampleStorageView(std::size_t index) const;
+    const HeapSlotOwner* heapMultisampleStorageOwner(std::size_t index) const;
     void appendHeapSlotKey(VkShaderStageFlags stageBit, std::vector<std::uintptr_t>& key) const;
     void takeHeapSlots(BindlessHeap& heap, HeapStageState& state, VkShaderStageFlags stageBit, std::span<const std::uintptr_t> key);
     static void noteHeapSlotGenerations(const BindlessHeap& heap, HeapStageState& state);
@@ -707,7 +709,7 @@ private:
     std::vector<bool> textureBaseLevel;
     std::vector<bool> textureSrgb;
     std::vector<std::shared_ptr<StorageTexture>> storageTextures;
-    std::vector<VkImageView> multisampleStorageViews;
+    std::vector<MultisampleStorage> multisampleStorage;
     std::vector<std::uint32_t> storageMips;
     std::vector<std::uint64_t> storageKeys;
     std::vector<bool> storageFirstLayer;

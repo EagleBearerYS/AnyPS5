@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SAMPLER_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_SAMPLER_HPP
 
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestSamplerResource.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -14,7 +15,7 @@
 
 namespace AgcDriver::Graphics {
 
-class Sampler {
+class Sampler : public HeapSlotOwner {
 public:
     Sampler(const Context& context, const GuestSamplerResource& descriptor);
     ~Sampler();
@@ -33,13 +34,11 @@ public:
         cacheKey = key;
         keyed = true;
     }
-    void MarkHeapSlotted() { heapSlotted.store(true, std::memory_order_release); }
 
 private:
     void release() noexcept;
 
     Context context;
-    std::atomic<bool> heapSlotted{false};
     bool forcesDegamma = false;
     VkSampler sampler = VK_NULL_HANDLE;
     bool requiresFilterMinmax = false;

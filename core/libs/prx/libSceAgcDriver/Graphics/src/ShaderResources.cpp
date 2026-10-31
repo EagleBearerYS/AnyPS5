@@ -2683,7 +2683,7 @@ void ShaderResources::buildComplete() {
                         write.pImageInfo = images.data() + images.size();
                         for (const auto index : binding.imageAllocations) {
                             if (index == std::numeric_limits<std::size_t>::max()) images.push_back(absentImage(binding.layout.binding));
-                            else if (storageTextures[index] == nullptr) images.push_back({VK_NULL_HANDLE, multisampleStorageViews[index], VK_IMAGE_LAYOUT_GENERAL});
+                            else if (storageTextures[index] == nullptr) images.push_back({VK_NULL_HANDLE, multisampleStorage[index].view, VK_IMAGE_LAYOUT_GENERAL});
                             else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], UintStorageBinding(binding.layout.binding)), VK_IMAGE_LAYOUT_GENERAL});
                         }
                         Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "descriptor allocations disagree with compact binding");
@@ -5248,9 +5248,9 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         if (resource.dimension == TextureDimension::k2DMsaa) {
             Require(!(element < binding.imageAtomic.size() && binding.imageAtomic[element]) && !(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]), "storage image atomics on a multisampled texture are not implemented");
             storageTextures.push_back(nullptr);
-            multisampleStorageViews.resize(storageTextures.size(), VK_NULL_HANDLE);
+            multisampleStorage.resize(storageTextures.size());
             const bool uintStorage = UintStorageBinding(binding.binding);
-            multisampleStorageViews.back() = MultisampleTargetStorageView(context, resource, uintStorage);
+            multisampleStorage.back() = MultisampleTargetStorageView(context, resource, uintStorage);
             multisampleSources.push_back(resource.baseAddress);
             storageMips.push_back(0);
             storageKeys.push_back(0);
@@ -6406,7 +6406,11 @@ VkImageView ShaderResources::heapSampledView(std::size_t index) const {
 }
 
 VkImageView ShaderResources::heapMultisampleStorageView(std::size_t index) const {
-    return index < multisampleStorageViews.size() ? multisampleStorageViews[index] : VK_NULL_HANDLE;
+    return index < multisampleStorage.size() ? multisampleStorage[index].view : VK_NULL_HANDLE;
+}
+
+const HeapSlotOwner* ShaderResources::heapMultisampleStorageOwner(std::size_t index) const {
+    return index < multisampleStorage.size() ? multisampleStorage[index].owner : nullptr;
 }
 
 VkImageView ShaderResources::heapStorageView(std::size_t index, std::uint32_t binding) const {
@@ -6434,7 +6438,7 @@ void ShaderResources::appendHeapSlotKey(VkShaderStageFlags stageBit, std::vector
         } else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
             for (const auto index : binding.imageAllocations) {
                 if (index != absent && storageTextures[index] == nullptr && heapMultisampleStorageView(index) != VK_NULL_HANDLE) {
-                    key.insert(key.end(), {0u, reinterpret_cast<std::uintptr_t>(heapMultisampleStorageView(index)),
+                    key.insert(key.end(), {reinterpret_cast<std::uintptr_t>(heapMultisampleStorageOwner(index)), reinterpret_cast<std::uintptr_t>(heapMultisampleStorageView(index)),
                                            static_cast<std::uintptr_t>(VK_IMAGE_LAYOUT_GENERAL)});
                     continue;
                 }
@@ -6481,7 +6485,7 @@ void ShaderResources::takeHeapSlots(BindlessHeap& heap, HeapStageState& state, V
                 if (index != absent && storageTextures[index] == nullptr && heapMultisampleStorageView(index) != VK_NULL_HANDLE) {
                     const auto view = reinterpret_cast<VkImageView>(key[cursor + 1]);
                     cursor += 3;
-                    kindSlots.push_back(takenSlot(heap.ViewSlot(kind, reinterpret_cast<const void*>(view), view), "the global storage image heap is full"));
+                    kindSlots.push_back(takenSlot(heap.ViewSlot(kind, heapMultisampleStorageOwner(index), view), "the global storage image heap is full"));
                     continue;
                 }
                 if (index == absent || storageTextures[index] == nullptr) {
@@ -6533,7 +6537,7 @@ void ShaderResources::verifyHeapSlots(const BindlessHeap& heap, const HeapStageS
                 const auto view = heapMultisampleStorageView(index);
                 if (view == VK_NULL_HANDLE) continue;
                 ++storageChecked;
-                if (!bound || !heap.SlotHoldsStorage(kind, state.slots[kind][element], reinterpret_cast<const void*>(view), view)) ++storageWrong;
+                if (!bound || !heap.SlotHoldsStorage(kind, state.slots[kind][element], heapMultisampleStorageOwner(index), view)) ++storageWrong;
                 continue;
             }
             ++storageChecked;

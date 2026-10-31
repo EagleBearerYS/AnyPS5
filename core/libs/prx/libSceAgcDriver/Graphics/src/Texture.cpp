@@ -1235,9 +1235,7 @@ VkImageView Texture::BaseLevelView() const {
 }
 
 void Texture::release() noexcept {
-    if (heapSlotted.exchange(false, std::memory_order_acq_rel)) {
-        if (auto* heap = BindlessHeap::Existing(context)) heap->ReleaseImageSlots(this);
-    }
+    ReleaseHeapSlots(context);
     upload.reset();
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     view = VK_NULL_HANDLE;
@@ -6571,7 +6569,7 @@ StorageTexture::~StorageTexture() {
 }
 
 void StorageTexture::release() noexcept {
-    if (auto* heap = BindlessHeap::Existing(context)) heap->ReleaseImageSlots(this);
+    ReleaseHeapSlots(context);
     for (const auto& [mip, extra] : extraViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);
     extraViews.clear();
     for (const auto& [mip, extra] : firstLayerViews) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, extra, nullptr);

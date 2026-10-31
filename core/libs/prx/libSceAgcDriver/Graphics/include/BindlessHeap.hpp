@@ -18,6 +18,7 @@ namespace AgcDriver::Graphics {
 
 class Buffer;
 class Recorder;
+class HeapSlotOwner;
 class Sampler;
 class StorageTexture;
 class Texture;
@@ -48,13 +49,12 @@ public:
     VkDeviceSize RingOffset() const;
 
     std::optional<std::uint32_t> TextureSlot(std::uint32_t kind, Texture* texture, VkImageView view, VkImageLayout layout);
-    std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, const void* owner, VkImageView view);
-    std::optional<std::uint32_t> ViewSlot(std::uint32_t kind, const void* owner, VkImageView view);
-    void ReleaseImageSlots(const void* owner);
-    void ReleaseSamplerSlot(const Sampler* sampler);
+    std::optional<std::uint32_t> StorageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view);
+    std::optional<std::uint32_t> ViewSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view);
+    void ReleaseSlots(const HeapSlotOwner* owner);
     std::uint32_t SlotGeneration(std::uint32_t slot) const;
     const Texture* SlotTexture(std::uint32_t kind, std::uint32_t slot) const;
-    bool SlotHoldsStorage(std::uint32_t kind, std::uint32_t slot, const void* owner, VkImageView view) const;
+    bool SlotHoldsStorage(std::uint32_t kind, std::uint32_t slot, const HeapSlotOwner* owner, VkImageView view) const;
     std::optional<std::uint32_t> SamplerSlot(const std::shared_ptr<Sampler>& sampler);
     std::uint32_t SamplerGeneration(std::uint32_t slot) const;
     std::uint64_t SlotSerial() const { return slotSerial.load(std::memory_order_acquire); }
@@ -127,7 +127,7 @@ private:
     std::atomic<std::uint64_t> slotSerial{1};
     struct ImageSlotKey {
         std::uint32_t kind;
-        const void* owner;
+        const HeapSlotOwner* owner;
         VkImageView view;
         VkImageLayout layout;
         bool operator==(const ImageSlotKey&) const = default;
@@ -139,40 +139,64 @@ private:
             const auto mix = [&seed](std::size_t value) { seed ^= value + HashSalt + (seed << 6u) + (seed >> 2u); };
             mix(key.kind);
             mix(static_cast<std::size_t>(key.layout));
-            mix(std::hash<const void*>{}(key.owner));
+            mix(std::hash<const HeapSlotOwner*>{}(key.owner));
             mix(std::hash<const void*>{}(reinterpret_cast<const void*>(key.view)));
             return seed;
         }
     };
     std::unordered_map<ImageSlotKey, std::uint32_t, ImageSlotKeyHash> imageSlots;
-    std::unordered_map<const void*, std::vector<std::uint32_t>> ownerSlots;
-    std::uint32_t nextImageSlot = 0;
+    std::unordered_map<const HeapSlotOwner*, std::vector<std::uint32_t>> ownerSlots;
+    struct SlotPool {
+        std::uint32_t next = 0;
+        std::uint32_t limit = 0;
+        std::vector<std::uint32_t> free;
+        std::vector<std::uint32_t> generations;
+        std::optional<std::uint32_t> Take(bool& reused);
+        void Free(std::uint32_t slot);
+        std::size_t Unused() const;
+        std::uint32_t Generation(std::uint32_t slot) const;
+    };
     struct SlotOwner {
         const Texture* texture = nullptr;
         ImageSlotKey key{};
-        std::uint32_t generation = 0;
     };
     std::vector<SlotOwner> owners;
-    std::vector<std::uint32_t> freeSlots;
+    SlotPool imagePool;
+    SlotPool samplerPool;
     std::uint32_t slotCap = 0;
-    std::optional<std::uint32_t> imageSlot(std::uint32_t kind, const void* owner, VkImageView view, VkImageLayout layout, Texture* texture);
-    std::optional<std::uint32_t> takeSlotLocked();
+    std::optional<std::uint32_t> imageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view, VkImageLayout layout, Texture* texture);
     SlotOwner& claimSlotLocked(const ImageSlotKey& key, std::uint32_t slot);
     void freeSlotLocked(std::uint32_t slot);
     const SlotOwner* ownerLocked(std::uint32_t slot) const;
-    std::unordered_map<const Sampler*, std::uint32_t> samplerSlots;
+    std::unordered_map<const HeapSlotOwner*, std::uint32_t> samplerSlots;
     std::unordered_set<std::uint32_t> absentSlots;
-    std::vector<std::uint32_t> samplerGenerations;
-    std::vector<std::uint32_t> freeSamplerSlots;
     bool refused = false;
     void noteRefusedLocked(const char* what, std::uint32_t margin);
     void noteTakenLocked();
     void noteSamplerTakenLocked();
     void noteReleasedLocked();
     std::uint32_t imageMargin() const;
-    std::size_t unusedLocked() const;
     bool roomLocked() const;
     Counts counts;
+};
+
+class HeapSlotOwner {
+public:
+    HeapSlotOwner(const HeapSlotOwner&) = delete;
+    HeapSlotOwner& operator=(const HeapSlotOwner&) = delete;
+
+protected:
+    HeapSlotOwner() = default;
+    ~HeapSlotOwner() = default;
+    void ReleaseHeapSlots(const Context& context) noexcept {
+        if (heapSlotted.exchange(false, std::memory_order_acq_rel)) {
+            if (auto* heap = BindlessHeap::Existing(context)) heap->ReleaseSlots(this);
+        }
+    }
+
+private:
+    friend class BindlessHeap;
+    mutable std::atomic<bool> heapSlotted{false};
 };
 
 bool GpuHeapEnabled();

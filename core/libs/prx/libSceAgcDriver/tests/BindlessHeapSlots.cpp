@@ -26,6 +26,10 @@ void require(bool condition, const std::string& what) {
     if (!condition) throw std::runtime_error(what);
 }
 
+struct FakeOwner : HeapSlotOwner {
+    FakeOwner() = default;
+};
+
 alignas(Texture) std::array<std::array<std::byte, sizeof(Texture)>, 8> fakeTextures{};
 
 std::shared_ptr<Texture> fakeTexture(std::size_t index) {
@@ -44,7 +48,7 @@ void textureSlots(const Context& context, VkImageView view) {
 
     auto second = fakeTexture(1);
     require(!heap.TextureSlot(kind, second.get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(), "the slot of a live texture is not reused");
-    heap.ReleaseImageSlots(first.get());
+    heap.ReleaseSlots(first.get());
     const auto reused = heap.TextureSlot(kind, second.get(), view, VK_IMAGE_LAYOUT_GENERAL);
     require(reused.has_value() && *reused == *slot, "the released texture's slot is reused");
     require(heap.SlotGeneration(*slot) != generation, "a freed slot moves its generation");
@@ -56,14 +60,14 @@ void textureSlots(const Context& context, VkImageView view) {
     const auto otherKind = kind + 1u;
     require(!heap.TextureSlot(otherKind, shared.get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(),
             "another kind finds the capped heap's only slot taken");
-    heap.ReleaseImageSlots(second.get());
+    heap.ReleaseSlots(second.get());
     const auto sharedSlot = heap.TextureSlot(otherKind, shared.get(), view, VK_IMAGE_LAYOUT_GENERAL);
     require(sharedSlot.has_value() && *sharedSlot == *slot, "another kind takes the slot the first kind's texture left");
     require(heap.SlotTexture(kind, *slot) == nullptr && heap.SlotTexture(otherKind, *slot) == shared.get(),
             "the slot names the other kind's texture");
     const auto freedBefore = heap.Statistics().slotsFreed;
-    heap.ReleaseImageSlots(shared.get());
-    heap.ReleaseImageSlots(shared.get());
+    heap.ReleaseSlots(shared.get());
+    heap.ReleaseSlots(shared.get());
     require(heap.Statistics().slotsFreed == freedBefore + 1u, "a texture's release frees its slot once");
 }
 
@@ -91,15 +95,15 @@ void samplerSlots(const Context& context) {
 void viewSlots(const Context& context, VkImageView view) {
     auto& heap = BindlessHeap::For(context);
     const auto kind = Abi::FirstStorageImageBinding + 27u;
-    const int first = 0, second = 0;
+    FakeOwner first, second;
     const auto slot = heap.ViewSlot(kind, &first, view);
     require(slot.has_value() && heap.ViewSlot(kind, &first, view) == slot, "a view keeps its slot");
     require(!heap.ViewSlot(kind, &second, view).has_value(), "a full heap refuses another owner's view");
     const auto generation = heap.SlotGeneration(*slot);
-    heap.ReleaseImageSlots(&first);
+    heap.ReleaseSlots(&first);
     require(heap.SlotGeneration(*slot) != generation, "a released view slot moves its generation");
     require(heap.ViewSlot(kind, &second, view) == slot, "a released view slot is reused");
-    heap.ReleaseImageSlots(&second);
+    heap.ReleaseSlots(&second);
 }
 
 void encodedViews(const Context& context) {
@@ -128,15 +132,63 @@ void encodedViews(const Context& context) {
 
 void ownerSlots(const Context& context, VkImageView view) {
     BindlessHeap heap(context);
-    const int image = 0, other = 0;
+    FakeOwner image, other;
     const auto slot = heap.StorageSlot(Abi::FirstStorageImageBinding, &image, view);
     require(slot.has_value(), "a storage owner takes the capped heap's only slot");
     require(!heap.StorageSlot(Abi::FirstStorageImageBinding + 1u, &image, view).has_value(), "the owner's second view finds the heap full");
-    heap.ReleaseImageSlots(&other);
+    heap.ReleaseSlots(&other);
     require(!heap.StorageSlot(Abi::FirstStorageImageBinding, &other, view).has_value(), "another owner's release freed this owner's slot");
-    heap.ReleaseImageSlots(&image);
+    heap.ReleaseSlots(&image);
     require(heap.StorageSlot(Abi::FirstStorageImageBinding, &other, view) == slot, "a storage owner's release frees its slot");
-    heap.ReleaseImageSlots(&other);
+    heap.ReleaseSlots(&other);
+}
+
+void ownerViewsRelease(const Context& context, VkImageView view) {
+    BindlessHeap heap(context);
+    FakeOwner owner;
+    const auto firstKind = Abi::FirstStorageImageBinding, secondKind = Abi::FirstStorageImageBinding + 1u;
+    const auto first = heap.StorageSlot(firstKind, &owner, view);
+    const auto second = heap.ViewSlot(secondKind, &owner, view);
+    require(first.has_value() && second.has_value() && *first != *second, "one owner takes a slot for each of its two views");
+    const auto before = heap.Statistics();
+    const auto serial = heap.SlotSerial();
+    require(heap.StorageSlot(firstKind, &owner, view) == first && heap.ViewSlot(secondKind, &owner, view) == second, "a lookup hit returns the owner's existing slots");
+    const auto hit = heap.Statistics();
+    require(hit.slotsFreed == before.slotsFreed && hit.slotsReused == before.slotsReused && hit.encodes == before.encodes && hit.encodedCopies == before.encodedCopies,
+            "a lookup hit changed the counts");
+    require(heap.SlotSerial() == serial, "a lookup hit moved the slot serial");
+    const auto firstGeneration = heap.SlotGeneration(*first), secondGeneration = heap.SlotGeneration(*second);
+    heap.ReleaseSlots(&owner);
+    const auto released = heap.Statistics();
+    require(released.slotsFreed == before.slotsFreed + 2u, "one release freed " + std::to_string(released.slotsFreed - before.slotsFreed) + " of the owner's two slots");
+    require(heap.SlotGeneration(*first) != firstGeneration && heap.SlotGeneration(*second) != secondGeneration, "the release moved both slots' generations");
+    require(heap.SlotSerial() != serial, "a release moved the slot serial");
+    const auto releasedSerial = heap.SlotSerial();
+    const auto releasedGenerations = std::array{heap.SlotGeneration(*first), heap.SlotGeneration(*second)};
+    heap.ReleaseSlots(&owner);
+    require(heap.Statistics().slotsFreed == released.slotsFreed, "a second release of the same owner freed slots");
+    require(heap.SlotSerial() == releasedSerial, "a second release moved the slot serial");
+    require(heap.SlotGeneration(*first) == releasedGenerations[0] && heap.SlotGeneration(*second) == releasedGenerations[1], "a second release moved a generation");
+}
+
+struct SharedOwner : std::enable_shared_from_this<SharedOwner>, HeapSlotOwner {
+    explicit SharedOwner(const Context& context) : context(context) {}
+    ~SharedOwner() { ReleaseHeapSlots(context); }
+    Context context;
+};
+
+void sharedOwnerRelease(const Context& context, VkImageView view) {
+    auto& heap = BindlessHeap::For(context);
+    auto owner = std::make_shared<SharedOwner>(context);
+    const HeapSlotOwner* base = owner.get();
+    require(static_cast<const void*>(base) != static_cast<const void*>(owner.get()), "the slot owner base does not sit behind another base");
+    const auto slot = heap.StorageSlot(Abi::FirstStorageImageBinding, owner.get(), view);
+    require(slot.has_value(), "an owner behind another base takes a slot");
+    const auto generation = heap.SlotGeneration(*slot);
+    const auto freed = heap.Statistics().slotsFreed;
+    owner.reset();
+    require(heap.SlotGeneration(*slot) != generation && heap.Statistics().slotsFreed == freed + 1u,
+            "destroying an owner behind another base did not free its slot");
 }
 
 void ringSpans(const Context& context) {
@@ -186,30 +238,30 @@ void heapComesBack(const Context& context, VkImageView view) {
                 "a texture takes one of the eight capped slots");
     }
     require(BindlessHeap::NearlyFull(), "one free slot of eight refuses the heap");
-    for (std::size_t index = 0; index < 2u; ++index) heap.ReleaseImageSlots(held[index].get());
+    for (std::size_t index = 0; index < 2u; ++index) heap.ReleaseSlots(held[index].get());
     require(BindlessHeap::NearlyFull(), "three free slots of eight leave the heap refused");
-    heap.ReleaseImageSlots(held[2].get());
+    heap.ReleaseSlots(held[2].get());
     require(!BindlessHeap::NearlyFull(), "a release that leaves twice the margin free takes the heap again");
-    for (std::size_t index = 3; index < held.size(); ++index) heap.ReleaseImageSlots(held[index].get());
+    for (std::size_t index = 3; index < held.size(); ++index) heap.ReleaseSlots(held[index].get());
     BindlessHeap::Release(context.device);
 }
 
 void storageComesBack(const Context& context, VkImageView view) {
     auto& heap = BindlessHeap::For(context);
-    std::array<int, 7> owners{};
+    std::array<FakeOwner, 7> owners{};
     for (auto& owner : owners) {
         require(heap.StorageSlot(Abi::FirstStorageImageBinding, &owner, view).has_value(),
                 "a storage owner takes one of the eight capped slots");
     }
     require(BindlessHeap::NearlyFull(), "storage owners that leave one free slot of eight refuse the heap");
-    for (auto& owner : owners) heap.ReleaseImageSlots(&owner);
+    for (auto& owner : owners) heap.ReleaseSlots(&owner);
     require(!BindlessHeap::NearlyFull(), "releasing the storage owners takes the heap again");
     BindlessHeap::Release(context.device);
 }
 
 void storageViewsComeBack(const Context& context, VkImageView view) {
     auto& heap = BindlessHeap::For(context);
-    std::array<int, 4> owners{};
+    std::array<FakeOwner, 4> owners{};
     for (std::size_t index = 0; index < 3u; ++index) {
         for (std::uint32_t kind = 0; kind < 2u; ++kind) {
             require(heap.StorageSlot(Abi::FirstStorageImageBinding + kind, &owners[index], view).has_value(),
@@ -219,13 +271,13 @@ void storageViewsComeBack(const Context& context, VkImageView view) {
     require(heap.StorageSlot(Abi::FirstStorageImageBinding, &owners[3], view).has_value(), "a single-view storage owner takes the seventh slot");
     require(BindlessHeap::NearlyFull(), "storage owners that leave one free slot of eight refuse the heap");
     const auto freed = heap.Statistics().slotsFreed;
-    heap.ReleaseImageSlots(&owners[0]);
+    heap.ReleaseSlots(&owners[0]);
     require(heap.Statistics().slotsFreed == freed + 2u, "a storage owner's release freed " + std::to_string(heap.Statistics().slotsFreed - freed) + " of its two slots");
     require(BindlessHeap::NearlyFull(), "three free slots of eight leave the heap refused");
-    heap.ReleaseImageSlots(&owners[1]);
+    heap.ReleaseSlots(&owners[1]);
     require(!BindlessHeap::NearlyFull(), "releasing a second two-view owner takes the heap again");
-    heap.ReleaseImageSlots(&owners[2]);
-    heap.ReleaseImageSlots(&owners[3]);
+    heap.ReleaseSlots(&owners[2]);
+    heap.ReleaseSlots(&owners[3]);
     BindlessHeap::Release(context.device);
 }
 
@@ -238,25 +290,25 @@ void mixedComesBack(const Context& context, VkImageView sampledView, VkImageView
                 "a texture takes one of the eight capped slots");
     }
     require(!BindlessHeap::NearlyFull(), "four textures in eight capped slots leave the heap taken");
-    std::array<int, 3> owners{};
+    std::array<FakeOwner, 3> owners{};
     for (auto& owner : owners) {
         require(heap.StorageSlot(Abi::FirstStorageImageBinding, &owner, storageView).has_value(),
                 "a storage owner takes one of the slots the textures left");
     }
     require(BindlessHeap::NearlyFull(), "storage owners that take the slots the textures left refuse the heap");
-    for (auto& owner : owners) heap.ReleaseImageSlots(&owner);
+    for (auto& owner : owners) heap.ReleaseSlots(&owner);
     require(!BindlessHeap::NearlyFull(), "releasing the storage owners takes the heap again while the textures stay");
-    for (const auto& texture : textures) heap.ReleaseImageSlots(texture.get());
+    for (const auto& texture : textures) heap.ReleaseSlots(texture.get());
     BindlessHeap::Release(context.device);
 }
 
 void viewsComeBack(const Context& context, VkImageView view) {
     auto& heap = BindlessHeap::For(context);
     const auto kind = Abi::FirstStorageImageBinding + 27u;
-    std::array<int, 7> owners{};
+    std::array<FakeOwner, 7> owners{};
     for (auto& owner : owners) require(heap.ViewSlot(kind, &owner, view).has_value(), "a view takes one of the eight capped slots");
     require(BindlessHeap::NearlyFull(), "views that leave one free slot of eight refuse the heap");
-    for (auto& owner : owners) heap.ReleaseImageSlots(&owner);
+    for (auto& owner : owners) heap.ReleaseSlots(&owner);
     require(!BindlessHeap::NearlyFull(), "releasing the views takes the heap again");
     BindlessHeap::Release(context.device);
 }
@@ -264,15 +316,15 @@ void viewsComeBack(const Context& context, VkImageView view) {
 void twoHeapsComeBack(const Context& context, VkImageView view) {
     auto first = std::make_unique<BindlessHeap>(context);
     auto second = std::make_unique<BindlessHeap>(context);
-    std::array<int, 7> firstOwners{}, secondOwners{};
+    std::array<FakeOwner, 7> firstOwners{}, secondOwners{};
     for (auto& owner : firstOwners) require(first->ViewSlot(Abi::FirstStorageImageBinding, &owner, view).has_value(), "a view takes one of the first heap's eight capped slots");
     for (auto& owner : secondOwners) require(second->ViewSlot(Abi::FirstStorageImageBinding, &owner, view).has_value(), "a view takes one of the second heap's eight capped slots");
     require(BindlessHeap::NearlyFull(), "two nearly full heaps refuse the heap");
-    for (auto& owner : secondOwners) second->ReleaseImageSlots(&owner);
+    for (auto& owner : secondOwners) second->ReleaseSlots(&owner);
     require(BindlessHeap::NearlyFull(), "room in the second heap took the heap back while the first stays nearly full");
     second.reset();
     require(BindlessHeap::NearlyFull(), "destroying the second heap took the heap back while the first stays nearly full");
-    for (auto& owner : firstOwners) first->ReleaseImageSlots(&owner);
+    for (auto& owner : firstOwners) first->ReleaseSlots(&owner);
     require(!BindlessHeap::NearlyFull(), "room in the last refused heap did not take the heap back");
     first.reset();
 }
@@ -315,6 +367,8 @@ int main(int argc, char** argv) {
                 else if (mode == "mixed-comes-back") mixedComesBack(context, sampled, storage);
                 else if (mode == "views-come-back") viewsComeBack(context, storage);
                 else if (mode == "two-heaps-come-back") twoHeapsComeBack(context, storage);
+                else if (mode == "owner-views-release") ownerViewsRelease(context, storage);
+                else if (mode == "shared-owner-release") sharedOwnerRelease(context, storage);
                 else throw std::runtime_error("unknown mode " + mode);
                 device->WaitIdle();
             }

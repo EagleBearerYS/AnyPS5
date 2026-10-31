@@ -74,11 +74,6 @@ std::size_t lastChunkOf(std::size_t offset, std::size_t bytes) {
     return chunkOf(offset + std::max<std::size_t>(bytes, 1u) - 1u);
 }
 
-std::atomic<std::uint64_t> spansWrittenWindow{0};
-std::atomic<std::uint64_t> imageEncodesWindow{0};
-std::atomic<std::uint64_t> imageCopiesWindow{0};
-std::atomic<std::uint64_t> spansKeptWindow{0};
-std::atomic<std::uint64_t> spansExpiredWindow{0};
 std::atomic<std::uint64_t> heapComputeStages{0};
 std::atomic<bool> descriptorHeapDevice{false};
 std::atomic<std::uint64_t> imageTableBuilds{0};
@@ -253,8 +248,10 @@ BindlessHeap::BindlessHeap(const Context& context) : context(context) {
         ringAlignment = static_cast<std::uint32_t>(std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, RingSpanAlignment));
     }
     ringChunks.resize(ringBytes / RingChunkBytes);
-    nextImageSlot = SamplerKind;
     slotCap = configuredSlotCap();
+    imagePool.next = SamplerKind;
+    imagePool.limit = slotCap;
+    samplerPool.limit = Abi::GpuSamplerHeapSlots;
 }
 
 namespace {
@@ -292,8 +289,7 @@ BindlessHeap& BindlessHeap::For(const Context& context) {
         std::uint64_t epoch = ~std::uint64_t{0};
     };
     thread_local Cached cached;
-    const bool trims = CommitTrims();
-    if (trims && cached.heap != nullptr && cached.device == context.device && cached.epoch == heapsEpoch.load(std::memory_order_acquire)) {
+    if (cached.heap != nullptr && cached.device == context.device && cached.epoch == heapsEpoch.load(std::memory_order_acquire)) {
         return *cached.heap;
     }
     std::lock_guard lock(heapsMutex());
@@ -302,7 +298,7 @@ BindlessHeap& BindlessHeap::For(const Context& context) {
         heap = std::make_unique<BindlessHeap>(context);
         heapsEpoch.fetch_add(1, std::memory_order_acq_rel);
     }
-    if (trims) cached = {context.device, heap.get(), heapsEpoch.load(std::memory_order_acquire)};
+    cached = {context.device, heap.get(), heapsEpoch.load(std::memory_order_acquire)};
     return *heap;
 }
 
@@ -326,53 +322,52 @@ BindlessHeap* BindlessHeap::Existing(const Context& context) {
 
 std::optional<std::uint32_t> BindlessHeap::TextureSlot(std::uint32_t kind, Texture* texture, VkImageView view, VkImageLayout layout) {
     Require(isSampledKind(kind) && texture != nullptr && view != VK_NULL_HANDLE, "bindless heap: invalid texture slot request");
-    return imageSlot(kind, texture, view, layout, texture);
+    const HeapSlotOwner* owner = texture;
+    return imageSlot(kind, owner, view, layout, texture);
 }
 
-std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, const void* owner, VkImageView view) {
+std::optional<std::uint32_t> BindlessHeap::StorageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view) {
     Require(Abi::GpuHeapStorageKind(kind) && owner != nullptr && view != VK_NULL_HANDLE, "bindless heap: invalid storage slot request");
     return imageSlot(kind, owner, view, VK_IMAGE_LAYOUT_GENERAL, nullptr);
 }
 
-std::optional<std::uint32_t> BindlessHeap::ViewSlot(std::uint32_t kind, const void* owner, VkImageView view) {
+std::optional<std::uint32_t> BindlessHeap::ViewSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view) {
     Require(isImageKind(kind) && owner != nullptr && view != VK_NULL_HANDLE, "bindless heap: invalid view slot request");
     return imageSlot(kind, owner, view, VK_IMAGE_LAYOUT_GENERAL, nullptr);
 }
 
-std::optional<std::uint32_t> BindlessHeap::imageSlot(std::uint32_t kind, const void* owner, VkImageView view, VkImageLayout layout, Texture* texture) {
+std::optional<std::uint32_t> BindlessHeap::imageSlot(std::uint32_t kind, const HeapSlotOwner* owner, VkImageView view, VkImageLayout layout, Texture* texture) {
     std::lock_guard lock(mutex);
     const ImageSlotKey key{kind, owner, view, layout};
     if (const auto found = imageSlots.find(key); found != imageSlots.end()) return found->second;
-    const auto slot = takeSlotLocked();
+    bool reused = false;
+    const auto slot = imagePool.Take(reused);
     if (!slot) return std::nullopt;
+    if (reused) ++counts.slotsReused;
     writeImageSlot(kind, *slot, view, layout);
     claimSlotLocked(key, *slot).texture = texture;
-    if (texture != nullptr) texture->MarkHeapSlotted();
+    owner->heapSlotted.store(true, std::memory_order_release);
     noteTakenLocked();
     return slot;
 }
 
-void BindlessHeap::ReleaseImageSlots(const void* owner) {
+void BindlessHeap::ReleaseSlots(const HeapSlotOwner* owner) {
     std::lock_guard lock(mutex);
-    const auto found = ownerSlots.find(owner);
-    if (found == ownerSlots.end()) return;
-    const auto slots = std::move(found->second);
-    ownerSlots.erase(found);
-    for (const auto slot : slots) freeSlotLocked(slot);
+    bool released = false;
+    if (const auto found = ownerSlots.find(owner); found != ownerSlots.end()) {
+        const auto slots = std::move(found->second);
+        ownerSlots.erase(found);
+        for (const auto slot : slots) freeSlotLocked(slot);
+        released = true;
+    }
+    if (const auto found = samplerSlots.find(owner); found != samplerSlots.end()) {
+        samplerPool.Free(found->second);
+        samplerSlots.erase(found);
+        ++counts.slotsFreed;
+        released = true;
+    }
+    if (!released) return;
     slotSerial.fetch_add(1, std::memory_order_release);
-    noteReleasedLocked();
-}
-
-void BindlessHeap::ReleaseSamplerSlot(const Sampler* sampler) {
-    std::lock_guard lock(mutex);
-    const auto found = samplerSlots.find(sampler);
-    if (found == samplerSlots.end()) return;
-    const auto slot = found->second;
-    samplerSlots.erase(found);
-    ++samplerGenerations[slot];
-    slotSerial.fetch_add(1, std::memory_order_release);
-    freeSamplerSlots.push_back(slot);
-    ++counts.slotsFreed;
     noteReleasedLocked();
 }
 
@@ -389,8 +384,7 @@ void BindlessHeap::freeSlotLocked(std::uint32_t slot) {
     imageSlots.erase(owner.key);
     owner.texture = nullptr;
     owner.key = {};
-    ++owner.generation;
-    freeSlots.push_back(slot);
+    imagePool.Free(slot);
     ++counts.slotsFreed;
 }
 
@@ -398,15 +392,31 @@ const BindlessHeap::SlotOwner* BindlessHeap::ownerLocked(std::uint32_t slot) con
     return slot < owners.size() ? &owners[slot] : nullptr;
 }
 
-std::optional<std::uint32_t> BindlessHeap::takeSlotLocked() {
-    if (!freeSlots.empty()) {
-        const auto slot = freeSlots.back();
-        freeSlots.pop_back();
-        ++counts.slotsReused;
+std::optional<std::uint32_t> BindlessHeap::SlotPool::Take(bool& reused) {
+    reused = false;
+    if (!free.empty()) {
+        const auto slot = free.back();
+        free.pop_back();
+        reused = true;
         return slot;
     }
-    if (nextImageSlot >= slotCap) return std::nullopt;
-    return nextImageSlot++;
+    if (next >= limit) return std::nullopt;
+    const auto slot = next++;
+    if (generations.size() <= slot) generations.resize(static_cast<std::size_t>(slot) + 1u, 0u);
+    return slot;
+}
+
+void BindlessHeap::SlotPool::Free(std::uint32_t slot) {
+    ++generations[slot];
+    free.push_back(slot);
+}
+
+std::size_t BindlessHeap::SlotPool::Unused() const {
+    return (next < limit ? limit - next : 0u) + free.size();
+}
+
+std::uint32_t BindlessHeap::SlotPool::Generation(std::uint32_t slot) const {
+    return slot < generations.size() ? generations[slot] : 0u;
 }
 
 bool BindlessHeap::NearlyFull() {
@@ -421,13 +431,9 @@ std::uint32_t BindlessHeap::imageMargin() const {
     return std::max(1u, std::min(ImageSlotMargin, (slotCap - SamplerKind) / 4u));
 }
 
-std::size_t BindlessHeap::unusedLocked() const {
-    return (nextImageSlot < slotCap ? slotCap - nextImageSlot : 0u) + freeSlots.size();
-}
-
 bool BindlessHeap::roomLocked() const {
-    if (unusedLocked() < 2u * static_cast<std::size_t>(imageMargin())) return false;
-    return Abi::GpuSamplerHeapSlots - samplerGenerations.size() + freeSamplerSlots.size() >= 2u * SamplerSlotMargin;
+    if (imagePool.Unused() < 2u * static_cast<std::size_t>(imageMargin())) return false;
+    return samplerPool.Unused() >= 2u * SamplerSlotMargin;
 }
 
 void BindlessHeap::noteRefusedLocked(const char* what, std::uint32_t margin) {
@@ -439,11 +445,11 @@ void BindlessHeap::noteRefusedLocked(const char* what, std::uint32_t margin) {
 
 void BindlessHeap::noteTakenLocked() {
     const auto margin = imageMargin();
-    if (!refused && unusedLocked() < margin) noteRefusedLocked("image", margin);
+    if (!refused && imagePool.Unused() < margin) noteRefusedLocked("image", margin);
 }
 
 void BindlessHeap::noteSamplerTakenLocked() {
-    if (!refused && Abi::GpuSamplerHeapSlots - samplerGenerations.size() + freeSamplerSlots.size() < SamplerSlotMargin) noteRefusedLocked("sampler", SamplerSlotMargin);
+    if (!refused && samplerPool.Unused() < SamplerSlotMargin) noteRefusedLocked("sampler", SamplerSlotMargin);
 }
 
 void BindlessHeap::noteReleasedLocked() {
@@ -455,7 +461,7 @@ void BindlessHeap::noteReleasedLocked() {
 
 std::uint32_t BindlessHeap::SamplerGeneration(std::uint32_t slot) const {
     std::lock_guard lock(mutex);
-    return slot < samplerGenerations.size() ? samplerGenerations[slot] : 0u;
+    return samplerPool.Generation(slot);
 }
 
 bool BindlessHeap::GenerationsCurrent(std::span<const std::vector<std::uint32_t>> slots, std::span<const std::uint32_t> slotGenerations,
@@ -465,24 +471,18 @@ bool BindlessHeap::GenerationsCurrent(std::span<const std::vector<std::uint32_t>
     std::size_t generation = 0;
     for (std::uint32_t kind = 0; kind < slots.size(); ++kind) {
         for (const auto slot : slots[kind]) {
-            const auto* owner = ownerLocked(slot);
-            const auto current = owner != nullptr ? owner->generation : 0u;
-            if (generation >= slotGenerations.size() || current != slotGenerations[generation++]) return false;
+            if (generation >= slotGenerations.size() || imagePool.Generation(slot) != slotGenerations[generation++]) return false;
         }
     }
-    const auto samplerGenerationOf = [&](std::uint32_t slot) {
-        return slot < this->samplerGenerations.size() ? this->samplerGenerations[slot] : 0u;
-    };
     for (std::size_t i = 0; i < samplerSlots.size(); ++i) {
-        if (i >= samplerGenerations.size() || samplerGenerationOf(samplerSlots[i]) != samplerGenerations[i]) return false;
+        if (i >= samplerGenerations.size() || samplerPool.Generation(samplerSlots[i]) != samplerGenerations[i]) return false;
     }
     return true;
 }
 
 std::uint32_t BindlessHeap::SlotGeneration(std::uint32_t slot) const {
     std::lock_guard lock(mutex);
-    const auto* owner = ownerLocked(slot);
-    return owner != nullptr ? owner->generation : 0u;
+    return imagePool.Generation(slot);
 }
 
 const Texture* BindlessHeap::SlotTexture(std::uint32_t kind, std::uint32_t slot) const {
@@ -491,7 +491,7 @@ const Texture* BindlessHeap::SlotTexture(std::uint32_t kind, std::uint32_t slot)
     return owner != nullptr && owner->key.kind == kind ? owner->texture : nullptr;
 }
 
-bool BindlessHeap::SlotHoldsStorage(std::uint32_t kind, std::uint32_t slot, const void* owner, VkImageView view) const {
+bool BindlessHeap::SlotHoldsStorage(std::uint32_t kind, std::uint32_t slot, const HeapSlotOwner* owner, VkImageView view) const {
     std::lock_guard lock(mutex);
     const auto* held = ownerLocked(slot);
     return held != nullptr && held->key == ImageSlotKey{kind, owner, view, VK_IMAGE_LAYOUT_GENERAL};
@@ -509,21 +509,15 @@ std::uint32_t BindlessHeap::AbsentSlot(std::uint32_t kind, VkImageView view) {
 std::optional<std::uint32_t> BindlessHeap::SamplerSlot(const std::shared_ptr<Sampler>& sampler) {
     Require(sampler != nullptr, "bindless heap: invalid sampler slot request");
     std::lock_guard lock(mutex);
-    if (const auto found = samplerSlots.find(sampler.get()); found != samplerSlots.end()) return found->second;
-    std::uint32_t slot = 0;
-    if (!freeSamplerSlots.empty()) {
-        slot = freeSamplerSlots.back();
-        freeSamplerSlots.pop_back();
-        ++counts.slotsReused;
-    } else if (samplerGenerations.size() < Abi::GpuSamplerHeapSlots) {
-        slot = static_cast<std::uint32_t>(samplerGenerations.size());
-        samplerGenerations.push_back(0u);
-    } else {
-        return std::nullopt;
-    }
-    writeSamplerSlot(slot, sampler->Handle());
-    samplerSlots.emplace(sampler.get(), slot);
-    sampler->MarkHeapSlotted();
+    if (const auto found = samplerSlots.find(static_cast<const HeapSlotOwner*>(sampler.get())); found != samplerSlots.end()) return found->second;
+    bool reused = false;
+    const auto slot = samplerPool.Take(reused);
+    if (!slot) return std::nullopt;
+    if (reused) ++counts.slotsReused;
+    writeSamplerSlot(*slot, sampler->Handle());
+    const HeapSlotOwner* owner = sampler.get();
+    samplerSlots.emplace(owner, *slot);
+    owner->heapSlotted.store(true, std::memory_order_release);
     noteSamplerTakenLocked();
     return slot;
 }
@@ -541,12 +535,10 @@ bool BindlessHeap::Held(const SpanMark& mark) {
     auto& chunk = ringChunks[first];
     if (chunk.entries != mark.entry) {
         ++counts.spansExpired;
-        spansExpiredWindow.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     chunk.open = true;
     ++counts.spansKept;
-    spansKeptWindow.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -570,7 +562,6 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark)
     for (auto chunk = chunkOf(offset); chunk <= lastChunkOf(offset, bytes); ++chunk) enterRingChunk(chunk);
     auto* base = reinterpret_cast<std::uint32_t*>(ringData + offset);
     ++counts.spansWritten;
-    spansWrittenWindow.fetch_add(1, std::memory_order_relaxed);
     mark = {static_cast<std::uint32_t>(offset), static_cast<std::uint32_t>(words), ringChunks[chunkOf(offset)].entries};
     return {static_cast<std::uint32_t>(offset), std::span<std::uint32_t>(base, words)};
 }
@@ -619,7 +610,6 @@ void BindlessHeap::writeImageSlot(std::uint32_t kind, std::uint32_t slot, VkImag
     const auto stride = static_cast<std::size_t>(imageHeapStride);
     if (CopyEncodedImageView(view, key, std::span<std::byte>(target, stride))) {
         ++counts.encodedCopies;
-        imageCopiesWindow.fetch_add(1, std::memory_order_relaxed);
         return;
     }
     auto record = FindImageView(view);
@@ -635,7 +625,6 @@ void BindlessHeap::writeImageSlot(std::uint32_t kind, std::uint32_t slot, VkImag
     std::memcpy(target, encodeScratch.data(), stride);
     KeepEncodedImageView(view, record->generation, key, encodeScratch);
     ++counts.encodes;
-    imageEncodesWindow.fetch_add(1, std::memory_order_relaxed);
 }
 
 namespace {
@@ -934,11 +923,26 @@ void reportHeapStatistics() {
     const auto commandBuffers = takeCount(commandBuffersBegun);
     const auto copies = takeCount(cpuBufferCopies);
     const auto copiedMiB = takeCount(cpuBufferCopyBytes) >> 20u;
-    const auto spansWritten = takeCount(spansWrittenWindow);
-    const auto spansKept = takeCount(spansKeptWindow);
-    const auto spansExpired = takeCount(spansExpiredWindow);
-    const auto imageEncodes = takeCount(imageEncodesWindow);
-    const auto imageCopies = takeCount(imageCopiesWindow);
+    static BindlessHeap::Counts lastTotals;
+    BindlessHeap::Counts totals;
+    {
+        std::lock_guard heapsLock(heapsMutex());
+        for (const auto& entry : heaps()) {
+            const auto counts = entry.second->Statistics();
+            totals.spansWritten += counts.spansWritten;
+            totals.spansKept += counts.spansKept;
+            totals.spansExpired += counts.spansExpired;
+            totals.encodes += counts.encodes;
+            totals.encodedCopies += counts.encodedCopies;
+        }
+    }
+    const auto windowDelta = [](std::uint64_t now, std::uint64_t before) { return now >= before ? now - before : now; };
+    const auto spansWritten = windowDelta(totals.spansWritten, lastTotals.spansWritten);
+    const auto spansKept = windowDelta(totals.spansKept, lastTotals.spansKept);
+    const auto spansExpired = windowDelta(totals.spansExpired, lastTotals.spansExpired);
+    const auto imageEncodes = windowDelta(totals.encodes, lastTotals.encodes);
+    const auto imageCopies = windowDelta(totals.encodedCopies, lastTotals.encodedCopies);
+    lastTotals = totals;
     const auto templates = ShaderRecompiler::HeapTemplateCounts();
     std::fprintf(stderr,
                  "[gpu-heap] (10 s): draws %llu heap / %llu plain, dispatches %llu heap / %llu plain; "
