@@ -16,8 +16,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <io.h>
 #else
 #include <sys/mman.h>
+#include <unistd.h>
 #endif
 #include <algorithm>
 #include <array>
@@ -46,6 +48,8 @@ constexpr std::uint32_t Height = 64;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t VertexCodeOffset = 0;
 constexpr std::size_t PixelCodeOffset = 256;
+constexpr std::size_t IndirectCodeOffset = 512;
+constexpr std::size_t PointerSlots = 1024;
 constexpr std::size_t MovedVerticesOffset = 32768;
 constexpr std::uint32_t PinWaitMs = 4000;
 
@@ -56,6 +60,16 @@ constexpr std::array<std::uint32_t, 6> VertexCode{
 constexpr std::array<std::uint32_t, 7> PixelCode{
     0x7e000280u,
     0xdc308000u, 0x01000000u,
+    0xbf8c3f70u,
+    0xf800180fu, 0x01010101u,
+    0xbf810000u,
+};
+
+constexpr std::array<std::uint32_t, 10> IndirectPixelCode{
+    0x7e000280u,
+    0xdc348000u, 0x02000000u,
+    0xbf8c3f70u,
+    0xdc308000u, 0x017d0002u,
     0xbf8c3f70u,
     0xf800180fu, 0x01010101u,
     0xbf810000u,
@@ -142,6 +156,85 @@ private:
     bool registered = false;
 };
 
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = std::tmpfile();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
+
+class Unmapped {
+public:
+    Unmapped() {
+#ifdef _WIN32
+        data = VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE, PAGE_NOACCESS);
+#else
+        data = mmap(nullptr, BlockBytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (data == MAP_FAILED) data = nullptr;
+#endif
+        Require(data != nullptr, "address draw space reuse: cannot reserve an inaccessible range");
+    }
+
+    ~Unmapped() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, BlockBytes);
+#endif
+    }
+
+    Unmapped(const Unmapped&) = delete;
+    Unmapped& operator=(const Unmapped&) = delete;
+
+    std::uint64_t Address(std::size_t offset) const { return AddressOf(static_cast<const std::uint8_t*>(data) + offset); }
+
+private:
+    void* data = nullptr;
+};
+
+std::size_t Occurrences(const std::string& text, const std::string& what) {
+    std::size_t count = 0;
+    for (auto at = text.find(what); at != std::string::npos; at = text.find(what, at + what.size())) ++count;
+    return count;
+}
+
+std::string FaultAt(std::uint64_t address) {
+    char text[64];
+    std::snprintf(text, sizeof(text), "address=0x%llx ", static_cast<unsigned long long>(address));
+    return text;
+}
+
 std::uint64_t Builds() {
     const auto counters = AgcDriver::Graphics::BdaResources::TableCacheCounters();
     return counters.hits + counters.misses;
@@ -172,6 +265,7 @@ struct Scene {
         vertices.Register(false);
         std::memcpy(code.Data() + VertexCodeOffset, VertexCode.data(), sizeof(VertexCode));
         std::memcpy(code.Data() + PixelCodeOffset, PixelCode.data(), sizeof(PixelCode));
+        std::memcpy(code.Data() + IndirectCodeOffset, IndirectPixelCode.data(), sizeof(IndirectPixelCode));
         code.Register(false);
         constants.Register(true);
         spare.Register(true);
@@ -210,7 +304,7 @@ struct Scene {
         shaders[0] = {ShaderStage::Vertex, &vertexResults.back(), 0};
     }
 
-    void Point(std::uint64_t slot) {
+    void Point(std::uint64_t slot, std::span<const std::uint32_t> program = PixelCode, std::size_t offset = PixelCodeOffset) {
         const auto target = device.Target();
         ShaderRecompiler::ShaderPixelStageInfo pixel{};
         pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
@@ -219,14 +313,14 @@ struct Scene {
         pixel.targetOutputMode[0] = 9;
         pixel.targetExportMapping.fill(0xe4u);
         const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(slot), static_cast<std::uint32_t>(slot >> 32u), 0u, 0u};
-        const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{code.Address(PixelCodeOffset), std::as_bytes(std::span(PixelCode))}}};
+        const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{code.Address(offset), std::as_bytes(program)}}};
         ShaderRecompiler::RecompileRequest fragment{
-            {ShaderStage::Fragment, code.Address(PixelCodeOffset), PixelCode, 0, {}},
+            {ShaderStage::Fragment, code.Address(offset), program, 0, {}},
             {64, 0, userData, std::nullopt, pixel, std::nullopt, pixelMemory},
             target,
             PixelPushLayout(vertexPush, target)
         };
-        fragment.useCache = false;
+        fragment.useCache = true;
         pixelResults.push_back(ShaderRecompiler::Recompile(fragment));
         if (pixelResults.size() > 8) pixelResults.pop_front();
         const auto& pixelResult = pixelResults.back();
@@ -234,8 +328,13 @@ struct Scene {
         shaders[1] = {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)};
         snapshots = {
             {code.Address(VertexCodeOffset), std::as_bytes(std::span(reinterpret_cast<const std::uint32_t*>(code.Data() + VertexCodeOffset), VertexCode.size()))},
-            {code.Address(PixelCodeOffset), std::as_bytes(std::span(reinterpret_cast<const std::uint32_t*>(code.Data() + PixelCodeOffset), PixelCode.size()))},
+            {code.Address(offset), std::as_bytes(std::span(reinterpret_cast<const std::uint32_t*>(code.Data() + offset), program.size()))},
         };
+    }
+
+    void PointThrough(std::size_t slot, std::uint64_t address) {
+        std::memcpy(constants.Data() + slot, &address, sizeof(address));
+        Point(constants.Address(slot), IndirectPixelCode, IndirectCodeOffset);
     }
 
     void Store(Pages& pages, std::size_t offset, std::uint8_t value) {
@@ -351,6 +450,44 @@ void MovedVertices(Scene& scene) {
     Require(scene.DrawnColor() == 180, "address draw space reuse: the draw after the vertex buffer moved back did not read the guest constant");
 }
 
+void FaultPerUse(Scene& scene) {
+    const Unmapped unmapped;
+    const auto good = scene.constants.Address();
+    scene.Store(scene.constants, 0, 210);
+    std::size_t slot = PointerSlots;
+    scene.PointThrough(slot, good);
+    Require(scene.DrawnColor() == 210, "address draw space reuse: the draw before the faulting uses did not read the guest constant through its pointer");
+    const auto batch = [&](std::uint64_t first, std::uint64_t second) {
+        const auto before = Builds();
+        StderrCapture log;
+        try {
+            scene.PointThrough(slot += 16, first);
+            scene.Draw();
+            scene.PointThrough(slot += 16, second);
+            scene.Draw();
+            scene.Wait();
+        } catch (...) {
+            static_cast<void>(log.Finish());
+            throw;
+        }
+        const auto text = log.Finish();
+        Require(Builds() == before, "address draw space reuse: two draws of one build in a batch built their resources again");
+        return text;
+    };
+    const auto once = [](const std::string& text, std::span<const std::uint64_t> faults, const char* what) {
+        for (const auto address : faults) Require(Occurrences(text, FaultAt(address)) == 1, std::string("address draw space reuse: ") + what + ": the fault at " + FaultAt(address) + "was not reported once:\n" + text);
+        Require(Occurrences(text, "BDA access failed") == faults.size(), std::string("address draw space reuse: ") + what + ": " + std::to_string(Occurrences(text, "BDA access failed")) + " faults were reported for " + std::to_string(faults.size()) + " faulting uses:\n" + text);
+    };
+    const std::array<std::uint64_t, 4> faults{unmapped.Address(0x100), unmapped.Address(0x200), unmapped.Address(0x300), unmapped.Address(0x400)};
+    once(batch(faults[0], good), std::span(faults).subspan(0, 1), "a faulting use before a clean one");
+    once(batch(good, faults[1]), std::span(faults).subspan(1, 1), "a clean use before a faulting one");
+    once(batch(faults[2], faults[3]), std::span(faults).subspan(2, 2), "two faulting uses");
+    once(batch(good, good), {}, "two clean uses after the faults");
+    scene.PointThrough(slot += 16, good);
+    Require(scene.DrawnColor() == 210, "address draw space reuse: the draw after the faulting uses did not read the guest constant through its pointer");
+    scene.Point(good);
+}
+
 void Disabled(Scene& scene) {
     scene.Store(scene.constants, 0, 70);
     Require(scene.DrawnColor() == 70, "address draw space reuse: the first draw with reuse off did not read the guest constant");
@@ -376,12 +513,13 @@ struct NamedCase {
     Case run;
 };
 
-constexpr std::array<NamedCase, 5> DefaultCases{{
+constexpr std::array<NamedCase, 6> DefaultCases{{
     {"unchanged", UnchangedInputs},
     {"cpu-write", CpuWrite},
     {"idle-free", IdleFree},
     {"no-recipe", NoRecipe},
     {"moved-vertices", MovedVertices},
+    {"fault-per-use", FaultPerUse},
 }};
 
 constexpr std::array<NamedCase, 3> TransitionCases{{
