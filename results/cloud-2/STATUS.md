@@ -1,3 +1,5 @@
-READY
-since: 2026-10-31T01:29:38Z
+BUSY BF-332
+since: 2026-10-31T01:43:59Z
+claimed: 2026-10-31T01:43:53Z
+step: read task
 previous: BF-330 done, results/cloud-2/BF-330.md
