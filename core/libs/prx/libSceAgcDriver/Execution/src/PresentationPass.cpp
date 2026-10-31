@@ -374,6 +374,7 @@ VkFramebuffer PresentationPass::destinationFramebuffer(Slot& slot, const Target&
     for (const auto layout : {initialLayout, finalLayout}) {
         if (layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
         if (layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
     }
     const auto view = createView(destination, format, usage);
     VkFramebuffer framebuffer = VK_NULL_HANDLE;

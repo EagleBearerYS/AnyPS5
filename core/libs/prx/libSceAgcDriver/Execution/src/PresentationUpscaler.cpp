@@ -311,7 +311,7 @@ const PresentationUpscaler::Target& PresentationUpscaler::target(VkFormat format
 }
 
 VkFramebuffer PresentationUpscaler::transientFramebuffer(Slot& slot, VkRenderPass renderPass, VkImage image, VkFormat format, VkExtent2D extent, VkImageLayout finalLayout) {
-    const auto view = createView(image, format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (finalLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u));
+    const auto view = createView(image, format, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (finalLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT : 0u) | (finalLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_IMAGE_USAGE_SAMPLED_BIT : 0u));
     VkFramebufferCreateInfo info{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
     info.renderPass = renderPass;
     info.attachmentCount = 1;
