@@ -380,6 +380,8 @@ public:
     std::shared_ptr<const void> ReleaseSpace();
     bool RetakeSpace();
     bool SpaceHeld() const;
+    void HoldSpaceThrough(std::uint64_t serial);
+    bool ReleaseCompletedSpace(std::uint64_t completedThrough);
     SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const;
     std::size_t CopiedBytes() const {
         std::size_t bytes = 0;
@@ -528,6 +530,7 @@ private:
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).
     std::shared_ptr<const AddressSpace> space;
     std::weak_ptr<const AddressSpace> releasedSpace;
+    std::uint64_t spaceHeldThrough = 0;
     mutable std::uint64_t tableSerial = 0;
     mutable std::shared_ptr<const std::vector<ShaderRecompiler::BdaAbi::Range>> tableRanges;
     // Import registry epoch when `direct` pointers were taken at acquire time; they are reused while

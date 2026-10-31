@@ -257,6 +257,8 @@ public:
     bool SpaceHeld() const { return guestMemory.SpaceHeld(); }
     SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
     std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
+    void HoldSpaceThrough(std::uint64_t serial) { guestMemory.HoldSpaceThrough(serial); }
+    bool ReleaseCompletedSpace(std::uint64_t completedThrough) { return guestMemory.ReleaseCompletedSpace(completedThrough); }
     bool UsesAddressTable() const { return usesBda; }
     std::span<const std::byte> AddressTableBytes() const;
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }

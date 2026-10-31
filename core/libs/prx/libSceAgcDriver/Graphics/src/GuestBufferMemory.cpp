@@ -4938,9 +4938,22 @@ bool GuestBufferMemory::SpaceHeld() const {
     return space != nullptr;
 }
 
+void GuestBufferMemory::HoldSpaceThrough(std::uint64_t serial) {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::HoldSpaceThrough");
+    if (space != nullptr) spaceHeldThrough = serial;
+}
+
+bool GuestBufferMemory::ReleaseCompletedSpace(std::uint64_t completedThrough) {
+    GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseCompletedSpace");
+    if (space == nullptr || spaceHeldThrough == 0 || spaceHeldThrough > completedThrough) return false;
+    static_cast<void>(ReleaseSpace());
+    return true;
+}
+
 std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
     GuestMemory::AssertGpuLockHeld("GuestBufferMemory::ReleaseSpace");
     if (space == nullptr) return {};
+    spaceHeldThrough = 0;
     releasedSpace = space;
     return std::move(space);
 }
