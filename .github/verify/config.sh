@@ -1,0 +1,4 @@
+BASE=7a96c6af261cc94c366274eff6274cd972355a9c
+REPEAT=10
+EXTRA_TESTS='guest_freebsd_clocks|guest_memory|guest_mlock|guest_mmap_fixed_anonymous|guest_net_ctl|guest_rudp_context_lifecycle|guest_rudp_listen|guest_offline_imports'
+NO_BEFORE=1
