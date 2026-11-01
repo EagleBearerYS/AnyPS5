@@ -1,0 +1,4 @@
+BASE=0836dfdf4fecb1e0326100c490476e15d3a74da5
+REPEAT=1
+EXTRA_TESTS='agc_shader_disk_cache|agc_driver_image_table|agc_driver_pointer_vsharp_select_table|^agc_driver_nested_|^agc_driver_pointer_phi_'
+VALIDATION=1
