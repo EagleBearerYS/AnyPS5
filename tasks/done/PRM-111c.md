@@ -50,3 +50,4 @@ Row 1 to `upkeep/8939-split-0836dfdf4f` on the fork (it doesn't exist yet), only
 After you mark this task done, write a `done:` line in the task file, as the board's README says, then claim the next open task (priority high first). If none is open, restart the board watcher as a background command before you end your turn.
 
 claimed-by: cloud-4 2026-11-01T01:59:32Z
+done: 2026-11-01T02:05:01Z, result: results/cloud-4/PRM-111c.md
