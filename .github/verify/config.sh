@@ -1,0 +1,4 @@
+BASE=b81bf015da97ca6ccbee4017f7a7f69b4ad4e515
+REPEAT=1
+EXTRA_TESTS='guest_vdec_core'
+NO_BEFORE=1
