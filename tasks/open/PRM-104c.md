@@ -18,20 +18,33 @@ priority: high
   - f2449f6ec2 "create the GPU heap before the memory accounting baseline".
 - **Use #9508's head when you start.** Fetch `upstream` `+refs/pull/9508/head` and give its SHA. If it isn't f2449f6ec2 or a descendant of it, stop. If it moves while you work, finish on the one you started with and say so.
 - **#7642 is upstream's `refs/pull/7642/head` = 06eba99c50.** Stop if it differs.
+- **Addendum (01:35Z 11-01): main's #10194 meets #7642 in five files.** harry-z-kang's #10194, which #9508's newest main merge brings, rewrites the Vulkan memory allocate and free calls as `MemoryAccounting::Allocate` and `MemoryAccounting::Free`. #7642 changes the same lines in five files under `core/libs/prx/libSceAgcDriver/`:
+  - `Execution/src/PresentationPass.cpp`;
+  - `Graphics/src/DepthSurface.cpp`;
+  - `Graphics/src/Resources.cpp`;
+  - `Graphics/src/SampleOrder.cpp`;
+  - `Graphics/src/ShaderResources.cpp`.
+  Step 3b gives the one rule for them.
 
 ## What to do
 
 1. **Merge:** on b5065a1fe9, `git -c rerere.enabled=false merge --no-ff --no-commit <#9508's head>`.
 2. **Expected conflicts:**
    - `core/libs/prx/libSceAgcDriver/CMakeLists.txt`, from #12862's split, which #9508's main merges bring;
-   - possibly `tests/cmake/agc_driver_address_draw_space_reuse_tests.cmake` and other fragments, if #9508 registers there.
-   Run `python3 tools/agc_test_split.py resolve` (the merged tree's copy). It must exit 0, and leave no unmerged file and no conflict marker.
+   - possibly `tests/cmake/agc_driver_address_draw_space_reuse_tests.cmake` and other fragments, if #9508 registers there;
+   - the five #10194 files named in the context, if #9508's merges brought #10194 without resolving them against #7642.
+   Run `python3 tools/agc_test_split.py resolve` (the merged tree's copy). It must exit 0, and leave no unmerged CMake file and no conflict marker in one. Then resolve the five files by step 3b.
 3. **The one named edit: restore the 22 `_gpu_heap` variants.** After `resolve`, #7642's GPU-heap block still reads `set(agcGpuHeapTests ${agcDrawPipelineTests} agc_driver_rect_list_indirect …)`. But #12862 removed `agcDrawPipelineTests`, so the list expands empty and the 22 variants vanish with no warning (BF-349 §2.4).
    - Replace `${agcDrawPipelineTests}` with the 22 names that #12862's 22 `agc_add_draw_pipeline_test` calls register, in the same order.
    - The resulting `_gpu_heap` tests are exactly BF-349 §2.4's list: `agc_driver_bda_span_reads_gpu_heap` … `agc_driver_write_data_written_ahead_gpu_heap`.
    - Nothing else in that block changes. If it needs more, such as a new fragment or another variable, stop and report.
+3b. **The MemoryAccounting rule (the user's OK, 11-01), for the five #10194 files only.**
+   - **Where a conflict hunk differs only in the allocate or free call:** take #7642's side of the hunk. Write each Vulkan memory allocate or free call in it exactly as #10194 writes that call on main, `MemoryAccounting::Allocate` or `MemoryAccounting::Free`, with the same arguments #10194 passes.
+   - **Anything else in such a hunk is a stop.** That covers #7642's side changing the call's arguments, a call #10194 has no form for, or any other line differing.
+   - **Record every hunk you resolve this way,** with `file:line` at the merge, both sides as git gave them, and your result.
+   - **No conflict in one of the five files?** Leave it as git merged it, and say so.
 4. **Every other conflict is a stop,** before you commit anything:
-   - any file outside the AGC CMake files and their fragments;
+   - any file outside the AGC CMake files, their fragments and the five #10194 files;
    - #9508's 866bd70c70 colliding with #7642's recompiler changes;
    - any need to touch the PRM-104b edits (`HeapRetention`, `texture.get()`, the `ARCHITECTURE.md` line) again.
    Report the hunks. If git conflicts in a shader-cache `FormatVersion`, report both values and stop.
@@ -45,12 +58,19 @@ priority: high
    This brings #9508's commits since 31f5d0e8dd and its merges of main, which carry #12862's test split.
 
    The conflict in core/libs/prx/libSceAgcDriver/CMakeLists.txt is resolved with tools/agc_test_split.py resolve, which moves this PR's test registrations into tests/cmake/. One edit beyond that: the GPU heap test list named ${agcDrawPipelineTests}, which #12862 removed, so the list now names the 22 draw pipeline tests itself and their _gpu_heap variants stay registered.
+
+   The conflicts with #10194's memory accounting keep this PR's change, with the allocate and free calls written as MemoryAccounting::Allocate and MemoryAccounting::Free as #10194 writes them:
+   - <file>:<line>: <one line on the hunk>
    ```
-   Push it to fork `prm/7642-9508-<short sha>`.
+   - Add the last paragraph only if step 3b resolved a hunk, with one bullet per hunk.
+   - Push the merge to fork `prm/7642-9508-<short sha>`.
 
 ## Checks (stop on any miss)
 
-- **Nothing else changed:** `git merge-tree --write-tree b5065a1fe9 <#9508 head>` gives git's own merge. The diff against yours may list only `libSceAgcDriver/CMakeLists.txt` and `libSceAgcDriver/tests/cmake/*.cmake`.
+- **Nothing else changed:** `git merge-tree --write-tree b5065a1fe9 <#9508 head>` gives git's own merge. The diff against yours may list only:
+  - `libSceAgcDriver/CMakeLists.txt`;
+  - `libSceAgcDriver/tests/cmake/*.cmake`;
+  - the five #10194 files, and in them only the hunks step 3b recorded.
 - **The count.** Configure three trees with CI's `CONFIGURE` flags plus `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`, and compare their `ctest --show-only=json-v1` lists:
   - (a) #9508's head;
   - (b) b5065a1fe9;
@@ -64,6 +84,7 @@ priority: high
 - **Own diff:** compare the sorted `+`/`−` lines of `git diff <#9508 head> <new>` with `git diff 31f5d0e8dd b5065a1fe9`. The expected differences are:
   - the registration move;
   - the 22-name edit;
+  - the step 3b calls, where #7642's line now carries `MemoryAccounting::Allocate` or `Free`;
   - lines #9508 itself changed underneath (#7642's lines are unchanged, only their context).
   List them all.
 - **Builds and runs** (CI's Linux flags, `-DANYPS5_ENABLE_SPIRV_TOOLS=ON`, lavapipe, as `runner`, `ANYPS5_REQUIRE_VULKAN=1 GALLIUM_OVERRIDE_CPU_CAPS=avx`):
@@ -86,6 +107,7 @@ priority: high
 - #9508's head used, and the merge SHA;
 - each conflict and its resolution;
 - the 22-name edit as a diff;
+- each step 3b hunk: `file:line`, both sides and the result;
 - the semantic check with lines;
 - the three totals and the name lists;
 - the own-diff differences;
