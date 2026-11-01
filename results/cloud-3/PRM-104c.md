@@ -218,7 +218,9 @@ At the base, :192–193 are exactly #7642's second and third lines, so #7642 onl
    - `BindlessHeap::Allocate(words, mark)` (`Graphics/src/BindlessHeap.cpp:546–568`) picks one `offset`.
    - If the span wouldn't fit before the ring's end, `wrapRingOffset` restarts it at 0 (:570–574); it never splits a span.
    - It returns `{offset, std::span(ringData + offset, words)}`: one contiguous span, whatever number of 2 MiB chunks it covers.
-   - 11ef9c57b1 changes only `BindlessHeap.{hpp,cpp}` and `tests/BindlessHeapSlots.cpp`, and #7642 touches none of these three files (`git diff 31f5d0e8dd b5065a1fe9` on them is empty).
+   - 11ef9c57b1 changes only `BindlessHeap.{hpp,cpp}` and `tests/BindlessHeapSlots.cpp`.
+   - #7642 doesn't change `BindlessHeap.{hpp,cpp}`: `git diff 31f5d0e8dd b5065a1fe9` on them is empty.
+   - *Corrected in PRM-104d:* this line first said #7642 touches none of the three files. In fact #7642 changes `tests/BindlessHeapSlots.cpp` (+2 −5): its 0f3e74aa41 moves the `APS5_HEAP_SLOT_CAP` setenv to before the device opens. That is test setup only and touches no ring code, so this check's conclusion stands.
 2. **#7642's trailer words.**
    - `ShaderResources.cpp:6412–6422` (blamed to #7642's 85b3d403d9) builds a `Trailer` from the device image table and appends it to the host-side `map` with `TableAbi::AppendTrailer` (`ImageTableAbi.hpp:136–143`, four `push_back`s).
    - `heapSpan` (`ShaderResources.cpp:6494–6500`, raghav314's) then allocates `words.size()` and copies the whole map with a single `std::memcpy`.
