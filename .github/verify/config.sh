@@ -1,0 +1,4 @@
+BASE=2ff700fddfb067d6be67ace9fd24adfb0b21b666
+REPEAT=10
+EXTRA_TESTS='^agc_storage|^agc_driver_storage|^agc_unit_flags_allocation_failure_|^agc_driver_pending_exact_surface$|^agc_driver_store_pending_identity$|^agc_recorder_command_buffer_release$'
+NO_BEFORE=1
