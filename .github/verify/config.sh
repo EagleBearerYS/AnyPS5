@@ -1,0 +1,4 @@
+BASE=26fa1212b82f76dd49cf12d65e445d6ff3e0844c
+REPEAT=10
+EXTRA_TESTS='guest_available_cpumask'
+NO_BEFORE=1
