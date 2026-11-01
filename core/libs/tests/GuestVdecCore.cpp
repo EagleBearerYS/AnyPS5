@@ -290,6 +290,13 @@ void CheckDecodeArguments() {
     input.auSize = 0;
     Require(sceVdecCoreSetDecodeInput(decoder, &input, nullptr, status.data()) == InvalidArgument, "set input with an empty access unit");
     Require(status[0] == 1 && status[1] == 1, "the status is written before the access unit size is checked");
+    const std::array<std::uint64_t, 2> oversized{1ull << 31, ~0ull};
+    for (const auto size : oversized) {
+        status = {7, 7};
+        input.auSize = size;
+        Require(sceVdecCoreSetDecodeInput(decoder, &input, nullptr, status.data()) == InvalidArgument, "set input with an access unit past the packet limit");
+        Require(status[0] == 1 && status[1] == 1, "the status is written before an oversized access unit is refused");
+    }
     input.auSize = unit.size();
     Require(sceVdecCoreSetDecodeInput(decoder, &input, nullptr, nullptr) == 0, "set input without a status");
 
