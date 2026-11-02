@@ -376,6 +376,7 @@ public:
                 const bool directSampleable = supports(directResult, directProperties);
                 sampleable = useSampleShadow || directSampleable;
                 if (!useSampleShadow && directSampleable) info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+                std::fprintf(stderr, "[native-depth-diag] depth surface 0x%llx (stencil 0x%llx): guest vk format %d, host %d, %u samples, %ux%u, flags 0x%x, shadow %d (%d, counts 0x%x), direct %d (%d, counts 0x%x), features 0x%x\n", static_cast<unsigned long long>(target.address), static_cast<unsigned long long>(target.stencilAddress), static_cast<int>(target.format), static_cast<int>(hostFormat), target.samples, target.extent.width, target.extent.height, info.flags, useSampleShadow, static_cast<int>(shadowResult), shadowProperties.sampleCounts, directSampleable, static_cast<int>(directResult), directProperties.sampleCounts, properties.optimalTilingFeatures);
             }
             if (target.samples == 1 && sampleable) info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -412,6 +413,7 @@ public:
             const auto barrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
             barrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
             const VkClearDepthStencilValue clear{target.clearDepth, this->sampling.aliasStencil.value_or(target.clearStencil)};
+            if (target.samples != 1u) std::fprintf(stderr, "[native-depth-diag] depth surface 0x%llx: initial clear depth %.6f stencil 0x%02x, aspects 0x%x, sampleable %d, refusal \"%s\", recorded %s\n", static_cast<unsigned long long>(target.address), clear.depth, clear.stencil, toGeneral.subresourceRange.aspectMask, sampleable, this->sampling.refusal.c_str(), recorder != nullptr ? "in the recorder" : "in its own batch");
             context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &toGeneral.subresourceRange);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
             if (batch) batch->SubmitAndWait();
@@ -1310,6 +1312,7 @@ private:
         region.srcSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT | (sampleShadowStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 0, 1};
         region.dstSubresource = region.srcSubresource;
         region.extent = {target.extent.width, target.extent.height, 1};
+        std::fprintf(stderr, "[native-depth-diag] depth surface 0x%llx: shadow refresh, drawn %d, stencil read %d, copied aspects 0x%x, recorded %s\n", static_cast<unsigned long long>(target.address), drawn, stencilRead, region.srcSubresource.aspectMask, recorder != nullptr ? "in the recorder" : "in its own batch");
         context.Function<PFN_vkCmdCopyImage>("vkCmdCopyImage")(commands, image, VK_IMAGE_LAYOUT_GENERAL, sampleShadow->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, accesses);
         if (batch) batch->SubmitAndWait();

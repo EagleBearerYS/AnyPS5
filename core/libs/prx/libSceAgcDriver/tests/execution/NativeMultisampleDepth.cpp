@@ -1532,6 +1532,30 @@ void CheckHtileRouting(Context context, VkFormat format, std::uint32_t fragments
 
 enum class StencilFault { None, DepthWord, StencilWord, PartialStencil, MixedDepth, UnwatchedStencil, StencilWrite, StencilQueued, FillPartial, FillDepthWord, FillStencilWord, FillPartialStore, FillCpuWrite, FillStencilWrite, FillOverlap, MaskClear };
 
+template<typename Expected> void ReportFetches(const std::string& what, const std::string& stage, std::uint32_t fragments, std::uint32_t count, std::span<const std::byte> bytes, const Expected& expected) {
+    std::uint32_t mismatches = 0u;
+    for (std::uint32_t index = 0u; index < count; ++index) {
+        std::array<std::uint32_t, 4> result{};
+        std::memcpy(result.data(), bytes.data() + (index + 1u) * 16u, 16u);
+        const std::array<std::uint32_t, 4> want = expected(index);
+        if (result == want) continue;
+        if (mismatches++ < 16u) {
+            std::fprintf(stderr, "[native-depth-diag] %s, %s: pixel %u sample %u of %u: expected %08x %08x %08x %08x (%.9g), read %08x %08x %08x %08x (%.9g %.9g %.9g %.9g)\n", what.c_str(), stage.c_str(), index / fragments, index % fragments, fragments, want[0], want[1], want[2], want[3], std::bit_cast<float>(want[0]), result[0], result[1], result[2], result[3], std::bit_cast<float>(result[0]), std::bit_cast<float>(result[1]), std::bit_cast<float>(result[2]), std::bit_cast<float>(result[3]));
+        }
+    }
+    std::fprintf(stderr, "[native-depth-diag] %s, %s: %u of %u fetches differ\n", what.c_str(), stage.c_str(), mismatches, count);
+}
+
+std::array<std::uint32_t, 4> DepthFetchWords(float depth) {
+    return {std::bit_cast<std::uint32_t>(depth), 0u, 0u, std::bit_cast<std::uint32_t>(1.0f)};
+}
+
+std::string FetchStage(std::uint32_t fragments, float clearDepth, std::uint32_t clearStencil, bool raster, float offset, std::optional<float> drawn) {
+    char text[192];
+    std::snprintf(text, sizeof(text), "samples %u, clear depth %.1f stencil 0x%02x, raster %s at %.4f, drawn %s", fragments, clearDepth, clearStencil, raster ? "yes" : "no", offset, drawn ? std::to_string(*drawn).c_str() : "none");
+    return text;
+}
+
 void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool filling, StencilFault fault = StencilFault::None) {
     const VkExtent2D extent{5u, 3u};
     const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, fragments));
@@ -1586,6 +1610,7 @@ void CheckStencilTarget(Context context, std::uint32_t fragments, bool one, bool
         RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         batch.SubmitAndWait();
         output.Invalidate();
+        ReportFetches("stencil", FetchStage(fragments, target.clearDepth, target.clearStencil, raster != nullptr, offset, drawn), fragments, count, output.Bytes(), [&](std::uint32_t index) { return DepthFetchWords(drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth); });
         for (std::uint32_t index = 0u; index < count; ++index) {
             std::array<float, 4> result{};
             std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
@@ -1705,6 +1730,7 @@ void CheckSeparateStencilTarget(Context context, std::uint32_t fragments, bool o
         RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         batch.SubmitAndWait();
         output.Invalidate();
+        ReportFetches("separate stencil", FetchStage(fragments, target.clearDepth, target.clearStencil, raster != nullptr, offset, drawn), fragments, count, output.Bytes(), [&](std::uint32_t index) { return DepthFetchWords(drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth); });
         for (std::uint32_t index = 0u; index < count; ++index) {
             std::array<float, 4> result{};
             std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
@@ -1818,6 +1844,7 @@ void CheckGhostSequence(Context context, std::uint32_t fragments, GhostFill path
         RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         batch.SubmitAndWait();
         output.Invalidate();
+        ReportFetches("plane fills", FetchStage(fragments, target.clearDepth, target.clearStencil, raster != nullptr, offset, drawn), fragments, count, output.Bytes(), [&](std::uint32_t index) { return DepthFetchWords(drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth); });
         for (std::uint32_t index = 0u; index < count; ++index) {
             std::array<float, 4> result{};
             std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
@@ -1889,6 +1916,7 @@ void CheckAliasedStencil(Context context, std::uint32_t fragments, AliasCase whi
         RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         batch.SubmitAndWait();
         output.Invalidate();
+        ReportFetches("aliased stencil", FetchStage(fragments, target.clearDepth, target.clearStencil, false, 0.0f, drawn), fragments, count, output.Bytes(), [&](std::uint32_t index) { return DepthFetchWords(drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth); });
         for (std::uint32_t index = 0u; index < count; ++index) {
             std::array<float, 4> result{};
             std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
@@ -1980,6 +2008,11 @@ void CheckStencilView(Context context, std::uint32_t fragments) {
         RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         batch.SubmitAndWait();
         output.Invalidate();
+        ReportFetches("stencil view", FetchStage(fragments, target.clearDepth, target.clearStencil, drawn.has_value(), drawn.value_or(0.0f), drawn), fragments, count, output.Bytes(), [&](std::uint32_t index) {
+            const auto sample = index % fragments, pixel = index / fragments;
+            const std::uint32_t stencilExpected = drawn ? reference(pixel % extent.width, pixel / extent.width, sample) : target.clearStencil;
+            return std::array<std::uint32_t, 4>{std::bit_cast<std::uint32_t>(drawn ? *drawn + static_cast<float>(sample + 1u) / 16.0f : target.clearDepth), stencilExpected, 0u, 1u};
+        });
         for (std::uint32_t index = 0u; index < count; ++index) {
             std::array<std::uint32_t, 4> result{};
             std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
@@ -2082,6 +2115,7 @@ void CheckExpandGate(Context context, std::uint32_t fragments, bool stencilPlane
         RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         batch.SubmitAndWait();
         output.Invalidate();
+        ReportFetches(stencilPlane ? "expand gate D32S8" : "expand gate D32", FetchStage(fragments, target.clearDepth, target.clearStencil, raster != nullptr, offset, drawn), fragments, count, output.Bytes(), [&](std::uint32_t index) { return DepthFetchWords(drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth); });
         for (std::uint32_t index = 0u; index < count; ++index) {
             std::array<float, 4> result{};
             std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
@@ -2475,6 +2509,7 @@ public:
         RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
         batch.SubmitAndWait();
         output->Invalidate();
+        ReportFetches(std::string(what), FetchStage(fragments, target.clearDepth, target.clearStencil, offset.has_value(), offset.value_or(0.0f), drawn), fragments, Count(), output->Bytes(), [&](std::uint32_t index) { return DepthFetchWords(drawn ? *drawn + static_cast<float>(index % fragments + 1u) / 16.0f : target.clearDepth); });
         for (std::uint32_t index = 0u; index < Count(); ++index) {
             std::array<float, 4> result{};
             std::memcpy(result.data(), output->Bytes().data() + (index + 1u) * 16u, 16u);
