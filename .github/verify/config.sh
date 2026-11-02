@@ -1,0 +1,5 @@
+BASE=88e804b0a7df1f1ac373a9e2f72fb378d925fdd4
+REPEAT=3
+EXTRA_TESTS='^agc_shader_selected_records_|agc_shader_sampler_limits'
+NO_BEFORE=1
+SPIRV_TOOLS=OFF
