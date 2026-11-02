@@ -4836,10 +4836,11 @@ struct ImageLimitGuest {
 
 constexpr std::uint32_t ImageLimitDirectWord = 16u;
 
-std::vector<std::uint32_t> ImageLimitCode(std::uint32_t tableImages, std::uint32_t directImages = 0u) {
+std::vector<std::uint32_t> ImageLimitCode(std::uint32_t tableImages, std::uint32_t directImages = 0u, std::uint32_t loadedImages = 0u) {
     std::vector<std::uint32_t> code{0xf4080100u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080200u, 0xfa000020u, 0x7e200500u, 0x8f108d10u, 0x7e100280u};
     for (std::uint32_t image = 0; image < tableImages; image++) code.insert(code.end(), {0xf42c0502u, 0x20000000u | (image * 32u), 0xf09c0f08u, 0x00450400u, 0x06100908u});
     for (std::uint32_t image = 0; image < directImages; image++) code.insert(code.end(), {0xf40c0b00u, 0xfa000000u | ((ImageLimitDirectWord + image * 8u) * 4u), 0xf09c0f08u, 0x004b0400u, 0x06100908u});
+    for (std::uint32_t image = 0; image < loadedImages; image++) code.insert(code.end(), {0xf40c0b00u, 0xfa000000u | ((ImageLimitDirectWord + image * 8u) * 4u), 0xf0001108u, 0x000b0602u});
     code.insert(code.end(), {0xe0700000u, 0x80070800u, 0xbf810000u});
     return code;
 }
@@ -4918,6 +4919,23 @@ void verifyImageLimits(std::string_view part) {
         }
         require(lastDirect == Capacity - 1u, "image limits: the direct images do not follow the table images up to image 127");
         std::cout << "image limits: 64 table images and 64 direct images bound as 64 table and 64 heap elements; direct image 127 has image specialization constants " << PipelineSpecialization::ImageBase + lastDirect * PipelineSpecialization::ImageWords << " to " << PipelineSpecialization::ImageBase + Capacity * PipelineSpecialization::ImageWords - 1u << '\n';
+        const std::vector<std::uint32_t> sampled(guest.srt.begin() + ImageLimitDirectWord, guest.srt.begin() + ImageLimitDirectWord + 8u);
+        const auto fmaskWords = TableT(textures[0].bytes.data(), static_cast<std::uint32_t>(IrBufferFormat::Fmask8_S2_F1), TableType2D, 1u);
+        std::copy(fmaskWords.begin(), fmaskWords.end(), guest.srt.begin() + ImageLimitDirectWord);
+        const auto fmaskCode = ImageLimitCode(Capacity / 2u, 0u, 1u);
+        const auto fmaskRequest = TableRequest(fmaskCode, userData);
+        const auto fmaskPlan = GetResourcePlan(fmaskRequest);
+        constexpr std::uint32_t FmaskImage = Capacity / 2u;
+        require(fmaskPlan->info.images.size() == FmaskImage + 1u && tableImages(*fmaskPlan) == FmaskImage && std::ranges::any_of(fmaskPlan->info.runtimeImageModes.at(FmaskImage), [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }) && fmaskPlan->info.samplers.size() == 1u && MirrorsIfUnnormalized(fmaskPlan->info.samplers[0]), "image limits: 64 table images and a direct FMASK image were not planned as an FMASK expansion at image 64 beside a sampler that mirrors when unnormalized");
+        AgcDriver::ShaderMemory fmaskMemory({});
+        const auto fmaskCapture = fmaskMemory.Capture(fmaskRequest);
+        const auto fmaskPrepared = DescriptorBindingBuilder{}.Prepare(IrBindingLayout{}, fmaskPlan->info, IrShaderStage::Compute, fmaskCapture->snapshot);
+        std::map<std::uint32_t, std::uint32_t> fmaskConstants;
+        for (const auto& constant : fmaskPrepared.specialization) fmaskConstants[constant.id]++;
+        require(fmaskConstants.contains(PipelineSpecialization::FmaskFormatBase + FmaskImage) && fmaskConstants.contains(PipelineSpecialization::MirrorUnnormalizedBase), "image limits: image 64's FMASK format or sampler 0's mirror axes has no specialization constant");
+        require(std::ranges::all_of(fmaskConstants, [](const auto& entry) { return entry.second == 1u; }), "image limits: image 64's FMASK format shares a specialization ID with another constant, such as sampler 0's mirror axes");
+        std::copy(sampled.begin(), sampled.end(), guest.srt.begin() + ImageLimitDirectWord);
+        std::cout << "image limits: direct FMASK image 64 has FMASK format constant " << PipelineSpecialization::FmaskFormatBase + FmaskImage << ", apart from sampler 0's mirror axes at " << PipelineSpecialization::MirrorUnnormalizedBase << '\n';
     }
     if (part != "refusals") return;
     const auto pastCode = ImageLimitCode(Capacity + 1u);
