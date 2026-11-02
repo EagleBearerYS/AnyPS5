@@ -1,0 +1,4 @@
+BASE=4f64f81ef7b4bca975b4b9f3dfd15dfff56f716f
+REPEAT=10
+EXTRA_TESTS='agc_shader_descriptor_phis|^agc_shader_bindless$|^agc_shader_memory|^agc_shader_nested|^agc_driver_pointer_|^agc_driver_nested_|^agc_driver_image_table|^agc_shader_disk_cache'
+NO_BEFORE=1
