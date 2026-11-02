@@ -372,8 +372,8 @@ public:
                 const auto supports = [&](VkResult result, const VkImageFormatProperties& supported) {
                     return (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0 && result == VK_SUCCESS && (supported.sampleCounts & info.samples) != 0 && supported.maxMipLevels >= 1u && supported.maxArrayLayers >= 1u && supported.maxExtent.depth >= 1u && info.extent.width <= supported.maxExtent.width && info.extent.height <= supported.maxExtent.height;
                 };
-                useSampleShadow = supports(shadowResult, shadowProperties);
                 const bool directSampleable = supports(directResult, directProperties);
+                useSampleShadow = supports(shadowResult, shadowProperties) && !(directSampleable && std::getenv("APS5_DEPTH_DIRECT") != nullptr);
                 sampleable = useSampleShadow || directSampleable;
                 if (!useSampleShadow && directSampleable) info.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
                 std::fprintf(stderr, "[native-depth-diag] depth surface 0x%llx (stencil 0x%llx): guest vk format %d, host %d, %u samples, %ux%u, flags 0x%x, shadow %d (%d, counts 0x%x), direct %d (%d, counts 0x%x), features 0x%x\n", static_cast<unsigned long long>(target.address), static_cast<unsigned long long>(target.stencilAddress), static_cast<int>(target.format), static_cast<int>(hostFormat), target.samples, target.extent.width, target.extent.height, info.flags, useSampleShadow, static_cast<int>(shadowResult), shadowProperties.sampleCounts, directSampleable, static_cast<int>(directResult), directProperties.sampleCounts, properties.optimalTilingFeatures);
@@ -1257,9 +1257,11 @@ private:
             info.arrayLayers = 1;
             info.samples = static_cast<VkSampleCountFlagBits>(target.samples);
             info.tiling = VK_IMAGE_TILING_OPTIMAL;
-            info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (std::getenv("APS5_DEPTH_SHADOW_ATTACHMENT") != nullptr ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : 0u);
             info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
             info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            const bool sentinel = std::getenv("APS5_DEPTH_SHADOW_SENTINEL") != nullptr;
+            std::fprintf(stderr, "[native-depth-diag] depth surface 0x%llx: shadow created, usage 0x%x, sentinel %d\n", static_cast<unsigned long long>(target.address), info.usage, sentinel);
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage sampled depth shadow");
             VkMemoryRequirements requirements{};
             context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
@@ -1285,6 +1287,10 @@ private:
             barrier.image = sampleShadow->image;
             barrier.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT | (HasStencil(hostFormat) ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u), 0, 1, 0, 1};
             context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+            if (sentinel) {
+                const VkClearDepthStencilValue marker{0.5f, 0x77u};
+                context.Function<PFN_vkCmdClearDepthStencilImage>("vkCmdClearDepthStencilImage")(commands, sampleShadow->image, VK_IMAGE_LAYOUT_GENERAL, &marker, 1, &barrier.subresourceRange);
+            }
             if (batch) batch->SubmitAndWait();
             else Recorder::CountBarriers(Recorder::CommandClass::Draw, 1);
         } catch (...) {
