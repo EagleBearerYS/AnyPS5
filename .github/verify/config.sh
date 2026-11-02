@@ -1,0 +1,5 @@
+BASE=4f64f81ef7b4bca975b4b9f3dfd15dfff56f716f
+REPEAT=10
+EXTRA_TESTS='agc_driver_large_tracked_snapshot|agc_driver_partially_resident_pending_stores|agc_driver_partially_resident_snapshot|agc_driver_sampled_clear_keys|agc_recorder_upload_scratch|^agc_driver_partially_committed_|^agc_driver_sample|^agc_driver_image_sample|^agc_driver_texture'
+NO_BEFORE=1
+VERBOSE=1
