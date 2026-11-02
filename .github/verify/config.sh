@@ -1,0 +1,4 @@
+BASE=88e804b0a7df1f1ac373a9e2f72fb378d925fdd4
+REPEAT=10
+EXTRA_TESTS='^agc_driver_native_depth|agc_driver_native_multisample_depth|^agc_driver_depth_plane|agc_driver_sample_multisample_target'
+NO_BEFORE=1
