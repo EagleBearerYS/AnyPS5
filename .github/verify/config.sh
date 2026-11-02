@@ -1,0 +1,4 @@
+BASE=f06d7fdcee89af69f69f5d807ea5a34279f4285c
+REPEAT=10
+EXTRA_TESTS='guest_savedata_mount_status|^guest_save'
+NO_BEFORE=1
