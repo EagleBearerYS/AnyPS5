@@ -1,0 +1,5 @@
+BASE=88e804b0a7df1f1ac373a9e2f72fb378d925fdd4
+REPEAT=10
+EXTRA_TESTS='^agc_driver_bda_store_heap_mirror|^agc_driver_bda_|^agc_bda|^agc_driver_pipeline_journal$|^agc_pipeline_journal|^agc_driver_graphics$|^agc_driver_resident_heap_mirror$|^agc_spirv_narrow_constant_store|^agc_driver_clamped_global_fill$|^agc_driver_indexed_copy_gpu_parameters$|agc_heap_mirror_reference_size|agc_reference_storage|agc_driver_dispatch_overlap_off|agc_driver_layered_volume_mesh|agc_shader_layer_specialization_release'
+NO_BEFORE=1
+SPIRV_TOOLS=OFF
