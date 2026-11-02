@@ -1,0 +1,4 @@
+BASE=88e804b0a7df1f1ac373a9e2f72fb378d925fdd4
+REPEAT=10
+EXTRA_TESTS='agc_shader_sampler_limits|agc_driver_many_direct_samplers|agc_driver_image_sample_reduction|^agc_shader_disk_cache|^agc_shader_memory|^agc_shader_selected_records_'
+NO_BEFORE=1
