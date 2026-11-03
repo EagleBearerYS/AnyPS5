@@ -1,0 +1,3 @@
+BASE=086c0686c8adff3ee648fdbe34e0b0b647e1d511
+REPEAT=10
+EXTRA_TESTS='^agc_driver_address_draw_space_reuse|^agc_driver_bda|^agc_bda|^agc_host_import|^agc_write_tracking|^agc_driver_host_import_proofs|agc_driver_graphics|^agc_driver_packed_unorm'
