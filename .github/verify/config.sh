@@ -1,0 +1,4 @@
+BASE=7feb37ee3e30e10139b483fb4df689d5b5b69ab8
+REPEAT=1
+EXTRA_TESTS='unbuilt_exports|agc_driver_unsupported_diagnostics|guest_audiodec_native|guest_avplayer_native|guest_nptrophy2|ngs2_handleerrors|^guest_np_trophy_data$'
+NO_BEFORE=1
