@@ -1,0 +1,5 @@
+BASE=086c0686c8adff3ee648fdbe34e0b0b647e1d511
+REPEAT=3
+EXTRA_TESTS='agc_driver_pipeline_journal|agc_shader_image_limits_mixed|agc_shader_image_limits_refusals|agc_shader_image_limits_table'
+NO_BEFORE=1
+VERBOSE=1
