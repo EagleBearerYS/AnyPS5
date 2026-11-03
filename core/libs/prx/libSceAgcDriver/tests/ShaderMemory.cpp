@@ -4926,7 +4926,13 @@ void verifyImageLimits(std::string_view part) {
         const auto fmaskRequest = TableRequest(fmaskCode, userData);
         const auto fmaskPlan = GetResourcePlan(fmaskRequest);
         constexpr std::uint32_t FmaskImage = Capacity / 2u;
-        require(fmaskPlan->info.images.size() == FmaskImage + 1u && tableImages(*fmaskPlan) == FmaskImage && std::ranges::any_of(fmaskPlan->info.runtimeImageModes.at(FmaskImage), [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }) && fmaskPlan->info.samplers.size() == 1u && MirrorsIfUnnormalized(fmaskPlan->info.samplers[0]), "image limits: 64 table images and a direct FMASK image were not planned as an FMASK expansion at image 64 beside a sampler that mirrors when unnormalized");
+        require(fmaskPlan->info.images.size() == FmaskImage + 1u && tableImages(*fmaskPlan) == FmaskImage, ("image limits: 64 table images and a direct FMASK image were planned as " + std::to_string(fmaskPlan->info.images.size()) + " images, " + std::to_string(tableImages(*fmaskPlan)) + " of them in the table").c_str());
+        const auto& fmaskModes = fmaskPlan->info.runtimeImageModes.at(FmaskImage);
+        std::string fmaskConversions;
+        for (const auto& mode : fmaskModes) fmaskConversions += " " + std::to_string(static_cast<std::uint32_t>(mode.conversionFormat));
+        const auto& fmaskResource = fmaskPlan->info.images[FmaskImage];
+        require(std::ranges::any_of(fmaskModes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }), ("image limits: direct image 64 (resource class " + std::to_string(static_cast<std::uint32_t>(fmaskResource.resourceClass)) + ", FMASK-compatible " + std::to_string(fmaskResource.fmaskCompatible) + ") has no FMASK expansion among its " + std::to_string(fmaskModes.size()) + " runtime modes, whose conversions are" + fmaskConversions).c_str());
+        require(fmaskPlan->info.samplers.size() == 1u && MirrorsIfUnnormalized(fmaskPlan->info.samplers[0]), ("image limits: the FMASK case planned " + std::to_string(fmaskPlan->info.samplers.size()) + " samplers, not one sampler that mirrors when unnormalized").c_str());
         AgcDriver::ShaderMemory fmaskMemory({});
         const auto fmaskCapture = fmaskMemory.Capture(fmaskRequest);
         const auto fmaskPrepared = DescriptorBindingBuilder{}.Prepare(IrBindingLayout{}, fmaskPlan->info, IrShaderStage::Compute, fmaskCapture->snapshot);
