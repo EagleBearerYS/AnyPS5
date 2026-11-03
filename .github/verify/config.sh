@@ -1,0 +1,4 @@
+BASE=1c8c0efc8c41314402e6966da5bef6ea3d639d10
+REPEAT=10
+EXTRA_TESTS='agc_changed_copy|agc_recorder_stored_bytes|^agc_storage|agc_driver_recorder'
+NO_BEFORE=1
