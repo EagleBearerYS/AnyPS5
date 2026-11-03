@@ -204,7 +204,7 @@ BdaResources::~BdaResources() {
     auto& arena = found->second;
     arena.holders.erase(this);
     --arena.counts.held;
-    if (!sharedFaultSlots() || privateSlot) {
+    if (!sharedFaultSlots()) {
         arena.counts.slots -= chunk->slots;
         --arena.counts.chunks;
     } else {
