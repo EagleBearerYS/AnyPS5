@@ -430,7 +430,7 @@ int CheckPkcs1Type1(unsigned char* to, int size, const unsigned char* from, int 
         ++data;
         break;
     }
-    if (index == remaining || index < 8) return -1;
+    if (index == remaining || index < 1) return -1;
     remaining -= index + 1;
     if (remaining > size) return -1;
     RequireBuffer(to, remaining, function, "output");
