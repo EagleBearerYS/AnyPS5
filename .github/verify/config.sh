@@ -1,0 +1,4 @@
+BASE=3c3b3cda739f9eb00a07fae50d94a3af5f6fb8f2
+REPEAT=10
+EXTRA_TESTS='agc_storage_pending_key_refresh|agc_pending_key_stores|agc_unchanged_cpu_stamps|agc_storage_pending_after_unwatch|agc_repeated_neighbour_stores'
+NO_BEFORE=1
