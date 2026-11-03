@@ -9184,6 +9184,26 @@ bool pendingKeyRefreshTests(const Device& device, Recorder& recorder) {
         Require(proved() == landed, "the proof over the pending key store held after its batch retired");
         image->Refresh();
         Require(proved() == landed + 1, "the proof was not taken again over the landed keys");
+        const auto* import = HostImportFor(base, address, bytes);
+        Require(import != nullptr, "the pending key store block lost its import");
+        const auto waits = KeyWaitCounts().fillsUncompressed;
+        {
+            const auto commands = recorder.Commands();
+            context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, import->buffer, resource.dccAddress - import->base, keyCount, 0xffffffffu);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_HOST_READ_BIT);
+            recorder.NotePendingFill(resource.dccAddress, keyCount, 0xff);
+        }
+        texels[0] = 0x22;
+        image->Refresh();
+        Require(KeyWaitCounts().fillsUncompressed > waits, "the refresh over a pending uncompressed key fill was not answered by the key writers");
+        Require(image->KeyProof().pendingNote != 0, "the refresh over a pending uncompressed key fill took no proof of its write note");
+        const auto filling = proved();
+        image->Refresh();
+        Require(proved() == filling + 1, "a refresh of the unchanged target over its pending uncompressed key fill was not answered from the proof");
+        recorder.Sync();
+        const auto retired = proved();
+        image->Refresh();
+        Require(proved() == retired, "the proof over the pending uncompressed key fill held after its batch retired");
     }
     recorder.Sync();
     return true;
