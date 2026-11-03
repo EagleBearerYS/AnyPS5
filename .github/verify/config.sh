@@ -1,0 +1,4 @@
+BASE=04a9eb4fa2877eb6e40bf2c83adf972e40d89b24
+REPEAT=10
+EXTRA_TESTS='agc_changed_copy|agc_driver_graphics|agc_driver_pipeline_journal|agc_driver_resident_heap_mirror|^agc_driver_bda|^agc_bda|agc_driver_native_depth_publication'
+NO_BEFORE=1
