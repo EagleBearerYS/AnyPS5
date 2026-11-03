@@ -190,6 +190,8 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_storage_pending_key_refresh COMMAND agc_driver_recorder_tests --pending-key-refresh-only)
+    add_test(NAME agc_storage_pending_key_refresh_draw_pipeline COMMAND agc_driver_recorder_tests --pending-key-refresh-only)
+    set_tests_properties(agc_storage_pending_key_refresh_draw_pipeline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=32;APS5_PIPELINE_DISPATCH=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
     set_tests_properties(agc_storage_pending_key_refresh PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
     if(WIN32)
         set_tests_properties(agc_storage_pending_key_refresh PROPERTIES ENVIRONMENT_MODIFICATION
