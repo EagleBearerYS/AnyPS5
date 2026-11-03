@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -13,18 +14,6 @@
 #include <thread>
 
 extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
-int APS5_VABI close_nid_postfix(int descriptor);
-int APS5_VABI dup_nid_postfix(int descriptor);
-int APS5_VABI dup2_nid_postfix(int from, int to);
-int APS5_VABI ksem_init_nid_postfix(std::intptr_t* idp, unsigned int value);
-int APS5_VABI ksem_post_nid_postfix(std::intptr_t id);
-int APS5_VABI ksem_wait_nid_postfix(std::intptr_t id);
-int APS5_VABI ksem_trywait_nid_postfix(std::intptr_t id);
-int APS5_VABI ksem_timedwait_nid_postfix(std::intptr_t id, const void* abstime);
-int APS5_VABI ksem_getvalue_nid_postfix(std::intptr_t id, int* value);
-int APS5_VABI ksem_destroy_nid_postfix(std::intptr_t id);
 int APS5_VABI ksem_open_nid_postfix(std::intptr_t* idp, const char* name, int oflag, unsigned int mode, unsigned int value);
 int APS5_VABI ksem_close_nid_postfix(std::intptr_t id);
 int APS5_VABI ksem_unlink_nid_postfix(const char* name);
@@ -46,11 +35,6 @@ constexpr int Eagain = 35;
 constexpr int Etimedout = 60;
 constexpr int Eoverflow = 84;
 
-struct Timespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
-
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
     std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
@@ -61,7 +45,7 @@ int Error() {
     return *__error_nid_postfix();
 }
 
-Timespec FromNow(std::chrono::milliseconds delay) {
+KernelTimespec FromNow(std::chrono::milliseconds delay) {
     const auto when = std::chrono::system_clock::now() + delay;
     const auto nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(when.time_since_epoch()).count();
     return {nanoseconds / 1000000000, nanoseconds % 1000000000};
@@ -93,7 +77,7 @@ void Counting() {
 void Timed() {
     std::intptr_t id = -1;
     Require(ksem_init_nid_postfix(&id, 0) == 0);
-    const Timespec invalid{0, 1000000000};
+    const KernelTimespec invalid{0, 1000000000};
     Require(ksem_timedwait_nid_postfix(id, &invalid) == -1 && Error() == Einval);
     const auto deadline = FromNow(std::chrono::milliseconds(150));
     const auto start = std::chrono::steady_clock::now();

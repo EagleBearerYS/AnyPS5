@@ -1,5 +1,8 @@
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Ksem.hpp"
 #include <cerrno>
 #include <chrono>
@@ -20,10 +23,6 @@
 #include <unistd.h>
 #endif
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI close_nid_postfix(int descriptor);
-extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor));
-
 namespace {
 
 constexpr int GuestEnoent = 2;
@@ -43,11 +42,6 @@ constexpr int GuestOExcl = 0x0800;
 constexpr std::size_t GuestPathMax = 1024;
 constexpr unsigned SemValueMax = 0x7fffffffu;
 constexpr std::size_t SemMax = 30;
-
-struct GuestTimespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
 
 struct Ksem {
     std::mutex lock;
@@ -98,7 +92,7 @@ const bool g_observerRegistered = [] {
     return true;
 }();
 
-int Wait(std::intptr_t id, bool once, const GuestTimespec* abstime) {
+int Wait(std::intptr_t id, bool once, const KernelTimespec* abstime) {
     const auto ksem = Find(id);
     if (!ksem) return Fail(GuestEinval);
     std::unique_lock lock(ksem->lock);
@@ -110,7 +104,7 @@ int Wait(std::intptr_t id, bool once, const GuestTimespec* abstime) {
             ksem->available.wait(lock, [&] { return ksem->count > 0; });
         } else {
             const auto deadline = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(
-                std::chrono::seconds(abstime->seconds) + std::chrono::nanoseconds(abstime->nanoseconds)));
+                std::chrono::seconds(abstime->tv_sec) + std::chrono::nanoseconds(abstime->tv_nsec)));
             ready = ksem->available.wait_until(lock, deadline, [&] { return ksem->count > 0; });
         }
         --ksem->waiters;
@@ -169,8 +163,8 @@ int APS5_VABI ksem_trywait_nid_postfix(std::intptr_t id) {
     return Wait(id, true, nullptr);
 }
 
-int APS5_VABI ksem_timedwait_nid_postfix(std::intptr_t id, const GuestTimespec* abstime) {
-    if (abstime != nullptr && (abstime->nanoseconds < 0 || abstime->nanoseconds >= 1000000000)) return Fail(GuestEinval);
+int APS5_VABI ksem_timedwait_nid_postfix(std::intptr_t id, const KernelTimespec* abstime) {
+    if (abstime != nullptr && (abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)) return Fail(GuestEinval);
     return Wait(id, false, abstime);
 }
 

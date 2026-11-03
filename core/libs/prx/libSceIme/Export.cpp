@@ -1,3 +1,6 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceIme/include/InventoryExports.hpp"
+#include "prx/libSceIme/include/Api.hpp"
 #include <atomic>
 #include <algorithm>
 #include <cstdint>
@@ -12,8 +15,16 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/ImeComposition.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
+#include "prx/libSceIme/include/ImeHostText.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "prx/libSceIme/include/ImeKeyboardView.hpp"
+
+static_assert(sizeof(ImeEditText) == 64);
+static_assert(offsetof(ImeEvent, param) == 8);
+static_assert(sizeof(ImeVshCaretGeometry) == 16);
+static_assert(sizeof(ImeVshTextGeometry) == 16);
 
 namespace {
 
@@ -60,13 +71,19 @@ constexpr uint32_t EventPressEnter = 5;
 constexpr uint32_t CaretMoveLeft = 1;
 constexpr uint32_t CaretMoveRight = 2;
 
+struct PendingInput {
+    ImeHostInput input;
+    std::u16string paste;
+};
+
 struct Session {
     Param param{};
     ImeExtKeyboardFilter extKeyboardFilter = nullptr;
     std::u16string text;
     std::uint32_t caret = 0;
     std::deque<ImeEvent> events;
-    std::deque<ImeHostInput> hostInputs;
+    std::deque<PendingInput> hostInputs;
+    ImeComposition composition;
     std::uint64_t id = 0;
     std::uint64_t revision = 0;
 };
@@ -80,6 +97,9 @@ std::set<int32_t> g_openKeyboards;
 std::mutex g_imeMutex;
 std::optional<Session> g_session;
 std::atomic<ImeHostTextSink> g_textSink{nullptr};
+std::atomic<ImeHostPreeditSink> g_preeditSink{nullptr};
+std::atomic<ImeHostPadSink> g_padSink{nullptr};
+std::atomic<ImeKeyboardViewProvider> g_viewProvider{nullptr};
 std::uint64_t g_nextSessionId = 0;
 
 void PanelSize(const Param& param, uint32_t* width, uint32_t* height) {
@@ -260,7 +280,15 @@ std::size_t UnitsAfter(const Session& session) {
     return caret + 1 < session.text.size() && IsHighSurrogate(session.text[caret]) && IsLowSurrogate(session.text[caret + 1]) ? 2 : 1;
 }
 
-std::optional<DeferredFilter> Apply(Session& session, const ImeHostInput& input) {
+std::optional<DeferredFilter> Apply(Session& session, const PendingInput& pending) {
+    const ImeHostInput& input = pending.input;
+    if (input.kind == ImeHostInputKind::Preedit) {
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        session.composition.Set(ImeHostText::PreeditUnits(input.text, size), input.start, input.length);
+        return std::nullopt;
+    }
+    if (ImeRouteWhileComposing(session.composition, input.kind) == ImeCompositionRoute::Swallow) return std::nullopt;
     switch (input.kind) {
         case ImeHostInputKind::Text: {
             std::size_t size = 0;
@@ -315,6 +343,10 @@ std::optional<DeferredFilter> Apply(Session& session, const ImeHostInput& input)
         case ImeHostInputKind::Escape:
             QueueText(session, EventPressClose, session.caret, 0);
             return std::nullopt;
+        case ImeHostInputKind::Paste:
+            return Insert(session, pending.paste);
+        case ImeHostInputKind::Preedit:
+            return std::nullopt;
     }
     throw std::invalid_argument("IME host input: unknown input kind");
 }
@@ -358,9 +390,18 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     {
         std::lock_guard lock(g_imeMutex);
         if (g_session) {
-            g_session->hostInputs.push_back(input);
+            g_session->hostInputs.push_back({input, {}});
             return;
         }
+    }
+    if (input.kind == ImeHostInputKind::Preedit) {
+        const ImeHostPreeditSink preeditSink = g_preeditSink.load();
+        if (preeditSink == nullptr) return;
+        std::size_t size = 0;
+        while (size < sizeof(input.text) && input.text[size] != '\0') ++size;
+        const std::u16string units = ImeHostText::PreeditUnits(input.text, size);
+        preeditSink(units.data(), units.size(), input.start, input.length);
+        return;
     }
     const ImeHostTextSink sink = g_textSink.load();
     if (sink == nullptr) return;
@@ -373,6 +414,26 @@ void ImePublishInput_nid_postfix(const ImeHostInput& input) {
     sink(input.kind, units.data(), units.size());
 }
 
+void ImePublishPaste_nid_postfix(const char* text, std::size_t size) {
+    if (text == nullptr) return;
+    {
+        std::lock_guard lock(g_imeMutex);
+        if (g_session) {
+            std::u16string units = ImeHostText::ClipboardUnits(text, size, (g_session->param.option & OptionMultiline) != 0);
+            if (units.empty()) return;
+            ImeHostInput input;
+            input.kind = ImeHostInputKind::Paste;
+            g_session->hostInputs.push_back({input, std::move(units)});
+            return;
+        }
+    }
+    const ImeHostTextSink sink = g_textSink.load();
+    if (sink == nullptr) return;
+    const std::u16string units = ImeHostText::ClipboardUnits(text, size, false);
+    if (units.empty()) return;
+    sink(ImeHostInputKind::Paste, units.data(), units.size());
+}
+
 bool ImeCapturesKeyboard_nid_postfix() {
     std::lock_guard lock(g_imeMutex);
     return g_session.has_value() || g_textSink.load() != nullptr;
@@ -380,6 +441,31 @@ bool ImeCapturesKeyboard_nid_postfix() {
 
 void ImeSetHostTextSink_nid_no_patch(ImeHostTextSink sink) {
     g_textSink = sink;
+}
+
+void ImeSetHostPreeditSink_nid_no_patch(ImeHostPreeditSink sink) {
+    g_preeditSink = sink;
+}
+
+bool ImeCapturesPad_nid_postfix() {
+    return g_padSink.load() != nullptr;
+}
+
+void ImePublishPad_nid_postfix(const ImeHostPad& pad) {
+    if (const ImeHostPadSink sink = g_padSink.load()) sink(pad);
+}
+
+void ImeSetHostPadSink_nid_no_patch(ImeHostPadSink sink) {
+    g_padSink = sink;
+}
+
+void ImeSetKeyboardViewProvider_nid_no_patch(ImeKeyboardViewProvider provider) {
+    g_viewProvider = provider;
+}
+
+bool ImeReadKeyboardView_nid_postfix(ImeKeyboardView& view) {
+    const ImeKeyboardViewProvider provider = g_viewProvider.load();
+    return provider != nullptr && provider(view);
 }
 
 int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* extended) {
@@ -456,7 +542,7 @@ int APS5_VABI sceImeKeyboardGetResourceId(int32_t user_id, KeyboardResourceIdArr
 }
 
 int APS5_VABI sceImeKeyboardOpen(int32_t user_id, const KeyboardParam* param) {
- if (!param) APS5_INVALID_ARG_EX;
+ if (!param) return ErrorInvalidAddress;
  std::lock_guard lock(g_keyboardMutex);
  if (!g_openKeyboards.insert(user_id).second) return ErrorBusy;
  return 0;
@@ -495,7 +581,7 @@ int APS5_VABI sceImeSetCaret(const Caret* caret) {
     return 0;
 }
 
-int APS5_VABI sceImeSetConsecutiveClauseConversionEnabled(bool enabled) {
+int APS5_VABI sceImeSetConsecutiveClauseConversionEnabled(std::uint8_t enabled) {
     (void)enabled;
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -524,7 +610,7 @@ int APS5_VABI sceImeSetTextGeometry(TextAreaMode mode, const TextGeometry* geome
 }
 
 int APS5_VABI sceImeUpdate(EventHandler handler) {
-    if (!handler) APS5_INVALID_ARG_EX;
+    if (!handler) return ErrorInvalidHandler;
     for (;;) {
         ImeEvent event{};
         void* arg = nullptr;
@@ -541,9 +627,9 @@ int APS5_VABI sceImeUpdate(EventHandler handler) {
             std::lock_guard lock(g_imeMutex);
             if (!g_session || g_session->param.handler != handler) return 0;
             if (!g_session->hostInputs.empty()) {
-                const ImeHostInput input = g_session->hostInputs.front();
+                const PendingInput pending = std::move(g_session->hostInputs.front());
                 g_session->hostInputs.pop_front();
-                if (const std::optional<DeferredFilter> deferred = Apply(*g_session, input)) {
+                if (const std::optional<DeferredFilter> deferred = Apply(*g_session, pending)) {
                     runFilter = true;
                     filter = g_session->param.filter;
                     filterText = g_session->text;
@@ -581,77 +667,77 @@ int APS5_VABI sceImeUpdate(EventHandler handler) {
     }
 }
 
-int APS5_VABI sceImeVshOpen(void) {
+int APS5_VABI sceImeVshOpen(ImeVshContext** context, const ImeVshParameter* parameter, const char16_t* text) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeKeyboardUpdate(void) {
+int APS5_VABI sceImeKeyboardUpdate(EventHandler handler) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshUpdate(void) {
+int APS5_VABI sceImeVshUpdate(ImeVshContext* context) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshUpdateContext(void) {
+int APS5_VABI sceImeVshUpdateContext(ImeVshContext* context, const char16_t* text, std::uint32_t caretIndex) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshClearPreedit(void) {
+int APS5_VABI sceImeVshClearPreedit(ImeVshContext* context) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshNotifySetText(void) {
+int APS5_VABI sceImeVshNotifySetText(ImeVshContext* context, const char16_t* text, std::uint32_t length) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshSetCaretGeometry(void) {
+int APS5_VABI sceImeVshSetCaretGeometry(ImeVshContext* context, const ImeVshCaretGeometry* geometry) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshConfirmPreedit(void) {
+int APS5_VABI sceImeVshConfirmPreedit(ImeVshContext* context) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshSetCaretIndexInPreedit(void) {
+int APS5_VABI sceImeVshSetCaretIndexInPreedit(ImeVshContext* context, std::int32_t index) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshSetPreeditGeometry(void) {
+int APS5_VABI sceImeVshSetPreeditGeometry(ImeVshContext* context, const ImeVshTextGeometry* geometry) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshSetSelectGeometry(void) {
+int APS5_VABI sceImeVshSetSelectGeometry(ImeVshContext* context, const ImeVshTextGeometry* geometry) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshClose(void) {
+int APS5_VABI sceImeVshClose(ImeVshContext* context) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshGetPanelPositionAndForm(void) {
+int APS5_VABI sceImeVshGetPanelPositionAndForm(ImeVshContext* context, PositionAndForm* form) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeSetCandidateIndex(void) {
+int APS5_VABI sceImeSetCandidateIndex(std::int32_t index) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeConfirmCandidate(void) {
+int APS5_VABI sceImeConfirmCandidate(std::int32_t index) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -661,12 +747,12 @@ int APS5_VABI sceImeDisableController(void) {
     return 0;
 }
 
-int APS5_VABI sceImeSetVoiceDictationEnabled(void) {
+int APS5_VABI sceImeSetVoiceDictationEnabled(bool enabled) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeSetEditEventWithRemotePlayEnabled(void) {
+int APS5_VABI sceImeSetEditEventWithRemotePlayEnabled(bool enabled) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -675,122 +761,122 @@ int APS5_VABI sceImeForTestFunction(void) {
     return ErrorInternal;
 }
 
-int APS5_VABI sceImeVshInformConfirmdString2(void) {
+int APS5_VABI sceImeVshInformConfirmdString2(ImeVshContext* context, const char16_t* text, std::int32_t firstParameter, std::int32_t secondParameter, std::int32_t thirdParameter) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshSetSelectionText(void) {
+int APS5_VABI sceImeVshSetSelectionText(ImeVshContext* context, const char16_t* text, std::uint32_t length) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeCheckUpdateTextInfo(void) {
+int APS5_VABI sceImeCheckUpdateTextInfo(ImeEditText* info, std::uint8_t repair) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeCheckRemoteEventParam(void) {
+int APS5_VABI sceImeCheckRemoteEventParam(ImeEvent* event, std::uint8_t repair) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeKeyboardOpenInternal(void) {
+int APS5_VABI sceImeKeyboardOpenInternal(std::int32_t userId, EventHandler handler, const KeyboardParam* param) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshSetParam(void) {
+int APS5_VABI sceImeVshSetParam(ImeVshContext* context, const ImeVshParameter* parameter) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshUpdateContext2(void) {
+int APS5_VABI sceImeVshUpdateContext2(ImeVshContext* context, const char16_t* text, std::uint32_t caretIndex) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshSendTextInfo(void) {
+int APS5_VABI sceImeVshSendTextInfo(ImeVshContext* context, const void* info, std::uint32_t size) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshInformConfirmdString(void) {
+int APS5_VABI sceImeVshInformConfirmdString(ImeVshContext* context, const char16_t* text, std::int32_t parameter) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshNotifyCurrentTextInfo(void) {
+int APS5_VABI sceImeVshNotifyCurrentTextInfo(ImeVshContext* context, const char16_t* text, std::int32_t caretIndex, std::int32_t preeditFirst, std::int32_t preeditSecond, std::int32_t selectionFirst, std::int32_t selectionSecond) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshNotifyCurrentTextInfoForReconvertText(void) {
+int APS5_VABI sceImeVshNotifyCurrentTextInfoForReconvertText(ImeVshContext* context, const char16_t* text, std::int32_t caretIndex, std::int32_t preeditFirst, std::int32_t preeditSecond, std::int32_t selectionFirst, std::int32_t selectionSecond, std::int32_t option) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshNotifyDeleteText(void) {
+int APS5_VABI sceImeVshNotifyDeleteText(ImeVshContext* context, const char16_t* text, std::int32_t length, std::int32_t parameter) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshNotifyUpdateCaretText(void) {
+int APS5_VABI sceImeVshNotifyUpdateCaretText(ImeVshContext* context, const char16_t* text, std::int32_t length, std::int32_t parameter) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshCheckAutoReConvertingPreeditText(void) {
+int APS5_VABI sceImeVshCheckAutoReConvertingPreeditText(ImeVshContext* context, const char16_t* text) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshSetPanelPosition(void) {
+int APS5_VABI sceImeVshSetPanelPosition(ImeVshContext* context, float x, float y, std::int32_t horizontalAlignment, std::int32_t verticalAlignment) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeVshNotifyPreeditMetaInfo(void) {
+int APS5_VABI sceImeVshNotifyPreeditMetaInfo(ImeVshContext* context, const ImePreeditMetaInfo* info) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeConfigSet(void) {
+int APS5_VABI sceImeConfigSet(std::uint64_t unusedArgument, std::uint64_t configuration, std::uint32_t key, std::uint32_t value) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeConfigGet(void) {
+int APS5_VABI sceImeConfigGet(std::uint64_t unusedArgument, std::uint64_t configuration, std::uint32_t key) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeDicGetWords(void) {
+int APS5_VABI sceImeDicGetWords(std::int32_t userId, std::uint64_t dictionary, ImeDictionaryWord* words) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeDicAddWord(void) {
+int APS5_VABI sceImeDicAddWord(std::int32_t userId, std::uint64_t dictionary, const ImeDictionaryWord* word) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeDicDeleteWord(void) {
+int APS5_VABI sceImeDicDeleteWord(std::int32_t userId, std::uint64_t dictionary, const ImeDictionaryWord* word) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeDicReplaceWord(void) {
+int APS5_VABI sceImeDicReplaceWord(std::int32_t userId, std::uint64_t dictionary, const ImeDictionaryWord* oldWord, const ImeDictionaryWord* newWord) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeDicDeleteLearnDics(void) {
+int APS5_VABI sceImeDicDeleteLearnDics(std::int32_t userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceImeDicDeleteUserDics(void) {
+int APS5_VABI sceImeDicDeleteUserDics(std::int32_t userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -803,5 +889,19 @@ int APS5_VABI InitializeImeModule_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceImeUnknown_NbbzN9GRg_plus_c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NbbzN9GRg+c", libSceImeUnknown_NbbzN9GRg_plus_c_nid_no_patch);
+
+int APS5_VABI libSceImeUnknown_aChMGUoc7QI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aChMGUoc7QI", libSceImeUnknown_aChMGUoc7QI_nid_no_patch);
 
 }
