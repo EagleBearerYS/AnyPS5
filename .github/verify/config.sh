@@ -1,0 +1,3 @@
+BASE=086c0686c8adff3ee648fdbe34e0b0b647e1d511
+REPEAT=10
+EXTRA_TESTS='agc_changed_copy|agc_recorder_stored_bytes|^agc_storage_alias|^agc_storage'
