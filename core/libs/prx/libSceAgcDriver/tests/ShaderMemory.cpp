@@ -4932,6 +4932,8 @@ void verifyImageLimits(std::string_view part) {
         for (const auto& mode : fmaskModes) fmaskConversions += " " + std::to_string(static_cast<std::uint32_t>(mode.conversionFormat));
         const auto& fmaskResource = fmaskPlan->info.images[FmaskImage];
         require(std::ranges::any_of(fmaskModes, [](const ImageResource& mode) { return mode.conversionFormat == FmaskExpansion; }), ("image limits: direct image 64 (resource class " + std::to_string(static_cast<std::uint32_t>(fmaskResource.resourceClass)) + ", FMASK-compatible " + std::to_string(fmaskResource.fmaskCompatible) + ") has no FMASK expansion among its " + std::to_string(fmaskModes.size()) + " runtime modes, whose conversions are" + fmaskConversions).c_str());
+        for (const auto& s : fmaskPlan->info.samplers) std::cout << "DIAG sampler table=" << s.table << " notable=" << (s.table == NoTable) << " uses=0x" << std::hex << s.uses << std::dec << " depthCompare=" << s.depthCompare << " source=" << s.source << "\n";
+        for (const auto& s : mixedPlan->info.samplers) std::cout << "DIAG mixed sampler table=" << s.table << " notable=" << (s.table == NoTable) << " uses=0x" << std::hex << s.uses << std::dec << " depthCompare=" << s.depthCompare << "\n";
         require(fmaskPlan->info.samplers.size() == 1u && MirrorsIfUnnormalized(fmaskPlan->info.samplers[0]), ("image limits: the FMASK case planned " + std::to_string(fmaskPlan->info.samplers.size()) + " samplers, not one sampler that mirrors when unnormalized").c_str());
         AgcDriver::ShaderMemory fmaskMemory({});
         const auto fmaskCapture = fmaskMemory.Capture(fmaskRequest);
