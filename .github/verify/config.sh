@@ -1,0 +1,4 @@
+BASE=acf7ac208a0a7c6df5e4253a22fda322760016c2
+REPEAT=1
+EXTRA_TESTS='^.*native_depth|^.*multisample'
+VALIDATION=1
