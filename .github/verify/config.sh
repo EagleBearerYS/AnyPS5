@@ -1,0 +1,4 @@
+BASE=c2eafe4461bfe1fdfddeae14ce8a584736e0e382
+REPEAT=10
+EXTRA_TESTS='agc_changed_copy|agc_recorder_stored_bytes|agc_untracked_forget|^agc_storage'
+NO_BEFORE=1
