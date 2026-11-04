@@ -1682,6 +1682,7 @@ std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTa
 }
 
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
+    NoteDepthReadSiteForDiag(access);
     RequireNoResidentDepthRead_nid_no_patch(address, bytes);
     RequireNoMultisampleColorTarget(address, bytes, access);
 }

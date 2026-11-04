@@ -45,6 +45,65 @@ std::uint64_t depthWrites = 0;
 std::uint64_t mirrorEpoch = 0;
 std::atomic<void (*)(DepthPublicationStage)> depthPublicationHook{nullptr};
 
+thread_local const char* depthReadSite = nullptr;
+
+struct DepthReadDiag {
+    std::uint64_t address = 0;
+    std::size_t bytes = 0;
+    const char* site = "unnamed";
+};
+
+thread_local DepthReadDiag lastPublicationRead;
+std::atomic<std::uint64_t> publicationReads{0};
+std::atomic<std::uint64_t> publicationsCommitted{0};
+
+struct AmbiguousByteDiag {
+    std::uint64_t offset;
+    std::uint8_t snapshot;
+    std::uint8_t guest;
+    std::uint8_t host;
+};
+
+struct PlaneDiag {
+    std::uint64_t pagesChanged = 0;
+    std::uint64_t pagesStoredAll = 0;
+    std::uint64_t bytesChanged = 0;
+    std::uint64_t firstChanged = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t lastChanged = 0;
+    std::uint64_t ambiguousBytes = 0;
+    std::uint64_t ambiguousPages = 0;
+    std::uint64_t firstAmbiguous = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t lastAmbiguous = 0;
+    std::map<std::uint32_t, std::uint64_t> changedValues;
+    std::map<std::uint32_t, std::uint64_t> ambiguousHostValues;
+    std::uint64_t otherChanged = 0;
+    std::uint64_t otherAmbiguous = 0;
+    std::vector<AmbiguousByteDiag> samples;
+};
+
+std::uint32_t diagElement(const std::vector<std::byte>& bytes, std::size_t offset, std::size_t elementBytes) {
+    const auto at = offset / elementBytes * elementBytes;
+    std::uint32_t value = 0;
+    std::memcpy(&value, bytes.data() + at, std::min(elementBytes, bytes.size() - at));
+    return value;
+}
+
+void diagCount(std::map<std::uint32_t, std::uint64_t>& values, std::uint64_t& other, std::uint32_t value) {
+    if (values.size() < 4096u || values.contains(value)) ++values[value];
+    else ++other;
+}
+
+void diagTopValues(char* line, std::size_t size, const std::map<std::uint32_t, std::uint64_t>& values, std::uint64_t other) {
+    std::vector<std::pair<std::uint32_t, std::uint64_t>> sorted(values.begin(), values.end());
+    std::ranges::sort(sorted, [](const auto& left, const auto& right) { return left.second > right.second; });
+    std::size_t used = 0;
+    line[0] = '\0';
+    for (std::size_t index = 0; index < sorted.size() && index < 4u && used < size; ++index) {
+        used += static_cast<std::size_t>(std::snprintf(line + used, size - used, "%s0x%08x x%llu", index == 0 ? "" : ", ", sorted[index].first, static_cast<unsigned long long>(sorted[index].second)));
+    }
+    if (used < size) std::snprintf(line + used, size - used, " (%zu distinct, %llu beyond the table)", sorted.size(), static_cast<unsigned long long>(other));
+}
+
 std::pair<std::uint32_t, std::uint32_t> DepthBlockExtent(std::uint32_t bytesPerTexel) {
     return {bytesPerTexel == 4 ? 128u : 256u, bytesPerTexel == 1 ? 256u : 128u};
 }
@@ -2407,8 +2466,11 @@ void DepthSurface::PublishToGuest() {
     std::array<std::vector<std::byte>, 3> current;
     std::array<bool, 3> tookGuest{};
     std::vector<GuestMemory::UnchangedQuery> observed;
+    std::array<PlaneDiag, 3> diag;
     for (std::size_t index = 0u; index < publication.size(); ++index) {
         const auto& plane = publication[index];
+        const std::size_t elementBytes = index == 2u ? 1u : 4u;
+        auto& stats = diag[index];
         current[index].resize(plane.range.bytes);
         for (const auto& part : live[index]) {
             observed.push_back({part.address, part.bytes, GuestMemory::CollectWritesUncached(part.address, part.bytes)});
@@ -2419,19 +2481,63 @@ void DepthSurface::PublishToGuest() {
                 const auto address = plane.range.address + first;
                 const auto bytes = std::min<std::size_t>(4096u - (address & 4095u), end - first);
                 if (!GuestMemory::UnchangedSinceLastCollect(address, bytes, plane.range.generation)) {
+                    ++stats.pagesChanged;
+                    for (auto offset = first; offset < first + bytes; ++offset) {
+                        if (current[index][offset] == plane.Byte(offset)) continue;
+                        ++stats.bytesChanged;
+                        stats.firstChanged = std::min<std::uint64_t>(stats.firstChanged, offset);
+                        stats.lastChanged = std::max<std::uint64_t>(stats.lastChanged, offset);
+                        diagCount(stats.changedValues, stats.otherChanged, diagElement(current[index], offset, elementBytes));
+                    }
                     if (GuestMemory::StoredAllSince_nid_no_patch(address, bytes, plane.range.generation)) {
+                        ++stats.pagesStoredAll;
                         if (!std::equal(current[index].begin() + first, current[index].begin() + first + bytes, result[index].begin() + first)) tookGuest[index] = true;
                         std::copy_n(current[index].begin() + first, bytes, result[index].begin() + first);
-                    } else for (std::size_t offset = first; offset < first + bytes; ++offset) {
-                        if (current[index][offset] != plane.Byte(offset) || current[index][offset] == result[index][offset] || GuestMemory::StoredAllSince_nid_no_patch(plane.range.address + offset, 1u, plane.range.generation)) {
-                            if (current[index][offset] != result[index][offset]) tookGuest[index] = true;
-                            result[index][offset] = current[index][offset];
-                        } else Require(GuestMemory::UnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation), "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store");
+                    } else {
+                        bool pageAmbiguous = false;
+                        for (std::size_t offset = first; offset < first + bytes; ++offset) {
+                            if (current[index][offset] != plane.Byte(offset) || current[index][offset] == result[index][offset] || GuestMemory::StoredAllSince_nid_no_patch(plane.range.address + offset, 1u, plane.range.generation)) {
+                                if (current[index][offset] != result[index][offset]) tookGuest[index] = true;
+                                result[index][offset] = current[index][offset];
+                            } else if (!GuestMemory::UnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation)) {
+                                pageAmbiguous = true;
+                                ++stats.ambiguousBytes;
+                                stats.firstAmbiguous = std::min<std::uint64_t>(stats.firstAmbiguous, offset);
+                                stats.lastAmbiguous = std::max<std::uint64_t>(stats.lastAmbiguous, offset);
+                                diagCount(stats.ambiguousHostValues, stats.otherAmbiguous, diagElement(result[index], offset, elementBytes));
+                                if (stats.samples.size() < 4u) stats.samples.push_back({offset, static_cast<std::uint8_t>(plane.Byte(offset)), static_cast<std::uint8_t>(current[index][offset]), static_cast<std::uint8_t>(result[index][offset])});
+                            }
+                        }
+                        if (pageAmbiguous) ++stats.ambiguousPages;
                     }
                 }
                 first += bytes;
             }
         }
+    }
+    if (std::ranges::any_of(diag, [](const PlaneDiag& stats) { return stats.ambiguousBytes != 0u; })) {
+        constexpr std::array<const char*, 3> planeNames{"depth", "htile", "stencil"};
+        std::fprintf(stderr, "[native-depth-diag] publication refused for %s 0x%llx+0x%zx: target 0x%llx vk format %d %ux%u, %u samples, stencil 0x%llx, htile 0x%llx (depth-only %d, stencil in htile %d), clear depth %g (0x%08x), clear stencil 0x%02x; %llu publications requested, %llu committed\n",
+            lastPublicationRead.site, static_cast<unsigned long long>(lastPublicationRead.address), lastPublicationRead.bytes, static_cast<unsigned long long>(target.address), static_cast<int>(target.format), target.extent.width, target.extent.height, target.samples,
+            static_cast<unsigned long long>(target.stencilAddress), static_cast<unsigned long long>(target.htileAddress), target.htileDepthOnly ? 1 : 0, target.htileStencil ? 1 : 0, static_cast<double>(target.clearDepth), std::bit_cast<std::uint32_t>(target.clearDepth), static_cast<unsigned>(target.clearStencil),
+            static_cast<unsigned long long>(publicationReads.load(std::memory_order_relaxed)), static_cast<unsigned long long>(publicationsCommitted.load(std::memory_order_relaxed)));
+        for (std::size_t index = 0u; index < publication.size(); ++index) {
+            const auto& stats = diag[index];
+            const auto& range = publication[index].range;
+            std::fprintf(stderr, "[native-depth-diag]   %s 0x%llx+0x%llx: %llu pages written by the guest since generation %llu (%llu wholly by driver stores), %llu bytes differ from the snapshot at +0x%llx..+0x%llx, %llu ambiguous bytes in %llu pages at +0x%llx..+0x%llx\n",
+                planeNames[index], static_cast<unsigned long long>(range.address), static_cast<unsigned long long>(range.bytes), static_cast<unsigned long long>(stats.pagesChanged), static_cast<unsigned long long>(range.generation), static_cast<unsigned long long>(stats.pagesStoredAll), static_cast<unsigned long long>(stats.bytesChanged),
+                static_cast<unsigned long long>(stats.bytesChanged != 0u ? stats.firstChanged : 0u), static_cast<unsigned long long>(stats.lastChanged), static_cast<unsigned long long>(stats.ambiguousBytes), static_cast<unsigned long long>(stats.ambiguousPages),
+                static_cast<unsigned long long>(stats.ambiguousBytes != 0u ? stats.firstAmbiguous : 0u), static_cast<unsigned long long>(stats.lastAmbiguous));
+            char changed[256];
+            char ambiguous[256];
+            diagTopValues(changed, sizeof(changed), stats.changedValues, stats.otherChanged);
+            diagTopValues(ambiguous, sizeof(ambiguous), stats.ambiguousHostValues, stats.otherAmbiguous);
+            std::fprintf(stderr, "[native-depth-diag]   %s guest values where it differs from the snapshot: %s; host values at the ambiguous bytes: %s\n", planeNames[index], changed, ambiguous);
+            for (const auto& sample : stats.samples) {
+                std::fprintf(stderr, "[native-depth-diag]   %s ambiguous byte +0x%llx: snapshot and guest 0x%02x, host 0x%02x\n", planeNames[index], static_cast<unsigned long long>(sample.offset), sample.guest, sample.host);
+            }
+        }
+        Require(false, "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store");
     }
     if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::GuestCopied);
     for (const auto& range : observed) GuestMemory::CollectWritesUncached(range.address, range.bytes);
@@ -2450,6 +2556,7 @@ void DepthSurface::PublishToGuest() {
         if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::PlaneCommitted);
     }
     publicationFailed = false;
+    publicationsCommitted.fetch_add(1, std::memory_order_relaxed);
     for (std::size_t index = 0u; index < publication.size(); ++index) {
         const auto& range = sampling.initial[index];
         const bool whole = live[index].size() == 1u && live[index][0].address == range.address && live[index][0].bytes == range.bytes;
@@ -2907,7 +3014,13 @@ std::uint64_t MultisampledDepthBytes_nid_no_patch(VkExtent2D extent, std::uint32
     return width * height * bytesPerTexel * samples;
 }
 
+void NoteDepthReadSiteForDiag(const char* site) {
+    depthReadSite = site;
+}
+
 void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t bytes, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear, bool allowPublication) {
+    const char* site = depthReadSite != nullptr ? depthReadSite : "an untagged access";
+    depthReadSite = nullptr;
     if (bytes == 0u || !anyDepthGuard().load(std::memory_order_acquire)) return;
     Require(address <= std::numeric_limits<std::uint64_t>::max() - bytes, "native depth read range overflows");
     const auto overlaps = [&](const DepthGuard& range) { return address < range.address + range.bytes && range.address < address + bytes; };
@@ -2934,6 +3047,9 @@ void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t 
     if (!written.empty()) {
         Require(allowPublication && !HoldsMultisampleTargetsLock(), "sample-preserving guest publication of native multisample depth is not implemented while a multisampled colour target is being acquired");
         if (const auto hook = depthPublicationHook.load(std::memory_order_acquire)) hook(DepthPublicationStage::ReadCaptured);
+        lastPublicationRead = {address, bytes, site};
+        const auto requested = publicationReads.fetch_add(1, std::memory_order_relaxed) + 1u;
+        if (requested <= 16u || requested % 256u == 0u) std::fprintf(stderr, "[native-depth-diag] publication %llu for %s 0x%llx+0x%zx\n", static_cast<unsigned long long>(requested), site, static_cast<unsigned long long>(address), bytes);
         publishWrittenDepth(written);
     }
     std::unique_lock lock(depthGuardMutex());
@@ -3071,9 +3187,16 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
         const auto metadataBytes = target.htileAddress == 0u ? 0u : HtileMetadataBytes(target.extent);
         Require(target.address <= std::numeric_limits<std::uint64_t>::max() - depthBytes && target.stencilAddress <= std::numeric_limits<std::uint64_t>::max() - stencilBytes && target.htileAddress <= std::numeric_limits<std::uint64_t>::max() - metadataBytes, "native depth attachment range overflows");
         lock.unlock();
+        NoteDepthReadSiteForDiag("a new depth surface's depth plane");
         RequireNoResidentDepthRead_nid_no_patch(target.address, static_cast<std::size_t>(depthBytes));
-        if (stencilBytes != 0u) RequireNoResidentDepthRead_nid_no_patch(target.stencilAddress, static_cast<std::size_t>(stencilBytes));
-        if (metadataBytes != 0u) RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+        if (stencilBytes != 0u) {
+            NoteDepthReadSiteForDiag("a new depth surface's stencil plane");
+            RequireNoResidentDepthRead_nid_no_patch(target.stencilAddress, static_cast<std::size_t>(stencilBytes));
+        }
+        if (metadataBytes != 0u) {
+            NoteDepthReadSiteForDiag("a new depth surface's HTILE");
+            RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+        }
         {
             std::shared_lock guardLock(depthGuardMutex());
             for (const auto& range : depthGuards()) {
