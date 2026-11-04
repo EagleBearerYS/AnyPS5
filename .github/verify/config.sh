@@ -1,0 +1,5 @@
+BASE=5a20baa0ccb686d250326f1db5e303af03bac566
+REPEAT=5
+EXTRA_TESTS='agc_driver_pipeline_journal'
+NO_BEFORE=1
+TEST_TIMEOUT=300
