@@ -1,0 +1,5 @@
+BASE=d1ae628bc2f62459cce1e9872ba5632c938c71f2
+REPEAT=5
+EXTRA_TESTS='agc_driver_pipeline_journal|agc_driver_pipeline_journal_undecodable_module'
+NO_BEFORE=1
+TEST_TIMEOUT=300
