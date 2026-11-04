@@ -1,0 +1,4 @@
+BASE=b611e634f7fc024f0c13e342d96de744448ef1d9
+REPEAT=10
+EXTRA_TESTS='agc_draw_descriptors ^agc_driver_table_index ^agc_driver_lookup_log ^agc_driver_village ^agc_driver_resource_cache ^agc_driver_sampled_cache ^agc_driver_image_table ^agc_driver_image_memory ^agc_image_memory ^agc_driver_address_draw_space_reuse ^agc_driver_bda agc_driver_resident_heap_mirror'
+NO_BEFORE=1
