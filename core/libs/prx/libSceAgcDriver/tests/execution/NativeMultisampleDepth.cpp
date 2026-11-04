@@ -3191,6 +3191,64 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     std::printf("Native D32S8 without HTILE, samples=%u: uniform planes imported and sampled, other planes refused\n", samples);
 }
 
+enum class DriverPageWrite { DriverStore, CpuStore, PossiblyWritten, Mixed };
+void CheckDriverPagePublication(Context context, DriverPageWrite write) {
+    constexpr std::uint32_t samples = 4u;
+    constexpr VkExtent2D extent{256u, 64u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes, true), stencil(stencilBytes, true), metadata(65536u, true);
+    std::memset(stencil.Data(), 0x5a, stencilBytes);
+    std::memset(metadata.Data(), 0, metadataBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 0.0f, 0x5au, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = 0x8c00u;
+    target.iterate256 = true;
+    target.htilePipeAligned = true;
+    target.htileDepthOnly = true;
+    const MultisampleTextureLayout stencilLayout(TextureTileMode::kZ64KBX, 1u, samples, extent.width, extent.height, 1u, target.pipeBankXor);
+    const std::size_t pages = write == DriverPageWrite::Mixed ? 8192u : 4096u;
+    std::vector<std::byte> host(stencilBytes, std::byte{0x5a});
+    for (std::uint32_t y = 0u; y < extent.height; ++y) {
+        for (std::uint32_t x = 0u; x < extent.width; ++x) {
+            for (std::uint32_t sample = 0u; sample < samples; ++sample) host[stencilLayout.Offset(x, y, 0u, sample)] = static_cast<std::byte>(0x20u + sample);
+        }
+    }
+    Require(std::none_of(host.begin(), host.begin() + static_cast<std::ptrdiff_t>(pages), [](std::byte value) { return value == std::byte{0x5a}; }), "the driver page publication fixture does not draw its stencil pages whole");
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    NoteDepthSurfaceWrite(context, target);
+    DepthRaster raster(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x20u}, false, true);
+    raster.Run(recorder.Commands(), 0.25f);
+    constexpr std::size_t stored = 0x64u;
+    const std::array driverBytes{std::byte{0x77}, std::byte{0x78}, std::byte{0x79}, std::byte{0x7a}};
+    if (write == DriverPageWrite::DriverStore || write == DriverPageWrite::Mixed) AgcDriver::GuestMemory::StoreOwnBytes(target.stencilAddress + stored, driverBytes);
+    if (write == DriverPageWrite::CpuStore) *reinterpret_cast<volatile std::byte*>(target.stencilAddress + stored) = std::byte{0x77};
+    if (write == DriverPageWrite::Mixed) *reinterpret_cast<volatile std::byte*>(target.stencilAddress + 4096u + stored) = std::byte{0x77};
+    if (write == DriverPageWrite::PossiblyWritten) AgcDriver::GuestMemory::MarkPossiblyWritten(target.stencilAddress, 4096u);
+    std::vector<std::byte> read(pages);
+    if (write == DriverPageWrite::DriverStore) {
+        AgcDriver::GuestMemory::Read(target.stencilAddress, read);
+        for (std::size_t offset = 0u; offset < pages; ++offset) {
+            const bool driver = offset >= stored && offset < stored + driverBytes.size();
+            Require(read[offset] == (driver ? driverBytes[offset - stored] : host[offset]), "a stencil page only complete driver stores changed did not publish the host's bytes around them");
+        }
+        Require(DepthSurfaceAt(target.address), "a driver-only stencil page publication retired its owner");
+        return;
+    }
+    const std::vector<std::byte> held(reinterpret_cast<const std::byte*>(target.stencilAddress), reinterpret_cast<const std::byte*>(target.stencilAddress) + pages);
+    TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.stencilAddress, read); }, "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store");
+    Require(std::equal(held.begin(), held.end(), reinterpret_cast<const std::byte*>(target.stencilAddress)), "a refused stencil page publication committed guest bytes");
+    Require(DepthSurfaceAt(target.address), "a refused stencil page publication retired its owner");
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef __linux__
@@ -3238,6 +3296,7 @@ int main(int argc, char** argv) {
             CheckDepthPublication(publishing, 4u, PublicationWrite::Completion, true);
             for (const auto write : {PublicationWrite::SameDepth, PublicationWrite::SameStencil, PublicationWrite::SameHtile, PublicationWrite::ChangedHull, PublicationWrite::Possible, PublicationWrite::ImportSameValue}) CheckDepthPublication(publishing, 4u, write, true);
             CheckDepthPublication(publishing, 4u, PublicationWrite::DccAcquisition, true);
+            for (const auto write : {DriverPageWrite::DriverStore, DriverPageWrite::CpuStore, DriverPageWrite::PossiblyWritten, DriverPageWrite::Mixed}) CheckDriverPagePublication(publishing, write);
             return 0;
         }
         CheckDrawFeedback();
