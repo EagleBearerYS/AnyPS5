@@ -79,6 +79,7 @@ struct PlaneDiag {
     std::uint64_t otherChanged = 0;
     std::uint64_t otherAmbiguous = 0;
     std::vector<AmbiguousByteDiag> samples;
+    std::vector<std::pair<std::uint64_t, std::size_t>> ambiguousRanges;
 };
 
 std::uint32_t diagElement(const std::vector<std::byte>& bytes, std::size_t offset, std::size_t elementBytes) {
@@ -2508,7 +2509,10 @@ void DepthSurface::PublishToGuest() {
                                 if (stats.samples.size() < 4u) stats.samples.push_back({offset, static_cast<std::uint8_t>(plane.Byte(offset)), static_cast<std::uint8_t>(current[index][offset]), static_cast<std::uint8_t>(result[index][offset])});
                             }
                         }
-                        if (pageAmbiguous) ++stats.ambiguousPages;
+                        if (pageAmbiguous) {
+                            ++stats.ambiguousPages;
+                            if (stats.ambiguousRanges.size() < 65536u) stats.ambiguousRanges.emplace_back(address, bytes);
+                        }
                     }
                 }
                 first += bytes;
@@ -2533,6 +2537,13 @@ void DepthSurface::PublishToGuest() {
             diagTopValues(changed, sizeof(changed), stats.changedValues, stats.otherChanged);
             diagTopValues(ambiguous, sizeof(ambiguous), stats.ambiguousHostValues, stats.otherAmbiguous);
             std::fprintf(stderr, "[native-depth-diag]   %s guest values where it differs from the snapshot: %s; host values at the ambiguous bytes: %s\n", planeNames[index], changed, ambiguous);
+            std::uint64_t cpuPages = 0;
+            std::uint64_t driverStoredPages = 0;
+            for (const auto& [pageAddress, pageBytes] : stats.ambiguousRanges) {
+                if (!GuestMemory::UnchangedSinceCollected(pageAddress, pageBytes, range.generation)) ++cpuPages;
+                if (GuestMemory::StoredOver(pageAddress, pageBytes, range.generation)) ++driverStoredPages;
+            }
+            if (!stats.ambiguousRanges.empty()) std::fprintf(stderr, "[native-depth-diag]   %s of %zu ambiguous pages: %llu with a CPU store since the generation, %llu with none (only driver stores); %llu with a driver store over them\n", planeNames[index], stats.ambiguousRanges.size(), static_cast<unsigned long long>(cpuPages), static_cast<unsigned long long>(stats.ambiguousRanges.size() - cpuPages), static_cast<unsigned long long>(driverStoredPages));
             for (const auto& sample : stats.samples) {
                 std::fprintf(stderr, "[native-depth-diag]   %s ambiguous byte +0x%llx: snapshot and guest 0x%02x, host 0x%02x\n", planeNames[index], static_cast<unsigned long long>(sample.offset), sample.guest, sample.host);
             }
