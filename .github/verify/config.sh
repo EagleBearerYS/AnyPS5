@@ -1,0 +1,4 @@
+BASE=acf7ac208a0a7c6df5e4253a22fda322760016c2
+REPEAT=10
+EXTRA_TESTS='^agc_driver_storage_cache|^agc_storage|agc_driver_recorder|^agc_image_memory|^agc_driver_image_memory'
+NO_BEFORE=1
