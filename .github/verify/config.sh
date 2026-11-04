@@ -1,0 +1,6 @@
+BASE=1c8c0efc8c41314402e6966da5bef6ea3d639d10
+REPEAT=5
+EXTRA_TESTS='agc_driver_pipeline_journal|agc_driver_storage_cache_entries_profile|agc_driver_storage_cache_entries_unlimited'
+NO_BEFORE=1
+VERBOSE=1
+TEST_TIMEOUT=300
