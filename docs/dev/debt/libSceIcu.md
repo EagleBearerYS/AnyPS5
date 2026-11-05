@@ -1,5 +1,86 @@
 # libSceIcu technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 72 functions match typed NIDs in the public 3.20 catalogue and both version-labelled images; neither image label authenticates retail firmware provenance. Prototypes and behavior are unverified. Each declaration throws through `NotImplemented_nid_no_patch`; no runtime functionality is implemented.
+
+- [Per-image ELF records](https://gist.github.com/kyon-eth/a8e9ce3fc8802f48d30cd94c413904b7/211c546f6f8e79a23b5ec6ea8fd0610527beabee) describe the module, library, raw names, type, values and sizes for the declarations in [Export.cpp](../../../core/libs/prx/libSceIcu/Export.cpp). The metadata SHA-256 is `551b2d4f646b934cb7eae6a2f2f3bf58e4fb2ba53644d2d1af40f133fda15eb9`; image provenance and labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `u_tolower` | `I7A4lT+s9h8` |
+| `u_totitle` | `f4x1+G7t6eY` |
+| `u_toupper` | `rpv+luk5Ye0` |
+| `ublock_getCode` | `Oi8niAD8r1M` |
+| `ubrk_close` | `-Hc6XkAq-eU` |
+| `ubrk_countAvailable` | `bZT8JIrrg3I` |
+| `ubrk_current` | `fsgqunLD2b8` |
+| `ubrk_first` | `cL3dlqTcRqk` |
+| `ubrk_following` | `dC+0Pz5afr0` |
+| `ubrk_getAvailable` | `+Nd4bYkEgRc` |
+| `ubrk_getRuleStatus` | `av8J5NBkbRE` |
+| `ubrk_isBoundary` | `ypOz3lP3VhE` |
+| `ubrk_last` | `n6SEUE4Txvg` |
+| `ubrk_next` | `4Uj1DZGlHTw` |
+| `ubrk_open` | `NfGO57hqUEw` |
+| `ubrk_preceding` | `9hkT1aMC0Rs` |
+| `ubrk_previous` | `tGeOQLpMGgA` |
+| `ubrk_setText` | `NtjY-lZG4ss` |
+| `ubrk_setUText` | `qQMUbG5L6oE` |
+| `ucnv_cbFromUWriteBytes` | `qjWeIkH81-Y` |
+| `ucnv_close` | `JTIHqYZFMQE` |
+| `ucnv_convertEx` | `lPKKDtEmEgM` |
+| `ucnv_fromUnicode` | `6ZIjQAWKeRs` |
+| `ucnv_getCanonicalName` | `0GnpUt-BVlE` |
+| `ucnv_getName` | `7pCOClUrUmM` |
+| `ucnv_open` | `AKenFQbXGE0` |
+| `ucnv_reset` | `5O8bmW45o0U` |
+| `ucnv_setFallback` | `iEe61PaW1pg` |
+| `ucnv_setFromUCallBack` | `E0yB1UHl4VI` |
+| `ucnv_setSubstChars` | `Ku0Rs703XaI` |
+| `ucnv_setToUCallBack` | `UIU5m-5O68c` |
+| `ucnv_toUChars` | `LvSzmTZ0Mss` |
+| `ucnv_toUnicode` | `O1eMKYxVlTs` |
+| `ucurr_getName` | `T7jc4xaLMKo` |
+| `ucurr_openISOCurrencies` | `BFt6nFM3lbc` |
+| `udata_setCommonData` | `wHZwCpZVcGI` |
+| `udata_setFileAccess` | `mCyTdtewGpk` |
+| `uloc_addLikelySubtags` | `HQ6DCQrAXD4` |
+| `uloc_canonicalize` | `G-Jl6md9fz4` |
+| `uloc_countAvailable` | `J5lZTL2H6Aw` |
+| `uloc_forLanguageTag` | `a+8yAm1ZfCE` |
+| `uloc_getAvailable` | `JnzWSfYU-xg` |
+| `uloc_getBaseName` | `CZ0z95gBgXg` |
+| `uloc_getCharacterOrientation` | `pMLs993oHk0` |
+| `uloc_getCountry` | `SIZrguvplN4` |
+| `uloc_getDefault` | `m1nD9D9LmP0` |
+| `uloc_getKeywordValue` | `QYSES3tXUHM` |
+| `uloc_getLanguage` | `dxyWDe5AwgY` |
+| `uloc_getScript` | `9lLmMrDj590` |
+| `uloc_minimizeSubtags` | `yb9tILRzD1k` |
+| `uloc_setKeywordValue` | `sw98L1MbqpM` |
+| `uloc_toLanguageTag` | `zmMWRKwedmw` |
+| `uloc_toUnicodeLocaleType` | `tRTGVdmiGzQ` |
+| `unorm2_composePair` | `e+Udsq-3S+I` |
+| `unorm2_getNFCInstance` | `ikNH4c6kdMw` |
+| `unorm2_getNFDInstance` | `Drupl3SzOhM` |
+| `unorm2_getNFKCInstance` | `u7NoGsVfzcU` |
+| `unorm2_getNFKDInstance` | `nyO3x1IgiSI` |
+| `unorm2_getRawDecomposition` | `B8jGs8D+GHY` |
+| `unorm2_isNormalized` | `7ETpt3V2fEU` |
+| `unorm2_normalize` | `eMM8e4yA3AU` |
+| `ures_close` | `--GQ9Ov+0mM` |
+| `ures_getByKey` | `8WDJjbxNvCg` |
+| `ures_getStringByKey` | `apt8-c9wFxQ` |
+| `ures_open` | `bpD6xUk4QVI` |
+| `uscript_getScript` | `fiX2RRLQhak` |
+| `uscript_getShortName` | `4cTIrOZw1-0` |
+| `uscript_hasScript` | `PWK6yVIGNuY` |
+| `utext_close` | `2NaZ-stsAv0` |
+| `utext_openConstUnicodeString` | `yc1XEzBopCw` |
+| `utext_openUChars` | `o9+yMOok2Zs` |
+| `utext_setup` | `sEKpfqARKPI` |
+
 ### Unknown function info
 
 - The 134 [recovered inventory exports](../../../core/libs/prx/libSceIcu/RecoveredInventory.cpp) have unverified parameters, return types, callback ABIs and behavior. Every entry immediately throws through `NotImplemented_nid_no_patch`; the parameterless `int` declarations are import-resolution placeholders. The [13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/226383a7fa4b1275d6cebf61eb1c1e7ca7b58bcb/data/firmware-13.60/libsceicu-9790ee85e3.jsonl) establishes only name/NID bindings. The [module map](https://github.com/boykopovar/ps5-nid-map/blob/cc1d586fddab576a520f226da6b2632b031e6d09/data/Modules/libSceIcu.inc) assigns all 134 NIDs to logical `libSceIcu` in `libSceIcu.sprx`. Recovered `ucfpos`, `uset` and `uiter` groups are excluded. Console ABI, behavior and title compatibility remain unverified.
@@ -36,6 +117,10 @@
 - [Iterator comparison and Unicode version](../../../core/libs/prx/libSceIcu/CompareIter.cpp) are unverified on a console. `u_strCompareIter` and `u_getUnicodeVersion` follow ICU 78.1 [ustring.cpp](https://github.com/unicode-org/icu/blob/049e0d6a4206/icu4c/source/common/ustring.cpp#L828-L882) and [uchar.cpp](https://github.com/unicode-org/icu/blob/049e0d6a4206/icu4c/source/common/uchar.cpp#L484-L489); the version is 17.0, the Unicode data of 78.1, whatever firmware is emulated. A null iterator callback that ICU would call throws `std::invalid_argument`; ICU dereferences it. The code unit difference wraps instead of overflowing. The `UBool` is read as one byte, nonzero meaning true. Closes when: compared with the console.
 
 - [Default-converter string copy helpers](../../../core/libs/prx/libSceIcu/Invariant.cpp) `u_austrcpy` and `u_austrncpy` are unverified on a console and throw `NotImplemented_nid_no_patch` on code units above `0x7f`. Their names and NIDs come from the PS5 3.20 inventory; signatures and ASCII (`0x01`–`0x7f`) behavior follow ICU 78.1's [ustr_cnv.cpp](https://github.com/unicode-org/icu/blob/release-78.1/icu4c/source/common/ustr_cnv.cpp), unchanged since 65.1, without assuming the console's default converter for non-ASCII units. `u_austrncpy` writes a single NUL when the source ends before the count without zero-padding the remainder. Null buffers with `u_austrcpy` or a positive count throw an invalid-argument exception, whereas ICU dereferences in `u_austrcpy` and returns the destination unchanged in `u_austrncpy`. Closes when: compared with the console, including the default converter for non-ASCII units.
+
+- [UTF-16 lexical comparisons](../../../core/libs/prx/libSceIcu/Comparisons.cpp): equivalence on console hardware remains unverified. The five exports follow [ICU 78.1 ustring.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustring.cpp) and its public UTF-16 ABI. Required null buffers throw where upstream dereferences them; nonpositive `u_strncmp`/`u_memcmp` counts and a zero code-point comparison count or identical code-point buffers read nothing. Negative `u_memcmpCodePointOrder` counts select NUL-terminated lengths, preserving the first differing code-unit result. Strings whose length cannot fit int32 throw instead of narrowing the length.
+
+- [Firmware availability](../../../core/libs/prx/libSceIcu/Comparisons.cpp): [BunnyFl’s firmware 13.42 report](https://github.com/boykopovar/AnyPS5/pull/10963#issuecomment-6400072356) records `u_getVersion` returning `78.1.0.0` with `system_ex/common_ex/lib/libSceIcu.sprx` run under an emulator. None of these five lexical APIs is in that native module’s 299 exports. The 3.20 compatibility exports are retained; availability and routing across firmware versions remain unproven.
 
 - [UTF-16 set searches and tokenization](../../../core/libs/prx/libSceIcu/Tokenize.cpp) have no console verification; ICU versions on other firmware are unverified. Signatures and behavior follow ICU 78.1's [ustring.h](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/unicode/ustring.h) and [ustring.cpp](https://github.com/unicode-org/icu/blob/049e0d6a420629ac7db77256987d083a563287b5/icu4c/source/common/ustring.cpp). `u_strtok_r` preserves that source's one-code-unit delimiter overwrite, including the trailing surrogate left after splitting at a supplementary delimiter. Invalid null inputs and rejected guest-write scopes throw; an initial continuation assignment is retained if a later delimiter write is rejected. Set-search offsets beyond `INT32_MAX` throw.
 
