@@ -1,0 +1,6 @@
+BASE=b611e634f7fc024f0c13e342d96de744448ef1d9
+REPEAT=1
+EXTRA_TESTS='agc_driver_depth_expand_out_of_place|agc_driver_depth_expand_out_of_place_inline'
+NO_BEFORE=1
+VERBOSE=1
+export APS5_TRACE_DEPTH_SYNC=1
