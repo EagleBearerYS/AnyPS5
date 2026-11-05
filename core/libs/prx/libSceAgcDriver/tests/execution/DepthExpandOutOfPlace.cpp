@@ -652,6 +652,11 @@ bool RunUnimportedBufferRead(TexelReader& reader, bool watched) {
 
 enum class SecondHalf { Imported, Mirrored, Copied };
 
+void Step(const char* step, const Surfaces& surfaces) {
+    std::printf("  [step] %s: depth surface at the read base %s, host imports live %llu bytes, heap mirrors %llu, tracker generation %llu\n", step, DepthSurfaceAt(surfaces.depth) ? "live" : "none", static_cast<unsigned long long>(HostImportLiveBytes()), static_cast<unsigned long long>(MirrorCounters().heapMirrors), static_cast<unsigned long long>(AgcDriver::GuestMemory::TrackerGeneration()));
+    std::fflush(stdout);
+}
+
 bool RunSplitRead(TexelReader& reader, SecondHalf second, bool pointer) {
     const char* const served[] = {"imported apart", "heap-mirrored", "copied"};
     const auto name = std::string(pointer ? "an address-based pointer copy" : "address-based buffer copies, one a range,") + " of a write base across two registered ranges, the first imported and the second " + served[static_cast<int>(second)];
@@ -670,20 +675,28 @@ bool RunSplitRead(TexelReader& reader, SecondHalf second, bool pointer) {
     const auto half = PlaneBytes() / 2;
     auto surfaces = NewSurfaces();
     const auto copy = Address(NewBlock(PlaneBytes()));
+    Step("after the blocks are allocated", surfaces);
     reader.CopyBuffer(copy, copy + PlaneBytes() / 2, static_cast<std::uint32_t>(PlaneBytes() / 2), true, name + ": an address-based copy that imports what earlier cases left registered");
+    Step("after the copy that imports what earlier cases left registered", surfaces);
     const auto ranges = Address(NewSplitBlock(RangeBytes, RangeBytes));
     surfaces.written = ranges + RangeBytes - half;
     if (second != SecondHalf::Imported) SetHostImportBudget(HostImportLiveBytes() + RangeBytes + RangeBytes / 2);
     const auto mirrorsBefore = MirrorCounters().heapMirrors;
     std::printf("%s: read base 0x%llx, write base 0x%llx, ranges 0x%llx and 0x%llx, copy at 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written), static_cast<unsigned long long>(ranges), static_cast<unsigned long long>(ranges + RangeBytes), static_cast<unsigned long long>(copy));
+    Step("before the depth draw", surfaces);
     Submit(DepthDraw(surfaces, false, false), name + ": depth draw at the read base");
+    Step("after the depth draw", surfaces);
     const auto before = DepthExpandCounts().stored;
     Submit(DepthDraw(surfaces, true, true), name + ": DB expand from the read base to the write base");
+    Step("after the expand", surfaces);
     if (pointer) {
         reader.CopyThroughPointer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), name + ": pointer copy of the write base");
+        Step("after the pointer copy", surfaces);
     } else {
         reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(half), true, name + ": buffer copy of the write base's half in the first range");
+        Step("after the first half's copy", surfaces);
         reader.CopyBuffer(surfaces.written + half, copy + half, static_cast<std::uint32_t>(half), true, name + ": buffer copy of the write base's half in the second range");
+        Step("after the second half's copy", surfaces);
     }
     const auto stored = DepthExpandCounts().stored - before;
     const auto mirrors = MirrorCounters().heapMirrors - mirrorsBefore;

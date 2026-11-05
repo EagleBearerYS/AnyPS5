@@ -1371,6 +1371,11 @@ public:
         const auto collected = GuestMemory::CollectWrites(resource.baseAddress, bytes);
         generation = GuestMemory::TrackerGeneration();
         std::vector<bool> changed(unitGeneration.size(), false);
+        static const bool traceSync = std::getenv("APS5_TRACE_DEPTH_SYNC") != nullptr;
+        if (traceSync) {
+            std::printf("[depth-sync] 0x%llx+0x%zx: collected %llu, tracker generation %llu, %zu units, first unit generation %llu, oldest %llu\n", static_cast<unsigned long long>(resource.baseAddress), bytes, static_cast<unsigned long long>(collected), static_cast<unsigned long long>(generation), unitGeneration.size(), static_cast<unsigned long long>(unitGeneration.empty() ? 0u : unitGeneration.front()), static_cast<unsigned long long>(unitGeneration.empty() ? 0u : *std::min_element(unitGeneration.begin(), unitGeneration.end())));
+            std::fflush(stdout);
+        }
         if (collected == 0u) {
             for (std::size_t unit = 0; unit < unitGeneration.size(); ++unit) {
                 const auto offset = unit * unitBytes;
@@ -1393,6 +1398,10 @@ public:
         }
         if (unitGeneration.size() == 1u) {
             changed[0] = GuestMemory::WrittenSince(resource.baseAddress, bytes, unitGeneration[0]);
+            if (traceSync) {
+                std::printf("[depth-sync] 0x%llx: one unit, written since generation %llu: %d\n", static_cast<unsigned long long>(resource.baseAddress), static_cast<unsigned long long>(unitGeneration[0]), changed[0] ? 1 : 0);
+                std::fflush(stdout);
+            }
             return changed;
         }
         const auto oldest = *std::min_element(unitGeneration.begin(), unitGeneration.end());
@@ -1406,6 +1415,11 @@ public:
     void SyncFromMemory(const GuestTextureResource& resource) {
         std::uint64_t generation = 0;
         const auto changed = WrittenUnits(resource, generation);
+        static const bool traceSync = std::getenv("APS5_TRACE_DEPTH_SYNC") != nullptr;
+        if (traceSync) {
+            std::printf("[depth-sync] 0x%llx: %zu of %zu units taken from guest memory, pending depth clear %d, generation %llu\n", static_cast<unsigned long long>(target.address), static_cast<std::size_t>(std::count(changed.begin(), changed.end(), true)), changed.size(), (pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 ? 1 : 0, static_cast<unsigned long long>(generation));
+            std::fflush(stdout);
+        }
         if ((pendingClear & VK_IMAGE_ASPECT_DEPTH_BIT) != 0 || !anyUnit(changed)) {
             unitGeneration.assign(unitGeneration.size(), generation);
             return;
@@ -2922,6 +2936,11 @@ void storeStaleStencil(DepthSurface& surface) {
 }
 
 void retire(DepthSurface& surface) {
+    static const bool traceSync = std::getenv("APS5_TRACE_DEPTH_SYNC") != nullptr;
+    if (traceSync) {
+        std::printf("[depth-retire] 0x%llx (stale units %d)\n", static_cast<unsigned long long>(surface.target.address), surface.AnyStale() ? 1 : 0);
+        std::fflush(stdout);
+    }
     surface.retired = true;
     for (auto* owners : {&depthOwners(), &stencilOwners()}) {
         std::erase_if(*owners, [&](const auto& entry) { return entry.second.surface == &surface; });
@@ -3704,6 +3723,11 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     const auto copyFormat = integer ? VK_FORMAT_R16_UINT : d16 ? VK_FORMAT_R16_UNORM : VK_FORMAT_R32_SFLOAT;
     const bool planes = (format == copyFormat || depthBits) && resource.lastLevel == 0 && !(resource.baseArray != 0 && (cube || !layered || resource.baseArray > resource.depthOrLastArray)) && !(cube && resource.depthOrLastArray != 0 && (resource.depthOrLastArray + 1u) % 6u != 0u) && (resource.dimension == TextureDimension::k2D || resource.dimension == TextureDimension::k2DArray || cube);
     if (!(sampled ? found->SampledAccepts(words, resource) : planes) && (found->OverwrittenInMemory() || found->OverwrittenOnGpu())) {
+        static const bool traceSync = std::getenv("APS5_TRACE_DEPTH_SYNC") != nullptr;
+        if (traceSync) {
+            std::printf("[depth-texture] 0x%llx: a texture read retires the surface, pending GPU writes over it %d (else written in memory)\n", static_cast<unsigned long long>(base.address), found->OverwrittenOnGpu() ? 1 : 0);
+            std::fflush(stdout);
+        }
         retireStoringStale(*found);
         return nullptr;
     }
@@ -4034,6 +4058,11 @@ void RetireDepthSurfaces(VkDevice device, std::uint64_t address, std::uint64_t b
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
         if (surface->context.device != device || surface->retired || !surface->Overlaps(address, bytes)) continue;
+        static const bool traceSync = std::getenv("APS5_TRACE_DEPTH_SYNC") != nullptr;
+        if (traceSync) {
+            std::printf("[depth-retire] RetireDepthSurfaces 0x%llx+0x%llx overlaps 0x%llx\n", static_cast<unsigned long long>(address), static_cast<unsigned long long>(bytes), static_cast<unsigned long long>(surface->target.address));
+            std::fflush(stdout);
+        }
         const auto [stencilBegin, stencilEnd] = staleStencilRange(*surface);
         if (!(address <= stencilBegin && stencilEnd <= address + bytes)) storeStaleStencil(*surface);
         retire(*surface);
@@ -4205,6 +4234,11 @@ void RetireCoveredDepthSurfaces(VkDevice device, std::span<const std::pair<std::
     std::lock_guard lock(surfacesMutex());
     for (const auto& surface : surfaces()) {
         if (surface->context.device != device || surface->retired || !surface->CoveredBy(written, extents)) continue;
+        static const bool traceSync = std::getenv("APS5_TRACE_DEPTH_SYNC") != nullptr;
+        if (traceSync) {
+            std::printf("[depth-retire] RetireCoveredDepthSurfaces: written ranges cover 0x%llx\n", static_cast<unsigned long long>(surface->target.address));
+            std::fflush(stdout);
+        }
         if (!surface->PlaneCoveredBy(true, written, extents)) storeStaleStencil(*surface);
         retire(*surface);
     }
