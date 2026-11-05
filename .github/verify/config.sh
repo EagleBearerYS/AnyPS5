@@ -1,0 +1,4 @@
+BASE=ce676cb37d64200710aac4c1c97122773ed97daa
+REPEAT=10
+EXTRA_TESTS='^guest_libressl3|guest_crypto_memcmp'
+NO_BEFORE=1
