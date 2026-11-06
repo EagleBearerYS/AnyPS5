@@ -1,0 +1,4 @@
+BASE=73c51878251612cc054cb4077e3b4abe2b2d81c3
+REPEAT=10
+EXTRA_TESTS='^agc_driver_heap_embedded_sampler|^agc_driver_pipeline_journal|^agc_shader_disk_cache|^agc_driver_heap_draw_sample'
+TEST_TIMEOUT=300
