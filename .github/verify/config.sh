@@ -1,0 +1,4 @@
+BASE=87448b3c917fade990102370c5b756972af6067f
+REPEAT=1
+EXTRA_TESTS='^agc_device_image_keys|^agc_driver_device_image_table|^agc_driver_device_image_path|^agc_shader_device_image_tables|^agc_driver_bda_|^agc_driver_heap_slots|^agc_shader_table_trailer|^agc_shader_memory|^agc_shader_registered_view_churn|^agc_driver_image_sample_lod_bias|^agc_shader_sampler_limits|^agc_shader_disk_cache'
+VALIDATION=1
