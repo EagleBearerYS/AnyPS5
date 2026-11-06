@@ -879,7 +879,20 @@ struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
         for (const auto& constant : specialization) mix(constant.id | (static_cast<std::uint64_t>(constant.value) << 32u));
         mix(hostSubgroupSize | (fullSubgroups ? 0x10000u : 0u) | (functionLdsBuffer ? 0x20000u : 0u) | (meshWindowBuffer ? 0x40000u : 0u) | (static_cast<std::uint64_t>(workgroupMemoryDwords) << 32u));
         mix(bindings.size());
-        for (const auto& binding : bindings) mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
+        const auto flag = [](const std::vector<bool>& flags, std::size_t element) { return element < flags.size() && flags[element]; };
+        for (const auto& binding : bindings) {
+            mix(binding.descriptorSet | (static_cast<std::uint64_t>(binding.binding) << 16u) | (static_cast<std::uint64_t>(binding.kind) << 40u) | (static_cast<std::uint64_t>(binding.count) << 48u));
+            for (std::size_t element = 0; element < binding.samplerEmbedded.size(); ++element) {
+                if (binding.samplerEmbedded[element] == RuntimeAbi::NoEmbeddedSampler) continue;
+                mix(element | (static_cast<std::uint64_t>(binding.samplerEmbedded[element]) << 32u));
+                for (std::size_t word = 0; word < 4u; ++word) {
+                    const auto at = element * 4u + word;
+                    const std::uint32_t value = at < binding.samplerEmbeddedWords.size() ? binding.samplerEmbeddedWords[at] : 0u;
+                    mix(word == 0u && flag(binding.samplerCoordinatesIgnored, element) ? value & ~(1u << 15u) : value);
+                }
+                mix((flag(binding.samplerDepthCompare, element) ? 1u : 0u) | (flag(binding.samplerUnnormalized, element) ? 2u : 0u) | (flag(binding.samplerIntegerBorder, element) ? 4u : 0u));
+            }
+        }
         if (identity.Empty()) identity.low = 1;
         return identity;
     }

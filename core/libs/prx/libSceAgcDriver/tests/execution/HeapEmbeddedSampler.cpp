@@ -28,12 +28,13 @@ alignas(256) constexpr std::array<std::uint32_t, 16> ConstantSamplerCode{
     0x7e0002f3u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xe0780000u, 0x80030000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 8> UserSamplerCode{0x7e0002f3u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u,
                                                                     0xbf8c0000u, 0xe0780000u, 0x80030000u, 0xbf810000u};
+alignas(256) std::array<std::uint32_t, 16> WrapSamplerCode{};
 constexpr std::array<std::uint8_t, 4> White{0xffu, 0xffu, 0xffu, 0xffu};
 
 alignas(256) std::array<std::uint8_t, 1024> TextureMemory{};
 alignas(4096) std::array<std::array<float, 1024>, 2> Outputs{};
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, float* output, std::span<const std::uint32_t> code, bool userSampler) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, float* output, std::span<const std::uint32_t> code, bool userSampler, bool heapTarget = false) {
     auto userData = SampleUserData(TextureMemory.data(), output);
     if (userSampler) {
         userData[8] = BorderClamp;
@@ -41,10 +42,12 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, float
     }
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{1u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    auto target = device.ComputeTarget(32u);
+    target.gpuResolvedImages = target.gpuResolvedImages || heapTarget;
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0u, {}},
         {32u, 0u, userData, compute, std::nullopt, std::nullopt, memory},
-        device.ComputeTarget(32u),
+        target,
         {0u, 0u, 0u, 128u}};
     request.useCache = false;
     return ShaderRecompiler::Recompile(request);
@@ -70,12 +73,39 @@ bool DecoratesEmbeddedSet(const ShaderRecompiler::RecompileResult& result) {
     return false;
 }
 
+int CheckIdentities(AgcDriver::VulkanDevice& device) {
+    WrapSamplerCode = ConstantSamplerCode;
+    WrapSamplerCode[1] = 0u;
+    const auto border = Compile(device, Outputs[0].data(), ConstantSamplerCode, false, true);
+    const auto wrap = Compile(device, Outputs[1].data(), WrapSamplerCode, false, true);
+    Require(EmbeddedElements(border) != 0u && EmbeddedElements(wrap) != 0u, "the border and wrap constant samplers were not both embedded");
+    Require(border.Identity() != wrap.Identity(), "the border and wrap constant samplers share one pipeline identity");
+    auto flagged = border;
+    for (auto& binding : flagged.bindings) binding.samplerIntegerBorder.flip();
+    Require(flagged.Identity() != border.Identity(), "an embedded sampler's integer border flag does not reach the pipeline identity");
+    const auto user = Compile(device, Outputs[0].data(), UserSamplerCode, true, true);
+    const auto again = Compile(device, Outputs[0].data(), UserSamplerCode, true, true);
+    Require(EmbeddedElements(user) == 0u && !user.Identity().Empty() && user.Identity() == again.Identity(), "a stage without embedded samplers changed its pipeline identity between compiles");
+    auto unembedded = user;
+    for (auto& binding : unembedded.bindings) {
+        binding.samplerDepthCompare.flip();
+        binding.samplerUnnormalized.flip();
+        binding.samplerIntegerBorder.flip();
+        binding.samplerCoordinatesIgnored.flip();
+        for (auto& word : binding.samplerEmbeddedWords) word = ~word;
+    }
+    Require(unembedded.Identity() == user.Identity(), "sampler state of a stage without embedded samplers reaches its pipeline identity");
+    std::cout << "embedded constant samplers key distinct pipeline identities\n";
+    return 0;
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc > 1 && std::string(argv[1]) == "--identity") return CheckIdentities(*device);
         const bool heap = std::getenv("APS5_GPU_HEAP") != nullptr;
         if (heap && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
         const bool embedding = heap && std::getenv("APS5_NO_EMBEDDED_SAMPLERS") == nullptr;
