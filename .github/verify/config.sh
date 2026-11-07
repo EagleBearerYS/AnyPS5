@@ -1,0 +1,4 @@
+BASE=090f57166adb9692d27d16662a89ccc33a502406
+REPEAT=10
+EXTRA_TESTS='^agc_driver_pipeline_journal_undecodable|^agc_driver_bda_store_heap_mirror'
+NO_BEFORE=1
