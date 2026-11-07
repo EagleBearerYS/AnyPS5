@@ -1,0 +1,4 @@
+BASE=090f57166adb9692d27d16662a89ccc33a502406
+REPEAT=3
+EXTRA_TESTS='^agc_driver_image_depth24|^agc_driver_sgpr_pattern_fill_keys'
+NO_BEFORE=1
