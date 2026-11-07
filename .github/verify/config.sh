@@ -1,0 +1,4 @@
+BASE=006d11fca5c579fab26b4a391e6b8427632bdc47
+REPEAT=10
+EXTRA_TESTS='^agc_driver_pointer_|^agc_driver_nested_|^agc_shader_nested_|^agc_driver_image_table|^agc_shader_memory|^agc_shader_disk_cache|^agc_shader_sampler_limits|agc_driver_many_direct_samplers'
+NO_BEFORE=1
