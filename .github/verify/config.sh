@@ -1,0 +1,4 @@
+BASE=e2ab111fbfb009e74a7540c3b53bc171624494bb
+REPEAT=1
+EXTRA_TESTS='agc_driver_native_depth_publication'
+NO_BEFORE=1
