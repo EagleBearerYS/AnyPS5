@@ -1,0 +1,3 @@
+BASE=f35f1e5eca533df53db18f49d57fc5e465f202c8
+REPEAT=20
+EXTRA_TESTS='agc_driver_host_write_hook|agc_driver_host_write_pending_storage|agc_driver_store_idle_results|agc_driver_store_idle_results_wake|agc_driver_store_idle_results_disabled'
