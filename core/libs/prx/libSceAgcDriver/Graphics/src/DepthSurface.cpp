@@ -3052,7 +3052,7 @@ void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t 
     }
     for (const auto& range : depthGuards()) {
         if (!overlaps(range) || !range.active->load(std::memory_order_acquire)) continue;
-        const bool replaced = cause == DepthReadCause::Reuse && std::ranges::find(tookGuest, range.active) != tookGuest.end();
+        const bool replaced = false;
         if (replaced || !range.hostEverWritten->load(std::memory_order_acquire)) range.active->store(false, std::memory_order_release);
     }
     std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
