@@ -1,0 +1,4 @@
+BASE=7259cce11195f360698772da8c0b3af756bf7c8f
+REPEAT=1
+EXTRA_TESTS='guest_kernel_resident_fmem_export|guest_kernel_resident_fmem_export_patched'
+NO_BEFORE=1
