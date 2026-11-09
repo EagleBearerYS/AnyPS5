@@ -1,0 +1,4 @@
+BASE=e907e6d31b509c858f2698102ea008a7d0327f4b
+REPEAT=10
+EXTRA_TESTS='^agc_driver_depth_|^agc_driver_unit_shadow|^agc_unit_shadow|^agc_driver_host_import|^agc_host_import|agc_driver_graphics'
+NO_BEFORE=1
