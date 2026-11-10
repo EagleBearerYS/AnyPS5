@@ -548,6 +548,7 @@ Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTex
         AgcDriver::LiveResourceRing::Instance().Note(descriptor.baseAddress, guestBytes, "texture");
         const auto slabBytes = geometry.layerBytes;
         const auto snapshotSize = staging != nullptr ? staging->Bytes().size() : snapshot.size();
+        if (packedSlabs.has_value()) std::fprintf(stderr, "[trace-10064] texture 0x%llx packed %zu slabs, %zu snapshot bytes, %s\n", static_cast<unsigned long long>(descriptor.baseAddress), packedSlabs->size(), snapshotSize, staging != nullptr ? "read into staging" : "kept snapshot");
         Require(clear == nullptr || !packedSlabs.has_value(), "a cleared texture takes no snapshot, so it has no committed slabs");
         Require(clear != nullptr ? snapshot.empty() && staging == nullptr : packedSlabs.has_value() ? slabBytes != 0 && snapshotSize == packedSlabs->size() * slabBytes : snapshotSize == guestBytes, "texture snapshot size mismatch");
         Require(clear == nullptr || (!depthCompare && !srgbExpand && !IsRepackedTextureFormat(descriptor.format) && !IsBlockCompressed(descriptor.format)), "a cleared texture needs a plain color format");

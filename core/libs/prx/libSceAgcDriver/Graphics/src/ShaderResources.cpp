@@ -1277,6 +1277,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             entry.bytes = recycled.empty() ? std::vector<std::byte>(snapshotSize) : std::move(recycled);
         }
         const auto read = staging != nullptr ? staging->Bytes() : std::span<std::byte>(entry.bytes);
+        if (entry.slabs.has_value()) std::fprintf(stderr, "[trace-10064] cachedTexture 0x%llx dropped=%d snapshotSize=%zu generation=%llu\n", static_cast<unsigned long long>(address), dropped ? 1 : 0, snapshotSize, static_cast<unsigned long long>(entry.generation));
         readSnapshot(resource, *keys, entry.slabs, read);
         if (!pending) entry.untracked = untracked;
         static const bool traceTextures = std::getenv("APS5_TRACE_TEXTURES") != nullptr;
