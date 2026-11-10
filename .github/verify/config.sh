@@ -1,0 +1,5 @@
+BASE=b1f8766e5f5e6ba59802ca233f818ed1b02d1d8d
+REPEAT=1
+EXTRA_TESTS='^agc_driver_partially_|agc_driver_large_tracked_snapshot'
+NO_BEFORE=1
+VERBOSE=1
