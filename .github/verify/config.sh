@@ -1,0 +1,4 @@
+BASE=b1f8766e5f5e6ba59802ca233f818ed1b02d1d8d
+REPEAT=1
+EXTRA_TESTS='agc_driver_large_tracked_snapshot|agc_driver_sampled_clear_keys|agc_recorder_upload_scratch|agc_snapshot_read_into_staging|agc_sampled_cache_device_selection|^agc_driver_recover_|^agc_driver_partially_|^agc_driver_sample|^agc_driver_image_sample|^agc_driver_image_depth24'
+VALIDATION=1
