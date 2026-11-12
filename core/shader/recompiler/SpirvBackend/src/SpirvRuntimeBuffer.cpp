@@ -1090,6 +1090,11 @@ void EmitRuntimeBufferStore(SpirvValueEmitContext& context, const IrValue& instr
     });
 }
 
+void EmitRuntimeBufferTraceWord(SpirvValueEmitContext& context, const IrValue& store, std::uint32_t byte, std::uint32_t value) {
+    if (context.Memory(store).gpuDescriptor || context.Memory(store).kind != ResourceKind::Buffer) context.Fail(store, "cannot carry a table trace: its V# is not a bound buffer");
+    writeBuffer(context, store, byte, value);
+}
+
 std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const IrValue& instruction) {
     auto& state = context.state;
     if (std::ranges::find(state.supportedCapabilities, spv::CapabilityInt64) == state.supportedCapabilities.end()) context.Fail(instruction, "scalar buffer bounds require shaderInt64");

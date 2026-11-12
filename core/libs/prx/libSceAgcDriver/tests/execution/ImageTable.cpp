@@ -68,6 +68,11 @@ alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
 alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
 alignas(256) std::array<std::uint32_t, 64> Keys{};
 alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> Output{};
+constexpr std::uint32_t TraceGroups = 4;
+constexpr std::uint32_t TraceAt = TraceGroups * Lanes * 4u;
+constexpr std::uint32_t TraceMapWords = 1024;
+constexpr std::uint32_t TraceRowWords = 20;
+alignas(256) std::array<std::uint32_t, TraceAt + TraceMapWords + TraceGroups * Lanes * TraceRowWords> TraceOutput{};
 alignas(256) std::array<std::uint32_t, 32> Srt{};
 constexpr std::uint32_t PaletteOffset = 0x40;
 constexpr std::uint32_t PaletteBytes = PaletteOffset + 256u * 32u;
@@ -2657,7 +2662,7 @@ void RunPointerSharedVsharpTests(AgcDriver::VulkanDevice& device, bool reuse) {
     std::puts((name + ": both T#s read at their own offsets of one V# loaded through a record pointer checked, by the records' values").c_str());
 }
 
-void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
+void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool trace = false) {
     constexpr std::uint32_t KeyWord = 0x14u;
     constexpr std::uint32_t SamplerWord = 0x20u;
     constexpr std::uint32_t Entries = 64u;
@@ -2703,11 +2708,36 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
         {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
         {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(shown))},
     }};
+    const auto address = [](const void* pointer) { return Hex(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer) >> 32u)) + ":" + Hex(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(pointer))); };
+    if (trace) std::printf("trace bases: Table %s, records %s %s, palettes %s %s\n", address(Table.data()).c_str(), address(records[0].data()).c_str(), address(records[1].data()).c_str(), address(palettes[0].data()).c_str(), address(palettes[1].data()).c_str());
+    const auto traceRow = [&](std::uint32_t group, std::uint32_t lane) {
+        if (!trace) return std::string();
+        const auto* row = TraceOutput.data() + TraceAt + TraceMapWords + (group * Lanes + lane) * TraceRowWords;
+        std::string text = "\n  trace g" + std::to_string(group) + " l" + std::to_string(lane) + ":";
+        for (std::uint32_t index = 0; index < TraceRowWords; ++index) text += " " + Hex(row[index]);
+        return text;
+    };
+    const auto showTrace = [&](const Outcome& outcome) {
+        const auto* map = TraceOutput.data() + TraceAt;
+        std::uint32_t uploaded = TraceMapWords;
+        while (uploaded > 0u && map[uploaded - 1u] == 0xdeadbeefu) --uploaded;
+        std::printf("trace map: %u words read by the shader, %zu words at recompile\n", uploaded, outcome.tableMap.size());
+        for (std::uint32_t first = 0; first < uploaded; first += 8u) {
+            std::string line = "  map[" + std::to_string(first) + "]";
+            for (std::uint32_t index = first; index < std::min(first + 8u, uploaded); ++index) line += " " + Hex(map[index]) + (index < outcome.tableMap.size() && outcome.tableMap[index] != map[index] ? "*" : "");
+            std::puts(line.c_str());
+        }
+        std::puts("trace rows: marker lower record.low record.high record.code root.code child.fault child.mapStart child.keys child.baseLow child.record child.mapped image.flags image.element driver.fault code offset pointer.low pointer.high address.low");
+        for (std::uint32_t group = 0; group < TraceGroups; ++group) {
+            for (std::uint32_t lane = 0; lane < Lanes; ++lane) std::puts(traceRow(group, lane).substr(1u).c_str());
+        }
+        std::fflush(stdout);
+    };
     const auto run = [&](std::span<const std::uint32_t> code, bool stale = false) {
         if (!stale) shown = palettes;
         const auto table = Buffer(Table.data(), 64u);
         const auto keys = Buffer(Keys.data(), static_cast<std::uint32_t>(sizeof(Keys)));
-        const auto output = Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
+        const auto output = trace ? Buffer(TraceOutput.data(), static_cast<std::uint32_t>(sizeof(TraceOutput))) : Buffer(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
         Srt = {};
         std::copy(table.begin(), table.end(), Srt.begin());
         std::copy(keys.begin(), keys.end(), Srt.begin() + 4u);
@@ -2732,9 +2762,14 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
             Require(undecorated == 0u, name + ": " + std::to_string(undecorated) + " sampled images of the two-lane build index an image table without NonUniform, though other workgroups select other elements");
             twoLanesChecked = true;
         }
+        if (trace) TraceOutput.fill(0xdeadbeefu);
         auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u, live);
         Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes, name + ": dispatch modified its input memory");
-        Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        Require(std::all_of(Output.begin() + (trace ? 0u : 4u * Lanes * 4u), Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");
+        if (trace) {
+            result.words.assign(TraceOutput.begin(), TraceOutput.begin() + TraceAt);
+            showTrace(result);
+        }
         return result;
     };
     const std::array<std::array<std::uint32_t, 2>, 4> keys{{{1u, 2u}, {2u, 1u}, {1u, 1u}, {2u, 2u}}};
@@ -2751,12 +2786,12 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
                 const auto x = clampOf[palette] != 0u ? Width - 1u : lane % Width;
                 const auto expected = keyOf[palette] >= Bound ? 0u : std::bit_cast<std::uint32_t>(palette != 0u ? OtherFloatTexels[x] : FloatTexels[x]);
                 const auto actual = outcome.words[(group * Lanes + lane) * 4u];
-                Require(actual == expected, name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual) + ", expected " + Hex(expected) + " (palette " + std::to_string(palette) + ", key " + std::to_string(keyOf[palette]) + ")");
+                Require(actual == expected, name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " is " + Hex(actual) + ", expected " + Hex(expected) + " (palette " + std::to_string(palette) + ", key " + std::to_string(keyOf[palette]) + ")" + traceRow(group, lane));
                 if (!arm) continue;
                 const auto second = ArmEntry == keyOf[palette] ? palette : 1u - palette;
                 const auto texel = std::bit_cast<std::uint32_t>(second != 0u ? OtherFloatTexels[lane % Width] : FloatTexels[lane % Width]);
                 const auto sampled = outcome.words[(group * Lanes + lane) * 4u + 1u];
-                Require(sampled == texel, name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " read " + Hex(sampled) + " through the T# at 0x4c0, expected " + Hex(texel));
+                Require(sampled == texel, name + ": " + what + ": group " + std::to_string(group) + " lane " + std::to_string(lane) + " read " + Hex(sampled) + " through the T# at 0x4c0, expected " + Hex(texel) + traceRow(group, lane));
             }
         }
     };
@@ -3073,6 +3108,17 @@ int main(int argc, char** argv) {
 #else
         setenv("APS5_SRGB_SHADER_DECODE", "1", 1);
 #endif
+        const bool trace = argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-child-key-arm-trace") == 0;
+        if (trace) {
+            const auto setting = "0xfc:" + std::to_string(TraceAt * 4u);
+#ifdef _WIN32
+            _putenv_s("APS5_DIAG_TABLE_TRACE", setting.c_str());
+            _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
+#else
+            setenv("APS5_DIAG_TABLE_TRACE", setting.c_str(), 1);
+            setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
+#endif
+        }
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (argc == 2 && std::strcmp(argv[1], "--nested") == 0) {
@@ -3149,6 +3195,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::strcmp(argv[1], "--pointer-vsharp-child-key-arm") == 0) {
             RunPointerChildKeyTests(*device, true);
+            return 0;
+        }
+        if (trace) {
+            RunPointerChildKeyTests(*device, true, true);
             return 0;
         }
         RunTests(*device);

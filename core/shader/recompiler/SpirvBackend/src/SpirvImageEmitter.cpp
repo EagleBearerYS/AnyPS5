@@ -5,6 +5,8 @@
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvDescriptors.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvInputOutput.hpp"
+#include "SpirvBackend/SpirvRuntimeBuffer.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include "ImageTableAbi.hpp"
@@ -2079,6 +2081,8 @@ struct TableWord {
     std::uint32_t addressLow = 0;
     std::uint32_t addressHigh = 0;
     std::uint32_t poisoned = 0;
+    std::array<std::uint32_t, 5> root{};
+    std::array<std::uint32_t, 6> child{};
 };
 
 TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, std::uint32_t offset, std::uint32_t header, bool dynamicHeader = false) {
@@ -2118,6 +2122,7 @@ TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, s
         const auto extension = ConstantU32(state, (immediate & 0x80000000u) != 0u ? 0xffffffffu : 0u);
         word.addressHigh = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpIAdd, u32, baseHigh, extension), Binary(state, spv::OpIAdd, u32, firstCarry, secondCarry));
         word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
+        word.child = {tableFault, mapStart, keys, baseLow, record, mapped};
         return word;
     }
     const auto dword = EmitScalarBufferDword(state, offset, ConstantU32(state, column.offset), sizeLow, sizeHigh);
@@ -2132,6 +2137,7 @@ TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, s
     state.module.AddFunction(spv::OpCompositeExtract, u32, carry, low, 1u);
     word.addressHigh = Binary(state, spv::OpIAdd, u32, baseHigh, carry);
     word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
+    word.child = {tableFault, mapStart, keys, baseLow, record, mapped};
     return word;
 }
 
@@ -2177,12 +2183,15 @@ TableWord LookupTablePointer(SpirvEmitterState& state, std::uint32_t pointerLow,
     EmitLabel(state, merge);
     const auto inBounds = Binary(state, spv::OpULessThan, boolean, lower, count);
     const auto selected = Select(state, u32, inBounds, recordAt(lower), constant(tableHeader));
-    const auto same = both(Binary(state, spv::OpIEqual, boolean, TableMapAt(state, selected, 0u), pointerLow), Binary(state, spv::OpIEqual, boolean, TableMapAt(state, selected, 1u), pointerHigh));
+    TableWord word;
+    const auto selectedWord = [&](std::uint32_t index) { return word.root[1u + index] = TableMapAt(state, selected, index); };
+    const auto same = both(Binary(state, spv::OpIEqual, boolean, selectedWord(0u), pointerLow), Binary(state, spv::OpIEqual, boolean, selectedWord(1u), pointerHigh));
     const auto nullPointer = both(Binary(state, spv::OpIEqual, boolean, pointerLow, constant(0u)), Binary(state, spv::OpIEqual, boolean, pointerHigh, constant(0u)));
     const auto missing = Select(state, u32, nullPointer, field(ImageTableAbi::TableOutsideCode), constant(ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison)));
-    const auto code = Select(state, u32, both(inBounds, same), TableMapAt(state, selected, 2u), missing);
-    TableWord word;
+    const auto code = Select(state, u32, both(inBounds, same), selectedWord(2u), missing);
     word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, fault, constant(0u)), fault, code);
+    word.root[0] = lower;
+    word.root[4] = word.code;
     word.addressLow = pointerLow;
     word.addressHigh = pointerHigh;
     word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, constant(ImageTableAbi::PoisonFlag)), constant(0u));
@@ -2208,6 +2217,7 @@ TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
     const auto u32 = TypeU32(state);
     const auto childHeader = Select(state, u32, root.poisoned, ConstantU32(state, header), root.code);
     auto word = LookupTableWord(state, column, offset, childHeader, true);
+    word.root = root.root;
     word.code = Select(state, u32, root.poisoned, root.code, word.code);
     word.addressLow = Select(state, u32, root.poisoned, root.addressLow, word.addressLow);
     word.addressHigh = Select(state, u32, root.poisoned, root.addressHigh, word.addressHigh);
@@ -2238,6 +2248,58 @@ struct TableAccessResult {
     std::uint32_t flags = 0;
     bool unsupported = false;
 };
+
+constexpr std::uint32_t TraceMapWords = 1024u;
+constexpr std::uint32_t TraceRowWords = 20u;
+constexpr std::uint32_t TraceMarker = 0xd1000000u;
+
+void EmitTableTrace(SpirvValueEmitContext& ctx, const IrValue& inst, const TableWord& word, std::uint32_t flags, std::uint32_t element, std::uint32_t driverFault, std::uint32_t exec) {
+    const char* setting = std::getenv("APS5_DIAG_TABLE_TRACE");
+    if (setting == nullptr) return;
+    char* end = nullptr;
+    const auto pc = std::strtoul(setting, &end, 0);
+    if (end == setting || *end != ':' || pc != inst.Flags<MemoryFlags>().pc) return;
+    const auto base = static_cast<std::uint32_t>(std::strtoul(end + 1, nullptr, 0));
+    auto& state = ctx.state;
+    const IrValue* store = nullptr;
+    for (const auto* block : state.program.BlockOrder()) {
+        for (const auto* candidate : block->Instructions()) {
+            if (store == nullptr && BufferAccessOf(candidate->Opcode()) == BufferAccess::Write && ctx.Memory(*candidate).kind == ResourceKind::Buffer) store = candidate;
+        }
+    }
+    if (store == nullptr) ctx.Fail(inst, "has a table trace, but the program stores to no buffer");
+    const auto u32 = TypeU32(state);
+    const auto constant = [&](std::uint32_t value) { return ConstantU32(state, value); };
+    const auto id = [&](std::uint32_t value) { return value != 0u ? value : constant(0u); };
+    const auto* handle = inst.Argument(0)->Resolve();
+    const auto argument = [&](std::size_t index) { return handle->ArgumentCount() > index ? ctx.Def(handle->Argument(index)) : constant(0u); };
+    const auto* workgroup = ShaderWorkgroupInput(state);
+    const auto threads = workgroup == nullptr ? state.program.WaveSize() : std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u);
+    const auto lane = EmitLocalInvocationIndex(state);
+    const auto group = Binary(state, spv::OpIAdd, u32, EmitInputComponentU32(state, StageInputKind::WorkgroupId, 0u), state.module.SpecializationConstant(u32, PipelineSpecialization::WorkgroupOffsetBase, 0u));
+    const auto field = [&](std::uint32_t value, std::uint32_t shift) { return Binary(state, spv::OpShiftLeftLogical, u32, Binary(state, spv::OpBitwiseAnd, u32, value, constant(shift == 12u ? 0xfffu : 63u)), constant(shift)); };
+    const auto marker = Binary(state, spv::OpBitwiseOr, u32, Binary(state, spv::OpBitwiseOr, u32, constant(TraceMarker), field(group, 12u)), Binary(state, spv::OpBitwiseOr, u32, field(EmitSubgroupLocalInvocationId(state), 6u), field(lane, 0u)));
+    const std::array<std::uint32_t, TraceRowWords> row{
+        marker, id(word.root[0]), id(word.root[1]), id(word.root[2]), id(word.root[3]), id(word.root[4]),
+        id(word.child[0]), id(word.child[1]), id(word.child[2]), id(word.child[3]), id(word.child[4]), id(word.child[5]),
+        flags, element, driverFault, word.code, argument(0u), argument(1u), argument(2u), word.addressLow,
+    };
+    EmitIfCondition(state, exec, [&] {
+        const auto rowIndex = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpIMul, u32, group, constant(threads)), lane);
+        const auto rowByte = Binary(state, spv::OpIAdd, u32, constant(base + TraceMapWords * 4u), Binary(state, spv::OpIMul, u32, rowIndex, constant(TraceRowWords * 4u)));
+        for (std::uint32_t index = 0; index < TraceRowWords; ++index) EmitRuntimeBufferTraceWord(ctx, *store, Binary(state, spv::OpIAdd, u32, rowByte, constant(index * 4u)), row[index]);
+        EmitIfCondition(state, Binary(state, spv::OpIEqual, TypeBool(state), group, constant(0u)), [&] {
+            const auto length = state.module.AllocateId();
+            state.module.AddFunction(spv::OpArrayLength, u32, length, state.tableMapVariable, 0u);
+            for (std::uint32_t slice = 0; slice < TraceMapWords; slice += threads) {
+                const auto index = Binary(state, spv::OpIAdd, u32, lane, constant(slice));
+                EmitIfCondition(state, Binary(state, spv::OpULessThan, TypeBool(state), index, length), [&] {
+                    EmitRuntimeBufferTraceWord(ctx, *store, Binary(state, spv::OpIAdd, u32, constant(base), Binary(state, spv::OpShiftLeftLogical, u32, index, constant(2u))), LoadTableMap(state, index));
+                });
+            }
+        });
+    });
+}
 
 TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const ImageResource& base, bool tableSampler) {
     auto& state = ctx.state;
@@ -2275,6 +2337,7 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         const auto driverFault = LoadTableMap(state, Select(state, u32, checked, Binary(state, spv::OpIAdd, u32, faults, element), ConstantU32(state, 0u)));
         const auto driverRejected = both(checked, flagged(driverFault));
         EmitTableFault(ctx, inst, word, driverFault, both(exec, driverRejected));
+        EmitTableTrace(ctx, inst, word, flags, element, driverFault, exec);
         result.valid = both(checked, negate(driverRejected));
         result.flags = flags;
         live = selected;
