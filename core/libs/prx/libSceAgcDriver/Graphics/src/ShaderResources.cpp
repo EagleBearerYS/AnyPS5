@@ -6929,6 +6929,11 @@ bool SkipWriteBack() {
     static const bool skip = std::getenv("APS5_GPU_NO_WRITEBACK") != nullptr;
     return skip;
 }
+
+bool TableTraceKeepsFaultedWrites() {
+    static const bool trace = std::getenv("APS5_DIAG_TABLE_TRACE") != nullptr;
+    return trace;
+}
 }
 
 void ShaderResources::WriteBack() {
@@ -7001,15 +7006,20 @@ void ShaderResources::CheckFaults() const {
 
 void ShaderResources::WriteBackBuffers() {
     std::exception_ptr unaligned;
+    std::exception_ptr traced;
     if (bda) {
         try {
             bda->CheckFault();
         } catch (const BdaUnalignedAccess&) {
             unaligned = std::current_exception();
+        } catch (...) {
+            if (!TableTraceKeepsFaultedWrites()) throw;
+            traced = std::current_exception();
         }
     }
     if (!SkipWriteBack()) guestMemory.WriteBack();
     if (unaligned) std::rethrow_exception(unaligned);
+    if (traced) std::rethrow_exception(traced);
 }
 
 std::span<const std::byte> ShaderResources::AddressTableBytes() const {
