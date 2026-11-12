@@ -2064,16 +2064,17 @@ ScalarBufferDword EmitScalarBufferDword(SpirvEmitterState& state, std::uint32_t 
     return dword;
 }
 
-std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
+std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index, std::uint32_t access = spv::MemoryAccessMaskNone) {
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.tableMapVariable, ConstantU32(state, 0u), index);
     const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
+    if (access != spv::MemoryAccessMaskNone) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, access);
+    else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
     return value;
 }
 
-std::uint32_t TableMapAt(SpirvEmitterState& state, std::uint32_t base, std::uint32_t offset) {
-    return LoadTableMap(state, offset == 0u ? base : Binary(state, spv::OpIAdd, TypeU32(state), base, ConstantU32(state, offset)));
+std::uint32_t TableMapAt(SpirvEmitterState& state, std::uint32_t base, std::uint32_t offset, std::uint32_t access = spv::MemoryAccessMaskNone) {
+    return LoadTableMap(state, offset == 0u ? base : Binary(state, spv::OpIAdd, TypeU32(state), base, ConstantU32(state, offset)), access);
 }
 
 struct TableWord {
@@ -2088,7 +2089,7 @@ struct TableWord {
 TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, std::uint32_t offset, std::uint32_t header, bool dynamicHeader = false) {
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
-    const auto field = [&](std::uint32_t index) { return dynamicHeader ? TableMapAt(state, header, index) : LoadTableMap(state, ConstantU32(state, header + index)); };
+    const auto field = [&](std::uint32_t index) { return dynamicHeader ? TableMapAt(state, header, index, spv::MemoryAccessVolatileMask) : LoadTableMap(state, ConstantU32(state, header + index)); };
     const auto mapStart = field(ImageTableAbi::TableMapStart);
     const auto keys = field(ImageTableAbi::TableKeyCount);
     const auto sizeLow = field(ImageTableAbi::TableSizeLow);
