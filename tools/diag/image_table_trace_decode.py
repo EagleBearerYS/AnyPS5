@@ -19,6 +19,7 @@ MASK = 0xffffffff
 MAX_PARENT_KEYS = 524288
 REASONS = {"outside the snapshot": 0, "outside the key domain": 1}
 DETAIL_RUNS = 2
+LINE_START = re.compile(r"(\s*$|\[|trace |  map\[|  trace g|AGC |pointer |At line|\s*\+ |\S+\.exe : )")
 
 
 def ascii_text(text):
@@ -39,12 +40,24 @@ class Run:
         self.faults = []
 
 
+def unwrap(lines):
+    joined = []
+    open_line = False
+    for line in lines:
+        if open_line and not LINE_START.match(line):
+            joined[-1] += line
+            continue
+        joined.append(line)
+        open_line = "[gpu]" in line or "image table:" in line
+    return joined
+
+
 def parse(lines):
     bases = None
     subgroup = None
     runs = []
     pending = []
-    for line in lines:
+    for line in unwrap(lines):
         text = line.rstrip()
         if text.startswith("trace bases:"):
             bases = text
