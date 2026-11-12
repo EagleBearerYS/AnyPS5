@@ -7,6 +7,7 @@
 #include "Recompiler.hpp"
 #include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -647,6 +648,35 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     outcome.log = capture.Finish();
     outcome.words.assign(Output.begin(), Output.begin() + groups * threads * 4u);
     return outcome;
+}
+
+ShaderRecompiler::RecompileResult RecompileTwoLanes(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t threads, std::uint32_t waveSize) {
+    const auto rootAddress = reinterpret_cast<std::uintptr_t>(root);
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, 0u, {true, false, false}, false, 1};
+    auto target = device.Target();
+    target.subgroupSize = 32u;
+    target.spannedWaves = false;
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(span.data()), span, 0, {}},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        target,
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    return ShaderRecompiler::Recompile(request);
+}
+
+std::size_t UndecoratedSampledImages(std::span<const std::uint32_t> spirv) {
+    std::vector<std::uint32_t> nonUniform;
+    std::vector<std::uint32_t> sampled;
+    for (std::size_t cursor = 5u; cursor < spirv.size(); cursor += std::max(spirv[cursor] >> 16u, 1u)) {
+        const auto opcode = spirv[cursor] & 0xffffu;
+        if (opcode == spv::OpDecorate && spirv[cursor + 2u] == spv::DecorationNonUniform) nonUniform.push_back(spirv[cursor + 1u]);
+        if (opcode == spv::OpSampledImage) sampled.push_back(spirv[cursor + 2u]);
+    }
+    Require(!sampled.empty(), "image table: the two-lane module samples no image");
+    return static_cast<std::size_t>(std::ranges::count_if(sampled, [&](std::uint32_t id) { return std::ranges::find(nonUniform, id) == nonUniform.end(); }));
 }
 
 template <std::size_t CodeWords>
@@ -2668,6 +2698,7 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
     for (std::uint32_t record = 0; record < 3u; ++record) link(record, record % 2u);
     const std::string name = arm ? "pointer V# table with a T# at an offset read from the V#'s own buffer, behind a record pointer that may take a T#'s words" : "pointer V# table with a T# at an offset read from the V#'s own buffer";
     auto shown = palettes;
+    bool twoLanesChecked = false;
     const std::array<AgcDriver::Graphics::GuestMemorySnapshot, 2> live{{
         {reinterpret_cast<std::uintptr_t>(records.data()), std::as_bytes(std::span(records))},
         {reinterpret_cast<std::uintptr_t>(palettes.data()), std::as_bytes(std::span(shown))},
@@ -2694,6 +2725,13 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm) {
         const auto inputKeys = Keys;
         const auto inputRecords = records;
         const auto inputPalettes = palettes;
+        if (!twoLanesChecked) {
+            const auto twoLanes = RecompileTwoLanes(device, code, Srt.data(), memory, Lanes, 64u);
+            Require(twoLanes.hostSubgroupSize == 32u && !twoLanes.fullSubgroups, name + ": the 32-lane host build did not run two lanes per invocation");
+            const auto undecorated = UndecoratedSampledImages(twoLanes.spirv.Words());
+            Require(undecorated == 0u, name + ": " + std::to_string(undecorated) + " sampled images of the two-lane build index an image table without NonUniform, though other workgroups select other elements");
+            twoLanesChecked = true;
+        }
         auto result = Execute(device, code, Srt.data(), memory, 4u, Lanes, 64u, live);
         Require(Table == inputTable && Keys == inputKeys && records == inputRecords && palettes == inputPalettes, name + ": dispatch modified its input memory");
         Require(std::all_of(Output.begin() + 4u * Lanes * 4u, Output.end(), [](auto word) { return word == 0xdeadbeefu; }), name + ": dispatch wrote past its output");

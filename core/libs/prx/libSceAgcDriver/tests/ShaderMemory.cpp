@@ -4968,7 +4968,7 @@ void verifyImageTables() {
     require(result.imageTableFaults == 0u, "image tables: a narrowed table expects faults");
     const auto uniform = ScanTableSpirv(result.spirv);
     require(uniform.runtimeArray && uniform.dynamicIndexing && uniform.switched, "image tables: the SPIR-V does not index the table");
-    require(!uniform.shaderNonUniform && !uniform.nonUniform, "image tables: a single-subgroup workgroup was decorated NonUniform");
+    require(uniform.shaderNonUniform && uniform.nonUniform, "image tables: a wave64 workgroup at two lanes per invocation does not decorate its table index NonUniform, though other workgroups select other elements");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     static_cast<void>(ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion));
 #endif

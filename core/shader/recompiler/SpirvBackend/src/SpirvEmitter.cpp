@@ -326,7 +326,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         // kept at one lane per invocation spans two subgroups (see WaveLdsScope).
         const auto threads = std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u);
         const bool oneSubgroup = state.laneCount == 2u || state.spannedWave || (program.WaveSize() == workgroup->hostSubgroupSize && workgroup->hostSubgroupSize <= 32u);
-        state.tableIndexNonUniform = threads > program.WaveSize() || !oneSubgroup;
+        state.tableIndexNonUniform = threads > program.WaveSize() || !oneSubgroup || state.laneCount == 2u;
     }
     state.waveLdsScope = WaveLdsScope(program, workgroup, state.laneCount);
     if (const char* guard = std::getenv("APS5_LOOP_GUARD")) state.loopGuardLimit = static_cast<std::uint32_t>(std::strtoul(guard, nullptr, 0));
