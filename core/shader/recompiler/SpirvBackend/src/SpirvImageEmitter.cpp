@@ -2250,10 +2250,10 @@ struct TableAccessResult {
 };
 
 constexpr std::uint32_t TraceMapWords = 1024u;
-constexpr std::uint32_t TraceRowWords = 20u;
+constexpr std::uint32_t TraceRowWords = 24u;
 constexpr std::uint32_t TraceMarker = 0xd1000000u;
 
-void EmitTableTrace(SpirvValueEmitContext& ctx, const IrValue& inst, const TableWord& word, std::uint32_t flags, std::uint32_t element, std::uint32_t driverFault, std::uint32_t exec) {
+void EmitTableTrace(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageResource& image, const TableWord& word, std::uint32_t flags, std::uint32_t element, std::uint32_t driverFault, std::uint32_t exec) {
     const char* setting = std::getenv("APS5_DIAG_TABLE_TRACE");
     if (setting == nullptr) return;
     char* end = nullptr;
@@ -2273,6 +2273,8 @@ void EmitTableTrace(SpirvValueEmitContext& ctx, const IrValue& inst, const Table
     const auto id = [&](std::uint32_t value) { return value != 0u ? value : constant(0u); };
     const auto* handle = inst.Argument(0)->Resolve();
     const auto argument = [&](std::size_t index) { return handle->ArgumentCount() > index ? ctx.Def(handle->Argument(index)) : constant(0u); };
+    const auto& sources = state.program.Resources().descriptorSources;
+    const auto* column = image.source < sources.size() && sources[image.source].tableColumn.has_value() ? &*sources[image.source].tableColumn : nullptr;
     const auto* workgroup = ShaderWorkgroupInput(state);
     const auto threads = workgroup == nullptr ? state.program.WaveSize() : std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u);
     const auto lane = EmitLocalInvocationIndex(state);
@@ -2283,6 +2285,7 @@ void EmitTableTrace(SpirvValueEmitContext& ctx, const IrValue& inst, const Table
         marker, id(word.root[0]), id(word.root[1]), id(word.root[2]), id(word.root[3]), id(word.root[4]),
         id(word.child[0]), id(word.child[1]), id(word.child[2]), id(word.child[3]), id(word.child[4]), id(word.child[5]),
         flags, element, driverFault, word.code, argument(0u), argument(1u), argument(2u), word.addressLow,
+        constant(image.table), constant(column != nullptr ? column->addend : 0u), constant(column != nullptr ? column->stride : 0u), constant(column != nullptr ? column->offset : 0u),
     };
     EmitIfCondition(state, exec, [&] {
         const auto rowIndex = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpIMul, u32, group, constant(threads)), lane);
@@ -2337,7 +2340,7 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         const auto driverFault = LoadTableMap(state, Select(state, u32, checked, Binary(state, spv::OpIAdd, u32, faults, element), ConstantU32(state, 0u)));
         const auto driverRejected = both(checked, flagged(driverFault));
         EmitTableFault(ctx, inst, word, driverFault, both(exec, driverRejected));
-        EmitTableTrace(ctx, inst, word, flags, element, driverFault, exec);
+        EmitTableTrace(ctx, inst, base, word, flags, element, driverFault, exec);
         result.valid = both(checked, negate(driverRejected));
         result.flags = flags;
         live = selected;

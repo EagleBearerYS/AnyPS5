@@ -71,7 +71,7 @@ alignas(256) std::array<std::uint32_t, MaxGroups * 128 * 4> Output{};
 constexpr std::uint32_t TraceGroups = 4;
 constexpr std::uint32_t TraceAt = TraceGroups * Lanes * 4u;
 constexpr std::uint32_t TraceMapWords = 1024;
-constexpr std::uint32_t TraceRowWords = 20;
+constexpr std::uint32_t TraceRowWords = 24;
 alignas(256) std::array<std::uint32_t, TraceAt + TraceMapWords + TraceGroups * Lanes * TraceRowWords> TraceOutput{};
 alignas(256) std::array<std::uint32_t, 32> Srt{};
 constexpr std::uint32_t PaletteOffset = 0x40;
@@ -2727,7 +2727,7 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool tra
             for (std::uint32_t index = first; index < std::min(first + 8u, uploaded); ++index) line += " " + Hex(map[index]) + (index < outcome.tableMap.size() && outcome.tableMap[index] != map[index] ? "*" : "");
             std::puts(line.c_str());
         }
-        std::puts("trace rows: marker lower record.low record.high record.code root.code child.fault child.mapStart child.keys child.baseLow child.record child.mapped image.flags image.element driver.fault code offset pointer.low pointer.high address.low");
+        std::puts("trace rows: marker lower record.low record.high record.code root.code child.fault child.mapStart child.keys child.baseLow child.record child.mapped image.flags image.element driver.fault code offset pointer.low pointer.high address.low table column.addend column.stride column.offset");
         for (std::uint32_t group = 0; group < TraceGroups; ++group) {
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) std::puts(traceRow(group, lane).substr(1u).c_str());
         }
