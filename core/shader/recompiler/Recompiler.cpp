@@ -748,7 +748,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
     result.hostSubgroupSize = HostSubgroupSize(request);
-    result.fullSubgroups = emitted.fullSubgroups;
+    result.fullSubgroups = emitted.fullSubgroups || (emitted.twoLanes && request.shader.stage == ShaderStage::Compute && request.target.spannedWaves);
     result.functionLdsBuffer = emitted.functionLdsBuffer;
     result.meshWindowBuffer = emitted.meshWindowBuffer;
     result.scratchPoolSlotDwords = emitted.scratchPoolSlotDwords;

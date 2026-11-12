@@ -52,6 +52,7 @@ struct SpirvTargetOptions {
 
 struct SpirvEmitInfo {
     bool fullSubgroups = false;
+    bool twoLanes = false;
     bool functionLdsBuffer = false;
     bool meshWindowBuffer = false;
     std::uint32_t scratchPoolSlotDwords = 0;

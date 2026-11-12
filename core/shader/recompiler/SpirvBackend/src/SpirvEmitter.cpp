@@ -342,6 +342,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     }
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;
+        info->twoLanes = state.laneCount == 2u;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->meshWindowBuffer = state.meshWindowBuffer;
         info->scratchPoolSlotDwords = ScratchPoolActive(state) ? ScratchPoolSlotDwords(state) : 0u;

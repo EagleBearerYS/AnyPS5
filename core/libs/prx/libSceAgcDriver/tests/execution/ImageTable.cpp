@@ -655,13 +655,13 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     return outcome;
 }
 
-ShaderRecompiler::RecompileResult RecompileTwoLanes(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t threads, std::uint32_t waveSize) {
+ShaderRecompiler::RecompileResult RecompileTwoLanes(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> span, const void* root, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint32_t threads, std::uint32_t waveSize, bool fullSubgroups = false) {
     const auto rootAddress = reinterpret_cast<std::uintptr_t>(root);
     const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(rootAddress), static_cast<std::uint32_t>(rootAddress >> 32u)};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, 0u, {true, false, false}, false, 1};
     auto target = device.Target();
     target.subgroupSize = 32u;
-    target.spannedWaves = false;
+    target.spannedWaves = fullSubgroups;
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(span.data()), span, 0, {}},
         {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
@@ -2760,6 +2760,9 @@ void RunPointerChildKeyTests(AgcDriver::VulkanDevice& device, bool arm, bool tra
             Require(twoLanes.hostSubgroupSize == 32u && !twoLanes.fullSubgroups, name + ": the 32-lane host build did not run two lanes per invocation");
             const auto undecorated = UndecoratedSampledImages(twoLanes.spirv.Words());
             Require(undecorated == 0u, name + ": " + std::to_string(undecorated) + " sampled images of the two-lane build index an image table without NonUniform, though other workgroups select other elements");
+            const auto full = RecompileTwoLanes(device, code, Srt.data(), memory, Lanes, 64u, true);
+            Require(full.hostSubgroupSize == 32u && full.fullSubgroups, name + ": the two-lane build for a device with full 32-lane subgroups does not request them");
+            Require(std::ranges::equal(full.spirv.Words(), twoLanes.spirv.Words()), name + ": asking for full subgroups changed the two-lane module");
             twoLanesChecked = true;
         }
         if (trace) TraceOutput.fill(0xdeadbeefu);
