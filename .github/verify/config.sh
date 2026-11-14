@@ -1,0 +1,3 @@
+BASE=74900e8b0fdc9d55fd2e53db0a9a7d941b49820e
+REPEAT=10
+EXTRA_TESTS='agc_shader_empty_table_resolution|agc_shader_shared_table_resolution|agc_shader_table_binding_growth|agc_shader_table_resolution_growth|agc_shader_table_snapshot_reuse'
