@@ -1,0 +1,4 @@
+BASE=b6717527ced301c7c9367bc3045969e3d0dc5f23
+REPEAT=10
+EXTRA_TESTS='agc_shader_memory|^agc_shader_memory_'
+NO_BEFORE=1
