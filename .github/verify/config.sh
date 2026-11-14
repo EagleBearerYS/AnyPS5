@@ -1,0 +1,4 @@
+BASE=b6717527ced301c7c9367bc3045969e3d0dc5f23
+REPEAT=10
+EXTRA_TESTS='agc_shader_memory|^agc_shader_memory_|^agc_driver_bda|^agc_bda|^agc_driver_address_draw_space_reuse|^agc_host_import|^agc_write_tracking|^agc_driver_host_import_proofs|^agc_driver_pipeline_journal|^agc_pipeline_journal|agc_driver_resident_heap_mirror|agc_driver_graphics'
+NO_BEFORE=1
