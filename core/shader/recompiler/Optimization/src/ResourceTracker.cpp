@@ -123,6 +123,10 @@ std::uint32_t possibleU32UpperBoundDepth(const IrValue* value, std::uint32_t dep
             const auto upper = possibleU32UpperBoundDepth(value->Argument(0), depth - 1u);
             return bits != 0u && upper > (std::numeric_limits<std::uint32_t>::max() >> bits) ? std::numeric_limits<std::uint32_t>::max() : upper << bits;
         }
+        case IrOpcode::ShiftRightLogical32: {
+            const IrValue* shift = value->Argument(1)->Resolve();
+            return shift->HasImmediate() && shift->Type() == IrType::U32 ? possibleU32Bits(value->Argument(0)) >> (shift->ImmediateU32() & 31u) : std::numeric_limits<std::uint32_t>::max();
+        }
         case IrOpcode::ReadFirstLane:
             return value->ArgumentCount() >= 1u ? possibleU32UpperBoundDepth(value->Argument(0), depth - 1u) : std::numeric_limits<std::uint32_t>::max();
         case IrOpcode::SelectU32:
@@ -209,6 +213,22 @@ public:
                 memory.sampler = patch.sampler;
             }
         }
+        std::vector<std::pair<IrValue*, IrValue*>> unrewritten;
+        for (const auto& plan : m_tableColumns) {
+            if (plan.handle->Opcode() != IrOpcode::GetBufferResource) continue;
+            IrValue* buffer = plan.handle;
+            const std::vector<IrValue*> reads(buffer->Uses().begin(), buffer->Uses().end());
+            for (IrValue* read : reads) {
+                if (std::ranges::find(m_tablePlanningReads, read) != m_tablePlanningReads.end()) continue;
+                auto copy = std::ranges::find(unrewritten, buffer, &std::pair<IrValue*, IrValue*>::first);
+                if (copy == unrewritten.end()) {
+                    std::vector<IrValue*> words;
+                    for (std::uint32_t argument = 0; argument < buffer->ArgumentCount(); argument++) words.push_back(buffer->Argument(argument));
+                    copy = unrewritten.emplace(unrewritten.end(), buffer, EmitCopy(*buffer, words, *buffer));
+                }
+                read->ReplaceArgument(0, copy->second);
+            }
+        }
         std::vector<const IrValue*> referenced;
         for (const auto& plan : m_tableColumns) {
             const auto& column = *m_sources[plan.source].tableColumn;
@@ -221,7 +241,7 @@ public:
             if (column.selected) {
                 KeepSourceAlive(*plan.handle, m_sources[column.selection], referenced);
             }
-            if (plan.keyDomain.has_value()) {
+            if (plan.keyDomain.has_value() && !plan.keyDomain->child) {
                 KeepSourceAlive(*plan.handle, m_sources[plan.keyDomain->source], referenced);
             }
         }
@@ -256,7 +276,7 @@ private:
         IrValue* offset = nullptr;
         IrValue* parentPointer = nullptr;
         std::vector<std::uint32_t> memory;
-        std::vector<const IrValue*> reads;
+        std::vector<IrValue*> reads;
         std::vector<std::uint32_t> hopMemory;
         std::vector<const IrValue*> hopReads;
         std::optional<KeyDomain> keyDomain;
@@ -806,6 +826,115 @@ private:
         return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
     }
 
+    static bool DescriptorUser(const IrValue* user) {
+        return user->Opcode() == IrOpcode::GetImageResource || user->Opcode() == IrOpcode::GetSamplerResource;
+    }
+
+    static bool LaneSpill(const IrValue& user, const IrValue& value) {
+        return user.Opcode() == IrOpcode::WriteLane && user.ArgumentCount() == 3u && user.Argument(0)->Resolve() == &value;
+    }
+
+    static IrValue* ImmediateStep(const IrValue& value, IrOpcode op, std::uint32_t& immediate) {
+        if (value.Opcode() != op || value.ArgumentCount() != 2u) return nullptr;
+        if (immediateU32(value.Argument(1), immediate)) return value.Argument(0)->Resolve();
+        const bool commutes = op == IrOpcode::BitwiseAnd32 || op == IrOpcode::IMul32 || op == IrOpcode::IAdd32;
+        return commutes && immediateU32(value.Argument(0), immediate) ? value.Argument(1)->Resolve() : nullptr;
+    }
+
+    bool WrittenThrough(const IrValue& vsharp) const {
+        for (const auto& block : m_program.Blocks()) {
+            for (const IrValue* inst : block->Instructions()) {
+                const auto access = BufferAccessOf(inst->Opcode());
+                if ((access != BufferAccess::Write && access != BufferAccess::Atomic) || inst->ArgumentCount() == 0u) continue;
+                const IrValue* buffer = inst->Argument(0)->Resolve();
+                if (buffer->Opcode() == IrOpcode::GetBufferResource && SameHandle(*buffer, vsharp)) return true;
+            }
+        }
+        return false;
+    }
+
+    static IrValue* ChildKeyWordOf(IrValue* key, KeyDomain& domain) {
+        IrValue* word = key->Resolve();
+        std::uint32_t immediate = 0;
+        if (IrValue* masked = ImmediateStep(*word, IrOpcode::BitwiseAnd32, immediate)) {
+            domain.mask = immediate;
+            word = masked;
+        }
+        if (IrValue* shifted = ImmediateStep(*word, IrOpcode::ShiftRightLogical32, immediate); shifted != nullptr && immediate < 32u) {
+            domain.shift = immediate;
+            domain.mask &= 0xffffffffu >> immediate;
+            word = shifted;
+            if (IrValue* masked = ImmediateStep(*word, IrOpcode::BitwiseAnd32, immediate)) {
+                domain.mask &= immediate >> domain.shift;
+                word = masked;
+            }
+        }
+        return word;
+    }
+
+    bool ChildKeyWord(const IrValue& read, const IrValue& vsharp, bool rereadable = false) const {
+        std::uint32_t memoryIndex = 0;
+        std::uint32_t immediate = 0;
+        if (ScalarReadMemory(read, memoryIndex) == nullptr || !immediateU32(read.Argument(1), immediate) || read.Uses().empty() || WrittenThrough(vsharp)) return false;
+        std::vector<const IrValue*> pending{&read};
+        std::unordered_set<const IrValue*> seen;
+        bool keys = false;
+        while (!pending.empty()) {
+            const IrValue* value = pending.back();
+            pending.pop_back();
+            if (!seen.insert(value).second) continue;
+            for (const IrValue* use : value->Uses()) {
+                if (use->Opcode() == IrOpcode::ReadConstBuffer && use->ArgumentCount() == 2u && value != &read && use->Argument(1)->Resolve() == value) {
+                    const IrValue* buffer = use->Argument(0)->Resolve();
+                    IrValue* key = nullptr;
+                    std::uint32_t stride = 0;
+                    std::uint32_t addend = 0;
+                    KeyDomain domain;
+                    if (buffer->Opcode() != IrOpcode::GetBufferResource || (!SameHandle(*buffer, vsharp) && !(rereadable && SiblingVsharp(*buffer, vsharp))) || !std::ranges::any_of(use->Uses(), DescriptorUser) || !MatchAffineOffset(use->Argument(1), key, stride, addend) || ChildKeyWordOf(key, domain) != &read) return false;
+                    keys = true;
+                    continue;
+                }
+                if (rereadable && LaneSpill(*use, *value)) continue;
+                const auto stepped = [&](IrOpcode op) { return ImmediateStep(*use, op, immediate) == value; };
+                if (!stepped(IrOpcode::ShiftRightLogical32) && !stepped(IrOpcode::BitwiseAnd32) && !stepped(IrOpcode::ShiftLeftLogical32) && !stepped(IrOpcode::IMul32) && !stepped(IrOpcode::IAdd32)) return false;
+                pending.push_back(use);
+            }
+        }
+        return keys;
+    }
+
+    std::optional<KeyDomain> MatchChildKey(IrValue* key, const IrValue& vsharp, std::uint32_t parent) const {
+        KeyDomain domain;
+        domain.source = parent;
+        domain.child = true;
+        IrValue* word = ChildKeyWordOf(key, domain);
+        std::uint32_t memoryIndex = 0;
+        std::uint32_t immediate = 0;
+        const MemoryInfo* memory = ScalarReadMemory(*word, memoryIndex);
+        if (memory == nullptr || !immediateU32(word->Argument(1), immediate) || static_cast<std::uint64_t>(memory->offset) + immediate > 0xffffffffull || !ChildKeyWord(*word, vsharp)) return std::nullopt;
+        const IrValue* buffer = word->Argument(0)->Resolve();
+        if (buffer->Opcode() != IrOpcode::GetBufferResource || !SameHandle(*buffer, vsharp)) return std::nullopt;
+        domain.offset = memory->offset + immediate;
+        return domain;
+    }
+
+    bool DescriptorWordReads(const IrValue& buffer, bool rereadable, const IrValue& vsharp) const {
+        return std::ranges::all_of(buffer.Uses(), [&](const IrValue* read) {
+            if (read->Opcode() != IrOpcode::ReadConstBuffer) return false;
+            if (rereadable ? std::ranges::any_of(read->Uses(), DescriptorUser) : !read->Uses().empty() && std::ranges::all_of(read->Uses(), DescriptorUser)) return true;
+            return rereadable && ChildKeyWord(*read, vsharp, true);
+        });
+    }
+
+    bool RereadableVsharp(const IrValue& handle, const TableColumnPlan& parent) const {
+        if (handle.ArgumentCount() != parent.reads.size()) return false;
+        for (std::uint32_t dword = 0; dword < handle.ArgumentCount(); dword++) {
+            const IrValue* read = parent.reads[dword];
+            if (handle.Argument(dword)->Resolve() != read || read->Opcode() != IrOpcode::LoadAddressU32 || m_program.Resources().memoryInfo[read->Flags<MemoryFlags>().index].planningOnly) return false;
+        }
+        return true;
+    }
+
     bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false) {
         const auto expected = buffer ? IrOpcode::GetBufferResource : sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
         const std::uint32_t width = sampler || buffer ? 4u : 8u;
@@ -913,7 +1042,8 @@ private:
         if (MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
             if (fixed) return false;
         } else {
-            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
+            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource) return false;
+            const bool sharedHandle = !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); });
             const auto sameHandle = [&](const IrValue* user) {
                 if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
                 for (std::uint32_t argument = 0; argument < handle.ArgumentCount(); argument++) {
@@ -921,13 +1051,18 @@ private:
                 }
                 return true;
             };
-            if (!std::ranges::all_of(plan.reads, [&](const IrValue* read) { return std::ranges::all_of(read->Uses(), sameHandle); })) return false;
+            const bool otherUsers = !std::ranges::all_of(plan.reads, [&](const IrValue* read) { return std::ranges::all_of(read->Uses(), sameHandle); });
             TableColumnPlan parent;
             if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) return false;
             if (parent.parentPointer == nullptr) return false;
+            const bool rereadable = RereadableVsharp(*heapHandle, parent);
+            if ((otherUsers || sharedHandle) && !rereadable) return false;
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    return user->Opcode() == IrOpcode::GetBufferResource && std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); });
+                    if (rereadable && LaneSpill(*user, *read)) return true;
+                    if (user->Opcode() != IrOpcode::GetBufferResource) return false;
+                    if (std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return true;
+                    return SameHandle(*user, *heapHandle) && DescriptorWordReads(*user, rereadable, *heapHandle);
                 });
             })) return false;
             heapIndex = parent.source;
@@ -959,7 +1094,8 @@ private:
                 column.selection = InternSource(selection);
             }
         }
-        const auto domain = masked ? std::optional<KeyDomain>{} : MatchKeyDomain(key);
+        auto domain = masked || plan.parentPointer == nullptr ? std::optional<KeyDomain>{} : MatchChildKey(key, *heapHandle, heapIndex);
+        if (!masked && !domain.has_value()) domain = MatchKeyDomain(key);
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
         plan.handle = &handle;
@@ -1049,29 +1185,12 @@ private:
         return lane;
     }
 
-    bool PointerRecordReads(IrValue* value, std::vector<IrValue*>& reads) const {
-        std::vector<IrValue*> pending{value};
-        std::unordered_set<const IrValue*> seen;
-        while (!pending.empty()) {
-            auto* current = pending.back()->Resolve();
-            pending.pop_back();
-            if (!seen.insert(current).second) continue;
-            if (current->IsPhi()) {
-                for (std::size_t index = 0; index < current->ArgumentCount(); ++index) pending.push_back(current->Argument(index));
-                continue;
-            }
-            if (current->HasImmediate() && current->Type() == IrType::U32) continue;
-            std::uint32_t memory = 0;
-            const MemoryInfo* info = ScalarReadMemory(*current, memory);
-            if (info == nullptr || !MemoryIndexBelongsTo(memory, *current)) return false;
-            if (!reads.empty() && !EquivalentValue(m_program.Resources(), reads.back(), current)) return false;
-            reads.push_back(current);
-        }
-        return !reads.empty();
+    static bool DescriptorWordArm(const IrValue& word) {
+        return word.Opcode() == IrOpcode::ReadConstBuffer && std::ranges::any_of(word.Uses(), DescriptorUser);
     }
 
     static bool PointerFreeWord(const IrValue& word) {
-        return (word.HasImmediate() && word.Type() == IrType::U32) || LaneMaskOperand(&word);
+        return (word.HasImmediate() && word.Type() == IrType::U32) || LaneMaskOperand(&word) || DescriptorWordArm(word);
     }
 
     static IrValue* MaskedRecordWord(const IrValue& word) {
@@ -1384,14 +1503,17 @@ private:
         std::vector<IrValue*> highReads;
         std::vector<PointerChase> chases;
         std::uint32_t chaseDepth = 0;
-        if (pointerKeyed ? !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads, chases, chaseDepth) : merged && !PointerRecordReads(pointer->Argument(0), lowReads)) return false;
+        if (merged && !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads, chases, chaseDepth)) return false;
+        if (buffer && !chases.empty()) return false;
+        const auto same = [&](const std::vector<IrValue*>& reads) { return std::ranges::all_of(reads, [&](const IrValue* read) { return EquivalentValue(m_program.Resources(), read, reads.front()); }); };
+        if (merged && buffer && (!same(lowReads) || !same(highReads))) return false;
         auto* low = merged ? lowReads.back() : UnwrapTableRead(pointer->Argument(0));
         if (low == nullptr) return false;
-        auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : UnwrapTableRead(pointer->Argument(1));
+        auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : merged ? highReads.back() : UnwrapTableRead(pointer->Argument(1));
         if (high == nullptr) return false;
         std::uint32_t first = 0;
         for (std::uint32_t dword = 0; dword < 2u; dword++) {
-            IrValue* read = dword == 0u ? low : pointerKeyed ? highReads.back() : high;
+            IrValue* read = dword == 0u ? low : merged ? highReads.back() : high;
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
@@ -2338,15 +2460,21 @@ private:
                 }
             }
         }
-        for (const auto& plan : m_tableColumns) {
-            for (std::size_t index = 0; index < plan.reads.size(); index++) {
-                const IrValue* read = plan.reads[index];
-                const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
-                    return FindTableColumn(*user) != nullptr;
-                });
-                if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
-                    m_tablePlanningReads.push_back(read);
-                    m_tablePlanningMemory.push_back(plan.memory[index]);
+        for (bool marked = true; marked;) {
+            marked = false;
+            for (const auto& plan : m_tableColumns) {
+                for (std::size_t index = 0; index < plan.reads.size(); index++) {
+                    const IrValue* read = plan.reads[index];
+                    const bool planned = std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
+                        return FindTableColumn(*user) != nullptr && std::ranges::all_of(user->Uses(), [&](const IrValue* use) {
+                            return BufferAccessOf(use->Opcode()) == BufferAccess::None || std::ranges::find(m_tablePlanningReads, use) != m_tablePlanningReads.end();
+                        });
+                    });
+                    if (planned && std::ranges::find(m_tablePlanningReads, read) == m_tablePlanningReads.end()) {
+                        m_tablePlanningReads.push_back(read);
+                        m_tablePlanningMemory.push_back(plan.memory[index]);
+                        marked = true;
+                    }
                 }
             }
         }
@@ -2428,6 +2556,22 @@ private:
             }
         }
         return handles;
+    }
+
+    bool SiblingVsharp(const IrValue& left, const IrValue& right) const {
+        if (left.Opcode() != IrOpcode::GetBufferResource || right.Opcode() != IrOpcode::GetBufferResource || left.ArgumentCount() != 4u || right.ArgumentCount() != 4u) return false;
+        const IrValue* address = nullptr;
+        for (const IrValue* handle : {&left, &right}) {
+            for (std::size_t index = 0; index < 4u; index++) {
+                const IrValue* word = handle->Argument(index)->Resolve();
+                if (word->Opcode() != IrOpcode::LoadAddressU32 || word->ArgumentCount() == 0u) return false;
+                const IrValue* base = word->Argument(0)->Resolve();
+                if (base->Opcode() != IrOpcode::GetAddressResource) return false;
+                if (address == nullptr) address = base;
+                else if (base != address && !EquivalentValue(m_program.Resources(), base, address)) return false;
+            }
+        }
+        return true;
     }
 
     bool SameHandle(const IrValue& left, const IrValue& right) const {
