@@ -1,0 +1,4 @@
+BASE=fdb1e6961183b9a312af563f4e1814b1b7b9e95a
+REPEAT=1
+EXTRA_TESTS='^prx_thread_local_destructors'
+NO_BEFORE=1
