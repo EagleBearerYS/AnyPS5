@@ -1,0 +1,4 @@
+BASE=790e9a371cccdacace25617f0598ae871761958b
+REPEAT=10
+EXTRA_TESTS='agc_driver_frame_replay_rewind_copy|^agc_driver_runtime_buffer_spans'
+NO_BEFORE=1
