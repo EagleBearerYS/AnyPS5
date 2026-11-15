@@ -1,0 +1,4 @@
+BASE=67420fb18b5f31f2936c052921ea0332ead41c74
+REPEAT=10
+EXTRA_TESTS='^agc_driver_device_image_table|^agc_shader_device_image'
+BEFORE_REPEAT=3
