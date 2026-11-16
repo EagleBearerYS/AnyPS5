@@ -1,0 +1,4 @@
+BASE=0a148be96367e8c0aec0d0144f9d136ec7314f58
+REPEAT=1
+EXTRA_TESTS='^agc_buffer_upload_pending_gpu_copy'
+VALIDATION=1
