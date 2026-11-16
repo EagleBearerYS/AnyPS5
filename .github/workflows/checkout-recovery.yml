@@ -1,0 +1,148 @@
+name: Checkout recovery
+
+on:
+  push:
+    branches: [ci/linux-checkout-recovery-test]
+
+permissions:
+  contents: read
+
+jobs:
+  broken-workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SUBMODULE: 3rdparty/nghttp2/third-party/urlparse
+    steps:
+      - name: Check out as an earlier job on the runner did
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Leave the nested urlparse submodule as an interrupted clone leaves it
+        shell: bash
+        run: |
+          set -eu
+          test -e "$SUBMODULE/.git"
+          echo "urlparse git dir: $(git -C "$SUBMODULE" rev-parse --absolute-git-dir)"
+          echo "urlparse HEAD before: $(git -C "$SUBMODULE" rev-parse HEAD)"
+          git -C "$SUBMODULE" symbolic-ref HEAD refs/heads/interrupted-clone
+          if git -C "$SUBMODULE" rev-parse --verify -q HEAD; then echo "::error::urlparse HEAD still resolves"; exit 1; fi
+          echo "urlparse HEAD now: $(git -C "$SUBMODULE" symbolic-ref HEAD), unborn"
+      - id: main
+        name: The checkout step as main has it
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Require that main's checkout step failed
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.main.outcome }}
+        run: |
+          echo "main's checkout step: $OUTCOME"
+          [ "$OUTCOME" = failure ] || { echo "::error::main's checkout step did not fail on the broken workspace"; exit 1; }
+      - name: Require that the workspace is still broken
+        shell: bash
+        run: |
+          set -eu
+          if [ ! -e "$SUBMODULE/.git" ]; then echo "::error::the failed checkout removed the urlparse submodule"; exit 1; fi
+          if git -C "$SUBMODULE" rev-parse --verify -q HEAD; then echo "::error::urlparse HEAD resolves again"; exit 1; fi
+          echo "urlparse HEAD: $(git -C "$SUBMODULE" symbolic-ref HEAD), unborn"
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Check out again into the emptied workspace
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Require the recovery and a whole checkout
+        shell: bash
+        env:
+          FIRST: ${{ steps.checkout.outcome }}
+        run: |
+          set -eu
+          echo "first checkout: $FIRST"
+          [ "$FIRST" = failure ] || { echo "::error::the first checkout did not fail"; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          status=$(git submodule status --recursive)
+          echo "$status" | grep -E 'nghttp2'
+          if echo "$status" | grep -qE '^[-+U]'; then echo "::error::a submodule is not at its recorded commit"; echo "$status" | grep -E '^[-+U]'; exit 1; fi
+          want=$(git -C 3rdparty/nghttp2 ls-tree HEAD third-party/urlparse | awk '{print $3}')
+          have=$(git -C "$SUBMODULE" rev-parse HEAD)
+          echo "urlparse recorded $want, checked out $have"
+          [ "$want" = "$have" ]
+          [ -z "$(git status --porcelain)" ]
+          echo "submodules: $(echo "$status" | wc -l), all at their recorded commits; working tree clean"
+
+  clean-workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Check out again into the emptied workspace
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Require that the first checkout succeeded
+        shell: bash
+        env:
+          FIRST: ${{ steps.checkout.outcome }}
+        run: |
+          set -eu
+          echo "first checkout: $FIRST"
+          [ "$FIRST" = success ] || { echo "::error::the checkout of a clean workspace did not succeed first time"; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+          if git submodule status --recursive | grep -qE '^[-+U]'; then echo "::error::a submodule is not at its recorded commit"; exit 1; fi
+          echo "submodules: $(git submodule status --recursive | wc -l), all at their recorded commits"
+
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 3
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Compare actionlint's findings for main's build.yml and this branch's
+        shell: bash
+        run: |
+          set -u
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          mkdir -p /tmp/lint/main /tmp/lint/pr
+          git show HEAD~2:.github/workflows/build.yml > /tmp/lint/main/build.yml
+          git show HEAD~1:.github/workflows/build.yml > /tmp/lint/pr/build.yml
+          (cd /tmp/lint/main && actionlint -no-color -format '{{range $err := .}}{{$err.Kind}}: {{$err.Message}}{{"\n"}}{{end}}' build.yml) > /tmp/lint/main.txt || true
+          (cd /tmp/lint/pr && actionlint -no-color -format '{{range $err := .}}{{$err.Kind}}: {{$err.Message}}{{"\n"}}{{end}}' build.yml) > /tmp/lint/pr.txt || true
+          echo "main: $(wc -l < /tmp/lint/main.txt) findings; this branch: $(wc -l < /tmp/lint/pr.txt)"
+          (cd /tmp/lint/pr && actionlint -no-color build.yml) | grep -n -E ':(52[0-9]|53[0-9]|54[0-9]|55[0-9]):' || echo "no findings on the linux job's checkout lines"
+          if diff <(sort /tmp/lint/main.txt) <(sort /tmp/lint/pr.txt); then echo "same findings"; else echo "::error::the findings differ"; exit 1; fi
