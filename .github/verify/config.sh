@@ -1,0 +1,4 @@
+BASE=d3206ad1713c7acc2d5663151060849b97460e05
+REPEAT=3
+EXTRA_TESTS='^agc_driver_runtime_buffer|^agc_driver_image_table|agc_hook_clear_access|agc_hook_clear_access_off|agc_driver_recorder'
+NO_BEFORE=1
