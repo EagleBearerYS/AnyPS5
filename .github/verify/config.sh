@@ -1,0 +1,4 @@
+BASE=0173f20a5ff7853ff23fff3d033039d2a0c5dfe8
+REPEAT=10
+EXTRA_TESTS='^agc_driver_bda|^agc_bda|^agc_driver_address_draw_space_reuse|^agc_host_import|^agc_write_tracking|^agc_driver_host_import_proofs|^agc_driver_pipeline_journal|^agc_pipeline_journal|^agc_command_state|^agc_graphics_state_recorder|^agc_driver_indirect_draw_pending_producer|^agc_shader_memory'
+NO_BEFORE=1
