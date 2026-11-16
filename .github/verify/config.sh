@@ -1,0 +1,4 @@
+BASE=bcc617f14156a0fa5ca8d0e93c74368e345bdcf9
+REPEAT=3
+EXTRA_TESTS='^agc_driver_bda_mirror_store_probe'
+NO_BEFORE=1
