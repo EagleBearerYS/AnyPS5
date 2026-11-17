@@ -32,6 +32,16 @@
 #else
 #include <sys/mman.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <cstdlib>
+#include <new>
+template <typename T> T& LowMemory() {
+    void* low = mmap(nullptr, (sizeof(T) + 4095u) & ~std::size_t{4095u}, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+    if (low == MAP_FAILED || (reinterpret_cast<std::uintptr_t>(low) >> 32u) != 0u) std::abort();
+    return *new (low) T{};
+}
+#endif
 #endif
 
 namespace {
@@ -1923,7 +1933,11 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
 
 void RunPointerSamplerTests(AgcDriver::VulkanDevice& device) {
     Fill();
+#if defined(__linux__)
+    auto& records = LowMemory<std::array<std::array<std::uint32_t, 64>, 2>>();
+#else
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+#endif
     const std::array<std::array<std::uint32_t, 4>, 2> samplers{PointWrap, PointClamp};
     Table = {};
     Keys = {};
@@ -2038,7 +2052,11 @@ void RunPointerSamplerTests(AgcDriver::VulkanDevice& device) {
 
 void RunPointerArmTests(AgcDriver::VulkanDevice& device, bool copies) {
     Fill();
+#if defined(__linux__)
+    auto& records = LowMemory<std::array<std::array<std::uint32_t, 64>, 2>>();
+#else
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+#endif
     Table = {};
     Keys = {};
     const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
@@ -2120,7 +2138,11 @@ enum class PointerMask { LaneAnd, High, HighSecond, HighSecondLane, LaneNot };
 
 void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
     Fill();
+#if defined(__linux__)
+    auto& records = LowMemory<std::array<std::array<std::uint32_t, 64>, 2>>();
+#else
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+#endif
     alignas(256) std::array<std::uint32_t, 16> second{};
     Table = {};
     Keys = {};
@@ -2221,7 +2243,11 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
 
 void RunPointerVsharpTests(AgcDriver::VulkanDevice& device) {
     Fill();
+#if defined(__linux__)
+    auto& records = LowMemory<std::array<std::array<std::uint32_t, 64>, 2>>();
+#else
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+#endif
     alignas(256) std::array<std::array<std::uint32_t, 16>, 2> palettes{};
     Table = {};
     Keys = {};
