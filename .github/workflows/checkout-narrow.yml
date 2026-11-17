@@ -1,0 +1,494 @@
+name: Narrow checkout recovery
+
+on:
+  push:
+    branches: ['ci/linux-checkout-narrow-test*']
+
+permissions:
+  contents: read
+
+env:
+  SUBMODULE: 3rdparty/nghttp2/third-party/urlparse
+  MARK: |
+    find .git/modules -type d -name objects -prune -printf '%h\n' | sort > "$RUNNER_TEMP/modules-before.txt"
+    while IFS= read -r dir; do touch "$dir/anyps5-marker"; done < "$RUNNER_TEMP/modules-before.txt"
+    echo "module dirs marked: $(wc -l < "$RUNNER_TEMP/modules-before.txt")"
+  COUNT: |
+    find .git/modules -type d -name objects -prune -printf '%h\n' | sort > "$RUNNER_TEMP/modules-after.txt"
+    : > "$RUNNER_TEMP/marked-after.txt"
+    while IFS= read -r dir; do [ -e "$dir/anyps5-marker" ] && echo "$dir" >> "$RUNNER_TEMP/marked-after.txt"; done < "$RUNNER_TEMP/modules-after.txt"
+    BEFORE=$(wc -l < "$RUNNER_TEMP/modules-before.txt"); AFTER=$(wc -l < "$RUNNER_TEMP/modules-after.txt"); KEPT=$(wc -l < "$RUNNER_TEMP/marked-after.txt")
+    echo "module dirs before $BEFORE, after $AFTER, kept from before the failed checkout $KEPT"
+    comm -23 "$RUNNER_TEMP/modules-after.txt" "$RUNNER_TEMP/marked-after.txt" | sed 's/^/  re-fetched: /' | head -60
+  CHECK_SUBMODULES: |
+    status=$(git submodule status --recursive)
+    printf '%s\n' "$status" > "$RUNNER_TEMP/submodule-status.txt"
+    echo "submodule status lines: $(printf '%s\n' "$status" | wc -l)"
+    bad=0
+    while IFS= read -r line; do
+      flag=${line:0:1}
+      path=${line:1}; path=${path#* }; path=${path%% *}
+      case "$flag" in
+        ' ') ;;
+        -)
+          root=$(git -C "$(dirname "$path")" rev-parse --show-toplevel)
+          rel=$(realpath --relative-to="$root" "$path")
+          name=$(git -C "$root" config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk -v r="$rel" '$2 == r {sub(/^submodule\./, "", $1); sub(/\.path$/, "", $1); print $1}')
+          mode=$(git -C "$root" config -f .gitmodules --get "submodule.$name.update" || true)
+          if [ "$mode" = none ]; then echo "not initialised, update = none in its .gitmodules: $path"; else echo "::error::not initialised: $path"; bad=1; fi
+          ;;
+        *) echo "::error::not at its recorded commit: $line"; bad=1 ;;
+      esac
+    done <<< "$status"
+    [ "$bad" = 0 ]
+    [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]
+    porcelain=$(git status --porcelain)
+    [ -z "$porcelain" ] || { echo "::error::the working tree is not clean"; printf '%s\n' "$porcelain"; exit 1; }
+    echo "HEAD at the pushed commit, every submodule at its recorded commit, working tree clean"
+  BREAK: |
+    test -e "$SUBMODULE/.git"
+    echo "urlparse git dir: $(git -C "$SUBMODULE" rev-parse --absolute-git-dir)"
+    git -C "$SUBMODULE" symbolic-ref HEAD refs/heads/interrupted-clone
+    if git -C "$SUBMODULE" rev-parse --verify -q HEAD; then echo "::error::urlparse HEAD still resolves"; exit 1; fi
+    echo "urlparse HEAD now $(git -C "$SUBMODULE" symbolic-ref HEAD), unborn, as an interrupted clone leaves it"
+
+jobs:
+  nested-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out as an earlier job on the runner did
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Leave the nested urlparse submodule without a current revision
+        shell: bash
+        run: |
+          set -eu
+          eval "$BREAK"
+          eval "$MARK"
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Check out again into the emptied workspace
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Require main's full re-clone
+        shell: bash
+        env:
+          FIRST: ${{ steps.checkout.outcome }}
+        run: |
+          set -eu
+          echo "first checkout: $FIRST"
+          [ "$FIRST" = failure ] || { echo "::error::the first checkout did not fail"; exit 1; }
+          eval "$CHECK_SUBMODULES"
+          eval "$COUNT"
+          [ "$KEPT" = 0 ] || { echo "::error::main's steps kept $KEPT module dirs"; exit 1; }
+          [ "$AFTER" = "$BEFORE" ]
+          echo "main's steps re-fetched all $AFTER submodules"
+
+  nested-branch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out as an earlier job on the runner did
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Leave the nested urlparse submodule without a current revision
+        shell: bash
+        run: |
+          set -eu
+          eval "$BREAK"
+          eval "$MARK"
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - id: broken
+        name: Remove the submodules a failed checkout left without a current revision
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          broken() {
+            git -C "$1" ls-tree -r HEAD | while IFS=$'\t' read -r entry path; do
+              case $entry in "160000 commit "*) ;; *) continue ;; esac
+              [ -e "$1/$path/.git" ] || continue
+              if git -C "$1/$path" rev-parse -q --verify 'HEAD^{commit}' > /dev/null 2>&1; then broken "$1/$path"; else echo "$1/$path"; fi
+            done
+          }
+          ws=$(realpath -m "${GITHUB_WORKSPACE:?}")
+          remove=()
+          while IFS= read -r path; do
+            gitdir=$(sed -n 's/^gitdir: //p' "$path/.git" 2> /dev/null || true)
+            case $gitdir in /*) gitdir=$(realpath -m "$gitdir") ;; ?*) gitdir=$(realpath -m "$path/$gitdir") ;; esac
+            case $(realpath -m "$path")/ in "$ws"/?*) ;; *) echo "outside the workspace: $path"; remove=(); break ;; esac
+            [ -z "$gitdir" ] || case $gitdir/ in "$ws"/.git/modules/?*) ;; *) echo "not a module directory of the workspace: $gitdir"; remove=(); break ;; esac
+            remove+=("$path" "$gitdir")
+          done < <(broken "$ws")
+          found=false
+          for ((i = 0; i < ${#remove[@]}; i += 2)); do
+            [ -z "${remove[i+1]}" ] || rm -rf "${remove[i+1]}"
+            rm -rf "${remove[i]}" && mkdir -p "${remove[i]}"
+            echo "removed ${remove[i]}${remove[i+1]:+ and ${remove[i+1]}}"
+            found=true
+          done
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' && steps.broken.outputs.found != 'true' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Check out again after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Require that only urlparse was re-fetched
+        shell: bash
+        env:
+          FIRST: ${{ steps.checkout.outcome }}
+          FOUND: ${{ steps.broken.outputs.found }}
+        run: |
+          set -eu
+          echo "first checkout: $FIRST; broken submodules found: $FOUND"
+          [ "$FIRST" = failure ] || { echo "::error::the first checkout did not fail"; exit 1; }
+          [ "$FOUND" = true ] || { echo "::error::the broken submodule was not found"; exit 1; }
+          eval "$CHECK_SUBMODULES"
+          eval "$COUNT"
+          [ "$AFTER" = "$BEFORE" ]
+          own=$(git -C "$SUBMODULE" rev-parse --absolute-git-dir | sed "s#^$GITHUB_WORKSPACE/##")
+          refetched=$(comm -23 "$RUNNER_TEMP/modules-after.txt" "$RUNNER_TEMP/marked-after.txt")
+          expected=$(grep -E "^$own(/|\$)" "$RUNNER_TEMP/modules-before.txt")
+          echo "urlparse's module dir and the ones nested in it: $(printf '%s\n' "$expected" | wc -l)"
+          [ "$refetched" = "$expected" ] || { echo "::error::re-fetched other module dirs than urlparse's and its nested ones"; exit 1; }
+          [ "$KEPT" = $((BEFORE - $(printf '%s\n' "$expected" | wc -l))) ] || { echo "::error::kept $KEPT of $BEFORE module dirs"; exit 1; }
+          want=$(git -C 3rdparty/nghttp2 ls-tree HEAD third-party/urlparse | awk '{print $3}')
+          have=$(git -C "$SUBMODULE" rev-parse HEAD)
+          echo "urlparse recorded $want, checked out $have"
+          [ "$want" = "$have" ]
+          echo "only urlparse and its nested submodules were re-fetched; the other $KEPT were kept"
+      - name: Go on to the build's next step
+        shell: bash
+        run: git -C 3rdparty/nghttp2 log -1 --format='nghttp2 at %h' && test -f CMakeLists.txt && echo "the workspace is ready for configure"
+
+  clean-workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - id: broken
+        name: Remove the submodules a failed checkout left without a current revision
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          broken() {
+            git -C "$1" ls-tree -r HEAD | while IFS=$'\t' read -r entry path; do
+              case $entry in "160000 commit "*) ;; *) continue ;; esac
+              [ -e "$1/$path/.git" ] || continue
+              if git -C "$1/$path" rev-parse -q --verify 'HEAD^{commit}' > /dev/null 2>&1; then broken "$1/$path"; else echo "$1/$path"; fi
+            done
+          }
+          ws=$(realpath -m "${GITHUB_WORKSPACE:?}")
+          remove=()
+          while IFS= read -r path; do
+            gitdir=$(sed -n 's/^gitdir: //p' "$path/.git" 2> /dev/null || true)
+            case $gitdir in /*) gitdir=$(realpath -m "$gitdir") ;; ?*) gitdir=$(realpath -m "$path/$gitdir") ;; esac
+            case $(realpath -m "$path")/ in "$ws"/?*) ;; *) echo "outside the workspace: $path"; remove=(); break ;; esac
+            [ -z "$gitdir" ] || case $gitdir/ in "$ws"/.git/modules/?*) ;; *) echo "not a module directory of the workspace: $gitdir"; remove=(); break ;; esac
+            remove+=("$path" "$gitdir")
+          done < <(broken "$ws")
+          found=false
+          for ((i = 0; i < ${#remove[@]}; i += 2)); do
+            [ -z "${remove[i+1]}" ] || rm -rf "${remove[i+1]}"
+            rm -rf "${remove[i]}" && mkdir -p "${remove[i]}"
+            echo "removed ${remove[i]}${remove[i+1]:+ and ${remove[i+1]}}"
+            found=true
+          done
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' && steps.broken.outputs.found != 'true' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Check out again after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Require that the first checkout succeeded and the new steps skipped
+        shell: bash
+        env:
+          FIRST: ${{ steps.checkout.outcome }}
+          BROKEN: ${{ steps.broken.outcome }}
+        run: |
+          set -eu
+          echo "first checkout: $FIRST; broken-submodule step: $BROKEN"
+          [ "$FIRST" = success ] || { echo "::error::the checkout of a clean workspace did not succeed first time"; exit 1; }
+          [ "$BROKEN" = skipped ] || { echo "::error::the broken-submodule step ran"; exit 1; }
+          eval "$CHECK_SUBMODULES"
+
+  undetectable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out as an earlier job on the runner did
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Make the next fetch from github.com fail, with every submodule intact
+        shell: bash
+        run: |
+          set -eu
+          eval "$MARK"
+          sudo git config --system url."https://anyps5-unreachable.invalid/".insteadOf "https://github.com/"
+          git config --system --get-regexp '^url\.'
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - id: broken
+        name: Remove the submodules a failed checkout left without a current revision
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          broken() {
+            git -C "$1" ls-tree -r HEAD | while IFS=$'\t' read -r entry path; do
+              case $entry in "160000 commit "*) ;; *) continue ;; esac
+              [ -e "$1/$path/.git" ] || continue
+              if git -C "$1/$path" rev-parse -q --verify 'HEAD^{commit}' > /dev/null 2>&1; then broken "$1/$path"; else echo "$1/$path"; fi
+            done
+          }
+          ws=$(realpath -m "${GITHUB_WORKSPACE:?}")
+          remove=()
+          while IFS= read -r path; do
+            gitdir=$(sed -n 's/^gitdir: //p' "$path/.git" 2> /dev/null || true)
+            case $gitdir in /*) gitdir=$(realpath -m "$gitdir") ;; ?*) gitdir=$(realpath -m "$path/$gitdir") ;; esac
+            case $(realpath -m "$path")/ in "$ws"/?*) ;; *) echo "outside the workspace: $path"; remove=(); break ;; esac
+            [ -z "$gitdir" ] || case $gitdir/ in "$ws"/.git/modules/?*) ;; *) echo "not a module directory of the workspace: $gitdir"; remove=(); break ;; esac
+            remove+=("$path" "$gitdir")
+          done < <(broken "$ws")
+          found=false
+          for ((i = 0; i < ${#remove[@]}; i += 2)); do
+            [ -z "${remove[i+1]}" ] || rm -rf "${remove[i+1]}"
+            rm -rf "${remove[i]}" && mkdir -p "${remove[i]}"
+            echo "removed ${remove[i]}${remove[i+1]:+ and ${remove[i+1]}}"
+            found=true
+          done
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' && steps.broken.outputs.found != 'true' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Let github.com be fetched again
+        shell: bash
+        run: sudo git config --system --unset-all url."https://anyps5-unreachable.invalid/".insteadOf
+      - name: Check out again after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Require the full wipe and a whole checkout
+        shell: bash
+        env:
+          FIRST: ${{ steps.checkout.outcome }}
+          FOUND: ${{ steps.broken.outputs.found }}
+        run: |
+          set -eu
+          echo "first checkout: $FIRST; broken submodules found: $FOUND"
+          [ "$FIRST" = failure ] || { echo "::error::the first checkout did not fail"; exit 1; }
+          [ "$FOUND" = false ] || { echo "::error::the step found a broken submodule in an intact workspace"; exit 1; }
+          eval "$CHECK_SUBMODULES"
+          eval "$COUNT"
+          [ "$KEPT" = 0 ] || { echo "::error::the full wipe did not run: $KEPT module dirs kept"; exit 1; }
+          echo "nothing was found, so the workspace was emptied and checked out whole"
+
+  outside-gitdir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OUTSIDE: /tmp/anyps5-outside-gitdir
+    steps:
+      - name: Check out as an earlier job on the runner did
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Point the broken urlparse submodule's .git file at a git dir outside the workspace
+        shell: bash
+        run: |
+          set -eu
+          eval "$BREAK"
+          own=$(git -C "$SUBMODULE" rev-parse --absolute-git-dir)
+          cp -a "$own" "$OUTSIDE"
+          git config --file "$OUTSIDE/config" core.worktree "$GITHUB_WORKSPACE/$SUBMODULE"
+          echo "gitdir: $OUTSIDE" > "$SUBMODULE/.git"
+          echo "left by the test" > "$OUTSIDE/anyps5-sentinel"
+          if git -C "$SUBMODULE" rev-parse --verify -q HEAD; then echo "::error::urlparse HEAD resolves"; exit 1; fi
+          echo "urlparse's .git now says: $(cat "$SUBMODULE/.git")"
+          find "$OUTSIDE" -type f | wc -l > "$RUNNER_TEMP/outside-files.txt"
+          echo "files under $OUTSIDE: $(cat "$RUNNER_TEMP/outside-files.txt")"
+          eval "$MARK"
+      - name: Remove git locks left by an interrupted checkout
+        shell: bash
+        run: if [ -d .git ]; then find .git -name '*.lock' -type f -print -delete; fi
+      - id: checkout
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - id: broken
+        name: Remove the submodules a failed checkout left without a current revision
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          broken() {
+            git -C "$1" ls-tree -r HEAD | while IFS=$'\t' read -r entry path; do
+              case $entry in "160000 commit "*) ;; *) continue ;; esac
+              [ -e "$1/$path/.git" ] || continue
+              if git -C "$1/$path" rev-parse -q --verify 'HEAD^{commit}' > /dev/null 2>&1; then broken "$1/$path"; else echo "$1/$path"; fi
+            done
+          }
+          ws=$(realpath -m "${GITHUB_WORKSPACE:?}")
+          remove=()
+          while IFS= read -r path; do
+            gitdir=$(sed -n 's/^gitdir: //p' "$path/.git" 2> /dev/null || true)
+            case $gitdir in /*) gitdir=$(realpath -m "$gitdir") ;; ?*) gitdir=$(realpath -m "$path/$gitdir") ;; esac
+            case $(realpath -m "$path")/ in "$ws"/?*) ;; *) echo "outside the workspace: $path"; remove=(); break ;; esac
+            [ -z "$gitdir" ] || case $gitdir/ in "$ws"/.git/modules/?*) ;; *) echo "not a module directory of the workspace: $gitdir"; remove=(); break ;; esac
+            remove+=("$path" "$gitdir")
+          done < <(broken "$ws")
+          found=false
+          for ((i = 0; i < ${#remove[@]}; i += 2)); do
+            [ -z "${remove[i+1]}" ] || rm -rf "${remove[i+1]}"
+            rm -rf "${remove[i]}" && mkdir -p "${remove[i]}"
+            echo "removed ${remove[i]}${remove[i+1]:+ and ${remove[i+1]}}"
+            found=true
+          done
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+      - name: Empty the workspace after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' && steps.broken.outputs.found != 'true' }}
+        shell: bash
+        run: find "${GITHUB_WORKSPACE:?}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      - name: Check out again after a failed checkout
+        if: ${{ steps.checkout.outcome == 'failure' }}
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Require that the outside git dir was left alone and the full wipe ran
+        shell: bash
+        env:
+          FIRST: ${{ steps.checkout.outcome }}
+          FOUND: ${{ steps.broken.outputs.found }}
+        run: |
+          set -eu
+          echo "first checkout: $FIRST; broken submodules removed: $FOUND"
+          [ "$FIRST" = failure ] || { echo "::error::the first checkout did not fail"; exit 1; }
+          [ "$FOUND" = false ] || { echo "::error::the step removed a submodule whose git dir is outside the workspace"; exit 1; }
+          [ -f "$OUTSIDE/anyps5-sentinel" ] || { echo "::error::the outside git dir was touched"; exit 1; }
+          now=$(find "$OUTSIDE" -type f | wc -l)
+          echo "files under $OUTSIDE: before $(cat "$RUNNER_TEMP/outside-files.txt"), now $now"
+          [ "$now" = "$(cat "$RUNNER_TEMP/outside-files.txt")" ]
+          eval "$CHECK_SUBMODULES"
+          eval "$COUNT"
+          [ "$KEPT" = 0 ] || { echo "::error::the full wipe did not run: $KEPT module dirs kept"; exit 1; }
+          echo "the git dir outside the workspace was left untouched, and the workspace was emptied and checked out whole"
+
+  steps-match:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 3
+      - name: Require that each job runs the checkout steps of the build.yml it stands for
+        shell: bash
+        run: |
+          set -eu
+          git show HEAD~2:.github/workflows/build.yml > "$RUNNER_TEMP/main.yml"
+          git show HEAD~1:.github/workflows/build.yml > "$RUNNER_TEMP/branch.yml"
+          python3 - "$RUNNER_TEMP/main.yml" "$RUNNER_TEMP/branch.yml" .github/workflows/checkout-narrow.yml <<'EOF'
+          import sys, yaml
+          def checkout_steps(steps):
+              names = [s.get("name") for s in steps]
+              first = names.index("Remove git locks left by an interrupted checkout")
+              out = []
+              for s in steps[first:]:
+                  if s.get("name") == "Merge the pull request into main" or s.get("name", "").startswith("Require"):
+                      break
+                  if s.get("name") == "Let github.com be fetched again":
+                      continue
+                  s = dict(s)
+                  if "with" in s:
+                      s["with"] = {k: v for k, v in s["with"].items() if k != "ref"}
+                  out.append(s)
+              return out
+          main = checkout_steps(yaml.safe_load(open(sys.argv[1]))["jobs"]["linux"]["steps"])
+          branch = checkout_steps(yaml.safe_load(open(sys.argv[2]))["jobs"]["linux"]["steps"])
+          test = yaml.safe_load(open(sys.argv[3]))["jobs"]
+          bad = 0
+          for job, want in (("nested-main", main), ("nested-branch", branch), ("clean-workspace", branch), ("undetectable", branch), ("outside-gitdir", branch)):
+              have = checkout_steps(test[job]["steps"])
+              same = have == want
+              print(f"{job}: {len(have)} checkout steps, same as {'main' if want is main else 'this branch'}'s build.yml: {same}")
+              bad |= not same
+          print(f"main's build.yml has {len(main)} checkout steps, this branch's {len(branch)}")
+          sys.exit(bad)
+          EOF
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+      - name: Compare actionlint's findings for main's build.yml and this branch's
+        shell: bash
+        run: |
+          set -u
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          mkdir -p /tmp/lint/main /tmp/lint/pr
+          git show HEAD~2:.github/workflows/build.yml > /tmp/lint/main/build.yml
+          git show HEAD~1:.github/workflows/build.yml > /tmp/lint/pr/build.yml
+          (cd /tmp/lint/main && actionlint -no-color -format '{{range $err := .}}{{$err.Kind}}: {{$err.Message}}{{"\n"}}{{end}}' build.yml) > /tmp/lint/main.txt || true
+          (cd /tmp/lint/pr && actionlint -no-color -format '{{range $err := .}}{{$err.Kind}}: {{$err.Message}}{{"\n"}}{{end}}' build.yml) > /tmp/lint/pr.txt || true
+          echo "main: $(wc -l < /tmp/lint/main.txt) findings; this branch: $(wc -l < /tmp/lint/pr.txt)"
+          (cd /tmp/lint/pr && actionlint -no-color build.yml) | grep -n -E ':(52[0-9]|53[0-9]|54[0-9]|55[0-9]|56[0-9]):' || echo "no findings on the linux job's checkout lines"
+          if diff <(sort /tmp/lint/main.txt) <(sort /tmp/lint/pr.txt); then echo "same findings"; else echo "::error::the findings differ"; exit 1; fi
