@@ -32,6 +32,45 @@
 #else
 #include <sys/mman.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <new>
+#include <string>
+inline bool InsidePlaceholder(std::uintptr_t begin, std::uintptr_t end) {
+    std::ifstream maps("/proc/self/maps");
+    std::string line;
+    while (std::getline(maps, line)) {
+        unsigned long first = 0, last = 0;
+        char perms[5] = {};
+        if (std::sscanf(line.c_str(), "%lx-%lx %4s", &first, &last, perms) != 3) continue;
+        if (first <= begin && end <= last) return std::string(perms) == "---p";
+    }
+    return false;
+}
+template <typename T> T& LowMemory() {
+    static std::uintptr_t next = 0x40000000u;
+    const std::size_t bytes = (sizeof(T) + 0xffffu) & ~std::size_t{0xffffu};
+    const auto at = next;
+    next += bytes;
+    void* low = mmap(reinterpret_cast<void*>(at), bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    if (low == MAP_FAILED) {
+        if (!InsidePlaceholder(at, at + bytes)) {
+            std::fprintf(stderr, "verify: 0x%lx is neither free nor a PROT_NONE placeholder\n", static_cast<unsigned long>(at));
+            std::abort();
+        }
+        low = mmap(reinterpret_cast<void*>(at), bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    }
+    if (low != reinterpret_cast<void*>(at)) {
+        std::fprintf(stderr, "verify: no mapping at 0x%lx\n", static_cast<unsigned long>(at));
+        std::abort();
+    }
+    std::fprintf(stderr, "verify: records at %p\n", low);
+    return *new (low) T{};
+}
+#endif
 #endif
 
 namespace {
@@ -1923,7 +1962,11 @@ void RunNestedSamplerTests(AgcDriver::VulkanDevice& device) {
 
 void RunPointerSamplerTests(AgcDriver::VulkanDevice& device) {
     Fill();
+#if defined(__linux__)
+    auto& records = LowMemory<std::array<std::array<std::uint32_t, 64>, 2>>();
+#else
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+#endif
     const std::array<std::array<std::uint32_t, 4>, 2> samplers{PointWrap, PointClamp};
     Table = {};
     Keys = {};
@@ -2038,7 +2081,11 @@ void RunPointerSamplerTests(AgcDriver::VulkanDevice& device) {
 
 void RunPointerArmTests(AgcDriver::VulkanDevice& device, bool copies) {
     Fill();
+#if defined(__linux__)
+    auto& records = LowMemory<std::array<std::array<std::uint32_t, 64>, 2>>();
+#else
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+#endif
     Table = {};
     Keys = {};
     const std::array images{Image(FloatTexels.data(), Format32Float), Image(OtherFloatTexels.data(), Format32Float)};
@@ -2120,7 +2167,11 @@ enum class PointerMask { LaneAnd, High, HighSecond, HighSecondLane, LaneNot };
 
 void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
     Fill();
+#if defined(__linux__)
+    auto& records = LowMemory<std::array<std::array<std::uint32_t, 64>, 2>>();
+#else
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+#endif
     alignas(256) std::array<std::uint32_t, 16> second{};
     Table = {};
     Keys = {};
@@ -2221,7 +2272,11 @@ void RunPointerMaskTests(AgcDriver::VulkanDevice& device, PointerMask shape) {
 
 void RunPointerVsharpTests(AgcDriver::VulkanDevice& device) {
     Fill();
+#if defined(__linux__)
+    auto& records = LowMemory<std::array<std::array<std::uint32_t, 64>, 2>>();
+#else
     alignas(256) std::array<std::array<std::uint32_t, 64>, 2> records{};
+#endif
     alignas(256) std::array<std::array<std::uint32_t, 16>, 2> palettes{};
     Table = {};
     Keys = {};
