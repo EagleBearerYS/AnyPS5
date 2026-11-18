@@ -1,0 +1,4 @@
+BASE=b4a5b1a618ed89404bd05fc910337720844641b1
+REPEAT=10
+EXTRA_TESTS='^agc_driver_pointer_|^agc_driver_nested_'
+VERBOSE=1
