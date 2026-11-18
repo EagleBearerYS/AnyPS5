@@ -1,0 +1,3 @@
+BASE=20b045a8de854edfb48a079993827807bc9bf66b
+REPEAT=10
+EXTRA_TESTS='^agc_driver_pointer_|^agc_driver_nested_'
