@@ -1,0 +1,3 @@
+BASE=2b31f86019310c20be9928de109d85c8206520a4
+REPEAT=3
+EXTRA_TESTS='agc_driver_fault_check_dedup|agc_driver_image_table|agc_driver_oracle_runner|^agc_driver_runtime_buffer_spans|^agc_driver_bda_store_heap_mirror'
