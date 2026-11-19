@@ -1,0 +1,4 @@
+BASE=d89f26516cb6948e1a18821d23270fcd0e34c1de
+REPEAT=10
+EXTRA_TESTS='^agc_driver_image_table'
+NO_BEFORE=1
