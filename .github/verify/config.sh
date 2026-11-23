@@ -1,0 +1,4 @@
+BASE=f5b7e1d1ac816c41cb798d09ecbf42cf2e7e9edf
+REPEAT=1
+EXTRA_TESTS='^agc'
+NO_BEFORE=1
