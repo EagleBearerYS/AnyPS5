@@ -1,0 +1,4 @@
+BASE=f220c221625695bcd12615476d385a8977532aa3
+REPEAT=10
+EXTRA_TESTS='agc_driver_frame_replay_rewind_copy|agc_performance_overlay'
+NO_BEFORE=1
