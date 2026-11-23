@@ -1,0 +1,5 @@
+BASE=80308c47acc7f413dfd182dac15a18ef86b6d44c
+REPEAT=1
+EXTRA_TESTS='^agc_driver_draw_allocations|agc_driver_frame_replay_rewind_copy|agc_performance_overlay'
+NO_BEFORE=1
+VERBOSE=1
