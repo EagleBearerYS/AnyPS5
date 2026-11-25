@@ -1,0 +1,4 @@
+BASE=4b70bf120169dac93e1499ad3b91f6a5f0462c9b
+REPEAT=10
+EXTRA_TESTS='^agc_driver_bda|^agc_bda|^agc_driver_address_draw_space_reuse|^agc_host_import|^agc_write_tracking|^agc_driver_host_import_proofs|^agc_driver_pipeline_journal|^agc_pipeline_journal|^agc_command_state|^agc_graphics_state_recorder|^agc_driver_indirect_draw_pending_producer|^agc_shader_memory|^agc_driver_buffer_atomics|^agc_driver_image_atomics64|^agc_placeholder_images|^agc_driver_resident_heap_mirror|^agc_split_table_call_|^agc_driver_split_table_call_|^agc_driver_draw_allocations'
+NO_BEFORE=1
