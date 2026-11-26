@@ -1,0 +1,4 @@
+BASE=f924e4f45428ffa3bae940f127cfda45ecfa22cf
+REPEAT=10
+EXTRA_TESTS='^agc_driver_pointer_|^agc_driver_nested_|agc_shader_nested_parent_scan_budget'
+NO_BEFORE=1
